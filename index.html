@@ -1413,45 +1413,6 @@ function useBoxGroupOverrides(gameKey) {
   return { overrides, setGroup };
 }
 
-// Charge le groupe de boîte effectif (surcharge > donnée structurelle) pour un Pokémon, pour
-// chacun des jeux passés — utilisé par l'éditeur de catalogue (Paramètres) pour pré-remplir
-// la section "Groupe de boîte".
-async function loadBoxGroupsForPokemon(nom, forme, games) {
-  const key = boxGroupKeyFor(nom, forme);
-  let overridesAll = {};
-  try {
-    const res = await window.storage.get("box_group_overrides", false);
-    overridesAll = res && res.value ? JSON.parse(res.value) : {};
-  } catch (e) {}
-  const out = {};
-  (games || []).forEach((g) => {
-    const gi = DATA.gameIndex[g] ? DATA.gameIndex[g][key] : undefined;
-    const fromOverride = overridesAll[g] ? overridesAll[g][key] : undefined;
-    const fromData = gi !== undefined && DATA.boxGroups[g] ? DATA.boxGroups[g][gi] : undefined;
-    out[g] = fromOverride != null ? fromOverride : (fromData != null ? fromData : "");
-  });
-  return out;
-}
-
-// Persiste le groupe de boîte édité pour un Pokémon, pour chacun des jeux fournis dans
-// `boxGroups` ({ [jeu]: groupe }) — utilisé par l'éditeur de catalogue.
-async function persistBoxGroups(nom, forme, boxGroups) {
-  const key = boxGroupKeyFor(nom, forme);
-  let all = {};
-  try {
-    const res = await window.storage.get("box_group_overrides", false);
-    all = res && res.value ? JSON.parse(res.value) : {};
-  } catch (e) {}
-  Object.keys(boxGroups || {}).forEach((g) => {
-    const forGame = { ...(all[g] || {}) };
-    const v = boxGroups[g];
-    if (v === undefined || v === null || v === "") delete forGame[key];
-    else forGame[key] = v;
-    all[g] = forGame;
-  });
-  try { await window.storage.set("box_group_overrides", JSON.stringify(all), false); } catch (e) {}
-}
-
 // §22 — Lit `caught_<jeu>` et retourne toujours un dictionnaire { "nom|forme": 0/1 }, quel que
 // soit le format actuellement stocké : ancien tableau positionnel (migré une bonne fois pour
 // toutes vers le dictionnaire, et réécrit immédiatement) ou nouveau dictionnaire. Comme le lien
@@ -5790,7 +5751,7 @@ function computeNatSortOrder(additionIdxById) {
 
 
 // Formulaire d'édition/ajout, utilisé en modale par CatalogEditor.
-function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete, boxGroupOptions }) {
+function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const toggleGame = (g) => {
     const games = draft.games || [];
@@ -5886,28 +5847,6 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete,
                       onChange={(e) => setGameNumber(g, e.target.value)}
                       placeholder={String(draft.nat || "")}
                       style={{ ...miniInput, flex: 1, boxSizing: "border-box" }}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {(draft.games || []).length > 0 && (
-            <div>
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>
-                Groupe de boîte par jeu (détermine le rangement en boîte Home — voir réglages de l'onglet jeu)
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {(draft.games || []).map((g) => (
-                  <div key={g} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 60, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{g}</span>
-                    <Picker
-                      value={(draft.boxGroups || {})[g] || ""}
-                      onChange={(v) => setDraft({ ...draft, boxGroups: { ...(draft.boxGroups || {}), [g]: v } })}
-                      options={(boxGroupOptions && boxGroupOptions[g]) || []}
-                      placeholder="— choisir —"
-                      buttonStyle={{ ...selectStyle, flex: 1, display: "block", textAlign: "left", boxSizing: "border-box" }}
-                      panelWidth={200}
                     />
                   </div>
                 ))}
@@ -6088,14 +6027,11 @@ function catalogDraftForRow(idx) {
 function CatalogQuickEditButton({ nom, forme, allForms, label }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState(null); // { idx, draft }
-  const [boxGroupOptions, setBoxGroupOptions] = useState({});
 
   const openFor = async (fNom, fForme) => {
     const idx = findNatIdx(fNom, fForme);
     if (idx < 0) return;
     const draft = catalogDraftForRow(idx);
-    draft.boxGroups = await loadBoxGroupsForPokemon(fNom, fForme, draft.games);
-    setBoxGroupOptions(await loadBoxGroupOptionsFor(GAME_ORDER));
     setEditing({ idx, draft });
   };
 
@@ -6108,7 +6044,6 @@ function CatalogQuickEditButton({ nom, forme, allForms, label }) {
   const save = async () => {
     if (!editing) return;
     await persistCatalogEdit(editing.idx, editing.draft);
-    await persistBoxGroups(editing.draft.nom, editing.draft.forme, editing.draft.boxGroups);
     window.location.reload();
   };
 
@@ -6158,7 +6093,6 @@ function CatalogQuickEditButton({ nom, forme, allForms, label }) {
           onCancel={() => setEditing(null)}
           onSave={save}
           onDelete={remove}
-          boxGroupOptions={boxGroupOptions}
         />
       )}
     </React.Fragment>
@@ -6175,7 +6109,6 @@ function CatalogEditor({ onSaveStateChange }) {
   const [saveState, setSaveState] = useState("idle");
   const [editing, setEditing] = useState(null); // { idx, isNew, addId, draft }
   const [msg, setMsg] = useState("");
-  const [boxGroupOptions, setBoxGroupOptions] = useState({});
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
 
   const load = async () => {
@@ -6213,7 +6146,6 @@ function CatalogEditor({ onSaveStateChange }) {
       const gnum = DATA.games[g][gi][0];
       if (String(gnum) !== String(row[0])) gameNumbers[g] = gnum;
     });
-    const boxGroups = await loadBoxGroupsForPokemon(row[1], row[2], games);
     return {
       idx, isNew: false, addId: null,
       draft: {
@@ -6222,14 +6154,13 @@ function CatalogEditor({ onSaveStateChange }) {
         alphaLA: !!alpha.LA, alphaLZA: !!alpha.LZA,
         famille: row[14] != null ? String(row[14]) : "",
         inHomeDex: !!(DATA.homeDex && DATA.homeDex[key]),
-        games, gameNumbers, boxGroups,
+        games, gameNumbers,
       },
     };
   };
 
   const openEdit = async (idx, row) => {
     setEditing(await draftFromRow(idx, row));
-    setBoxGroupOptions(await loadBoxGroupOptionsFor(GAME_ORDER));
   };
 
   const openEditAddition = async (add) => {
@@ -6238,16 +6169,14 @@ function CatalogEditor({ onSaveStateChange }) {
       const e = await draftFromRow(idx, DATA.nat[idx]);
       e.addId = add.id;
       setEditing(e);
-      setBoxGroupOptions(await loadBoxGroupOptionsFor(GAME_ORDER));
     }
   };
 
   const openAdd = async () => {
     setEditing({
       idx: null, isNew: true, addId: null,
-      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {}, boxGroups: {} },
+      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {} },
     });
-    setBoxGroupOptions(await loadBoxGroupOptionsFor(GAME_ORDER));
   };
 
   const setDraft = (v) => setEditing((prev) => (prev ? { ...prev, draft: v } : prev));
@@ -6285,7 +6214,6 @@ function CatalogEditor({ onSaveStateChange }) {
       // (clé stable, jamais la position) — voir persistCatalogEdit.
       await persistCatalogEdit(editing.idx, d);
     }
-    await persistBoxGroups(d.nom, d.forme, d.boxGroups);
     finishAndReload();
   };
 
@@ -6391,7 +6319,6 @@ function CatalogEditor({ onSaveStateChange }) {
           onCancel={() => setEditing(null)}
           onSave={saveEdit}
           onDelete={editing.isNew ? undefined : deleteEntry}
-          boxGroupOptions={boxGroupOptions}
         />
       )}
     </div>
@@ -8798,11 +8725,20 @@ async function buildGameSheetRows(g) {
     const all = res && res.value ? JSON.parse(res.value) : {};
     jeuForGame = all[g] || {};
   } catch (e) {}
+  let boxGroupOverridesForGame = {};
+  try {
+    const res = await window.storage.get("box_group_overrides", false);
+    const all = res && res.value ? JSON.parse(res.value) : {};
+    boxGroupOverridesForGame = all[g] || {};
+  } catch (e) {}
   const isAlphaGame = g === "LA" || g === "LZA";
   const alpha = isAlphaGame ? await storageGetJSON("alpha_caught", {}) : null;
-  return base.map((r) => {
+  return base.map((r, i) => {
     const key = r[1] + "|" + (r[2] || "");
-    const row = { Nom: r[1], Forme: r[2] || "", Attrape: dict[key] ? 1 : 0, Jeu: jeuForGame[key] || "" };
+    const row = {
+      Nom: r[1], Forme: r[2] || "", Attrape: dict[key] ? 1 : 0, Jeu: jeuForGame[key] || "",
+      Groupe: effectiveBoxGroup(g, i, r, boxGroupOverridesForGame),
+    };
     if (isAlphaGame) row.Alpha = alpha[g + "|" + key] ? 1 : 0;
     return row;
   });
@@ -8810,11 +8746,6 @@ async function buildGameSheetRows(g) {
 
 async function buildParamsSheetRows() {
   const order = DATA.natSortOrder || DATA.nat.map((_, i) => i);
-  let boxGroupOverridesAll = {};
-  try {
-    const res = await window.storage.get("box_group_overrides", false);
-    boxGroupOverridesAll = res && res.value ? JSON.parse(res.value) : {};
-  } catch (e) {}
   return order.map((idx) => {
     const r = DATA.nat[idx];
     const [nat, nom, forme] = r;
@@ -8829,7 +8760,6 @@ async function buildParamsSheetRows() {
     for (const g of GAME_ORDER) {
       const gi = DATA.gameIndex[g] ? DATA.gameIndex[g][key] : undefined;
       row[g] = gi !== undefined ? DATA.games[g][gi][0] : "";
-      row["Grp_" + g] = gi !== undefined ? effectiveBoxGroup(g, gi, DATA.games[g][gi], boxGroupOverridesAll[g] || {}) : "";
     }
     return row;
   });
@@ -8930,6 +8860,7 @@ async function importGameSheet(g, rows, mode) {
   const dict = mode === "replace" ? {} : await readGameCaughtDict(g);
   const hasAttrapeColumn = rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Attrape");
   const hasJeuColumn = rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Jeu");
+  const hasGroupeColumn = rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Groupe");
   const isAlphaGame = g === "LA" || g === "LZA";
   const hasAlphaColumn = isAlphaGame && rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Alpha");
   let jeuForGame = {};
@@ -8940,6 +8871,14 @@ async function importGameSheet(g, rows, mode) {
       jeuForGame = { ...(all[g] || {}) };
     } catch (e) {}
   }
+  let boxGroupOverridesAll = {};
+  if (hasGroupeColumn) {
+    try {
+      const res = await window.storage.get("box_group_overrides", false);
+      boxGroupOverridesAll = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+  }
+  const boxGroupForGame = hasGroupeColumn ? { ...(boxGroupOverridesAll[g] || {}) } : {};
   let alpha = {};
   if (hasAlphaColumn) alpha = await storageGetJSON("alpha_caught", {});
   let matched = 0;
@@ -8954,6 +8893,10 @@ async function importGameSheet(g, rows, mode) {
       if (hasJeuColumn) {
         const jeuVal = String(row.Jeu || "").trim();
         if (jeuVal) jeuForGame[key] = jeuVal; else delete jeuForGame[key];
+      }
+      if (hasGroupeColumn) {
+        const grpVal = String(row.Groupe || "").trim();
+        if (grpVal) boxGroupForGame[key] = grpVal; else delete boxGroupForGame[key];
       }
       if (hasAlphaColumn) {
         const aKey = g + "|" + key;
@@ -8970,6 +8913,14 @@ async function importGameSheet(g, rows, mode) {
       const all = res && res.value ? JSON.parse(res.value) : {};
       all[g] = jeuForGame;
       await window.storage.set("game_jeu_overrides", JSON.stringify(all), false);
+    } catch (e) {}
+  }
+  if (hasGroupeColumn) {
+    try {
+      const res = await window.storage.get("box_group_overrides", false);
+      const all = res && res.value ? JSON.parse(res.value) : {};
+      all[g] = boxGroupForGame;
+      await window.storage.set("box_group_overrides", JSON.stringify(all), false);
     } catch (e) {}
   }
   if (hasAlphaColumn) {
@@ -9087,7 +9038,6 @@ async function importParamsSheet(rows) {
   };
   const overrides = await readJSON("catalog_overrides", {});
   const additions = await readJSON("catalog_additions", []);
-  const boxGroupOverridesAll = await readJSON("box_group_overrides", {});
 
   // Une colonne n'est prise en compte que si elle existe réellement dans la feuille (en-tête
   // présent) — sinon on ne touche pas au champ correspondant, conformément à la logique de
@@ -9099,10 +9049,7 @@ async function importParamsSheet(rows) {
   const hasAlphaLA = hasCol("AlphaLA"), hasAlphaLZA = hasCol("AlphaLZA"), hasHomeDex = hasCol("HomeDex");
   const gameColsPresent = GAME_ORDER.filter(hasCol);
   const applyGames = gameColsPresent.length === GAME_ORDER.length; // jeu de colonnes complet uniquement, par sécurité
-  const grpColsPresent = GAME_ORDER.filter((g) => hasCol("Grp_" + g));
-  const applyGroups = grpColsPresent.length === GAME_ORDER.length; // idem, par sécurité
 
-  let boxGroupsChanged = false;
   rows.forEach((sheetRow) => {
     const nom = String(sheetRow.Nom || "").trim();
     if (!nom) return;
@@ -9121,17 +9068,6 @@ async function importParamsSheet(rows) {
       fields.games = games;
       fields.gameNumbers = gameNumbers;
     }
-    const key = pokemonIdentityKey(nom, forme);
-    if (applyGroups) {
-      GAME_ORDER.forEach((g) => {
-        const v = String(sheetRow["Grp_" + g] || "").trim();
-        if (!v) return;
-        const forGame = { ...(boxGroupOverridesAll[g] || {}) };
-        forGame[key] = v;
-        boxGroupOverridesAll[g] = forGame;
-        boxGroupsChanged = true;
-      });
-    }
     const idx = findNatIdx(nom, forme);
     const natRow = idx >= 0 ? DATA.nat[idx] : null;
     if (natRow && natRow.__additionId) {
@@ -9148,7 +9084,6 @@ async function importParamsSheet(rows) {
   });
   await window.storage.set("catalog_overrides", JSON.stringify(overrides), false);
   await window.storage.set("catalog_additions", JSON.stringify(additions), false);
-  if (boxGroupsChanged) { await window.storage.set("box_group_overrides", JSON.stringify(boxGroupOverridesAll), false); }
 }
 
 async function applyExcelWorkbookImport(wb, mode) {
