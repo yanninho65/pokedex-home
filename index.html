@@ -74,7 +74,7 @@ function isFormeAvailableInGame(nom, forme, marque) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.08.06.20.38";
+const APP_VERSION = "2026.08.06.20.57";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9328,12 +9328,20 @@ function App() {
     return out;
   };
 
+  // Horodatage utilisé dans le nom des fichiers d'export (Excel et JSON), au format
+  // "yyyy-mm-dd-hh-mm" — heure locale au moment de l'extraction.
+  const exportTimestamp = () => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}-${p(d.getMinutes())}`;
+  };
+
   const downloadExportBlob = (out) => {
     const blob = new Blob([JSON.stringify(out)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "pokedex-save.json";
+    a.download = `Pokedex export ${exportTimestamp()}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -9363,7 +9371,7 @@ function App() {
     setShowExcelExportModal(false);
     try {
       const wb = await buildExcelWorkbook(excelSelectedKeys);
-      XLSX.writeFile(wb, "Pokédex export.xlsx");
+      XLSX.writeFile(wb, `Pokedex export ${exportTimestamp()}.xlsx`);
       setIoMsg("Export Excel généré.");
     } catch (e) {
       setIoMsg("Erreur lors de l'export Excel.");
