@@ -72,6 +72,9 @@ function isFormeAvailableInGame(nom, forme, marque) {
 }
 
 const ACCENT = "#E4572E";
+// Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
+// au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
+const APP_VERSION = "2026.08.06.20.38";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9429,9 +9432,22 @@ function App() {
     const out = await buildExportOut();
     downloadExportBlob(out);
     await markExported();
+    // "custom_marques" est conservée lors d'un reset complet : c'est la liste de référence des
+    // marques (dont celles des onglets Home/jeu), pas une donnée de collection — la vider rendrait
+    // impossible toute sélection de marque (Shiny/Double/Event/Interjeu, Jeu-DO) juste après un
+    // reset, ce qui n'aurait pas de sens. Reste exportée/importée normalement (ALL_KEYS inchangé).
+    const RESET_KEEP_KEYS = ["custom_marques"];
     for (const k of ALL_KEYS) {
+      if (RESET_KEEP_KEYS.includes(k)) continue;
       try { await window.storage.delete(k, false); } catch (e) {}
     }
+    // Event et Interjeu se re-sèment automatiquement depuis le classeur (DATA.eventCatalog /
+    // DATA.interjeuCatalog) dès que leur clé est absente (comportement "première utilisation",
+    // voir useCustomEvents/useCustomInterjeu). Après un reset, on veut au contraire repartir sur
+    // des listes réellement vides — on force donc ces deux clés à "[]" plutôt que de les laisser
+    // supprimées, pour empêcher le re-seed au rechargement.
+    try { await window.storage.set("custom_events", "[]", false); } catch (e) {}
+    try { await window.storage.set("custom_interjeu", "[]", false); } catch (e) {}
     resetModCount();
     setShowResetConfirm(false);
     setIoMsg("Sauvegarde exportée automatiquement, puis toutes les données réinitialisées — rechargement…");
@@ -9460,6 +9476,11 @@ function App() {
             <div style={{ fontFamily: "'Onest', 'SamsungOne', sans-serif", fontWeight: 800, fontSize: 17, color: ACCENT }}>
               Pokédex
             </div>
+            {tab === "settings" && (
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: "#fff", whiteSpace: "nowrap" }}>
+                v{APP_VERSION}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto" }}>
             {ioMsg && <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, whiteSpace: "nowrap" }}>{ioMsg}</span>}
