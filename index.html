@@ -74,7 +74,7 @@ function isFormeAvailableInGame(nom, forme, marque) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.08.06.20.57";
+const APP_VERSION = "2026.8.8.19.0";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -100,6 +100,15 @@ const GLASS_SHADOW = "0 10px 30px rgba(0,0,0,0.45)";
 function pct(c, t) { return t === 0 ? 0 : Math.round((c / t) * 100); }
 // sel: null (= Tous, aucune restriction) | Set des valeurs cochées (peut être vide = Aucun)
 function matchesMulti(sel, value) { return sel === null || sel.has(value); }
+// Variante pour un champ à valeurs multiples (ex. "Détail") : correspond dès qu'AU MOINS une
+// des valeurs cochées dans le filtre est présente dans le tableau de l'enregistrement. Le
+// pseudo-choix "__none__" matche les enregistrements sans aucun détail.
+function matchesMultiAny(sel, arr) {
+  if (sel === null) return true;
+  const list = arr || [];
+  if (list.length === 0) return sel.has("__none__");
+  return list.some((v) => sel.has(v));
+}
 // Ordre canonique des régions à utiliser dans TOUS les tableaux (Progression, détails jeu/shiny/national).
 const REGION_ORDER = ["Kanto", "Johto", "Hoenn", "Sinnoh", "Unys", "Kalos", "Alola", "Extra", "Galar", "Hisui", "Paldea"];
 function regionSortKey(region) {
@@ -399,16 +408,36 @@ function orderedList(customArr, discoveredIterable) {
   return [...customArr, ...extra];
 }
 
+// Filtre une liste d'options (Méthode ou Détail) selon la restriction par marque définie dans
+// Paramètres (`mode_marques`/`detail_marques`, forme { [valeur]: marque[] }). Une valeur sans
+// entrée dans la table (ou avec un tableau vide) reste disponible pour TOUTES les marques —
+// restriction "opt-in" uniquement pour les valeurs explicitement limitées (ex. "Community Day"
+// -> ["Go"], alors que "Nature" reste disponible partout tant qu'elle n'a aucune restriction).
+// Si aucune marque n'est encore choisie sur l'enregistrement, on ne filtre rien (l'utilisateur
+// doit pouvoir choisir la méthode/le détail avant même d'avoir choisi la marque).
+function optionsForMarque(options, marqueVal, restrictMap) {
+  const mk = marqueVal || "";
+  if (!mk) return options;
+  return options.filter((v) => {
+    const restrict = restrictMap && restrictMap[v];
+    if (!restrict || restrict.length === 0) return true;
+    return restrict.includes(mk);
+  });
+}
+
 function useCustomLists() {
   const [marques, setMarques] = useState([]);
   const [modes, setModes] = useState([]);
   const [locations, setLocations] = useState([]);
   const [jeux, setJeux] = useState({}); // { [marque]: string[] }
+  const [details, setDetails] = useState([]); // liste des valeurs de "Détail" (Charme Chroma, etc.)
+  const [modeMarques, setModeMarques] = useState({}); // { [mode]: marque[] } — restriction par marque
+  const [detailMarques, setDetailMarques] = useState({}); // { [detail]: marque[] } — idem
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     (async () => {
-      let m = [], mo = [], lo = [], je = {};
+      let m = [], mo = [], lo = [], je = {}, de = [], mm = {}, dm = {};
       try {
         const res = await window.storage.get("custom_marques", false);
         if (res && res.value) m = JSON.parse(res.value);
@@ -425,10 +454,25 @@ function useCustomLists() {
         const res = await window.storage.get("custom_jeux", false);
         if (res && res.value) je = JSON.parse(res.value);
       } catch (e) {}
+      try {
+        const res = await window.storage.get("custom_details", false);
+        if (res && res.value) de = JSON.parse(res.value);
+      } catch (e) {}
+      try {
+        const res = await window.storage.get("mode_marques", false);
+        if (res && res.value) mm = JSON.parse(res.value);
+      } catch (e) {}
+      try {
+        const res = await window.storage.get("detail_marques", false);
+        if (res && res.value) dm = JSON.parse(res.value);
+      } catch (e) {}
       setMarques(m);
       setModes(mo);
       setLocations(lo);
       setJeux(je);
+      setDetails(de);
+      setModeMarques(mm);
+      setDetailMarques(dm);
       setReady(true);
     })();
   }, []);
@@ -458,6 +502,28 @@ function useCustomLists() {
     setJeux(next);
     try { await window.storage.set("custom_jeux", JSON.stringify(next), false); } catch (e) {}
   };
+  const addDetail = async (v) => {
+    if (!v || details.includes(v)) return;
+    const next = [...details, v];
+    setDetails(next);
+    try { await window.storage.set("custom_details", JSON.stringify(next), false); } catch (e) {}
+  };
+  // Active/désactive une marque dans la restriction d'une méthode ou d'un détail. Liste vide
+  // (ou clé absente) = disponible pour toutes les marques.
+  const toggleModeMarque = async (mode, marque) => {
+    const cur = modeMarques[mode] || [];
+    const next = cur.includes(marque) ? cur.filter((m) => m !== marque) : [...cur, marque];
+    const nextMap = { ...modeMarques, [mode]: next };
+    setModeMarques(nextMap);
+    try { await window.storage.set("mode_marques", JSON.stringify(nextMap), false); } catch (e) {}
+  };
+  const toggleDetailMarque = async (detail, marque) => {
+    const cur = detailMarques[detail] || [];
+    const next = cur.includes(marque) ? cur.filter((m) => m !== marque) : [...cur, marque];
+    const nextMap = { ...detailMarques, [detail]: next };
+    setDetailMarques(nextMap);
+    try { await window.storage.set("detail_marques", JSON.stringify(nextMap), false); } catch (e) {}
+  };
 
   // Échange la position de `v` avec son voisin (dir = -1 monter, +1 descendre). Si `v` n'est
   // pas encore dans la liste explicite (valeur seulement "découverte" via les données), on
@@ -473,6 +539,7 @@ function useCustomLists() {
   };
   const moveMarque = moveInList(marques, setMarques, "custom_marques");
   const moveMode = moveInList(modes, setModes, "custom_modes");
+  const moveDetail = moveInList(details, setDetails, "custom_details");
   const moveLocation = async (v, dir) => {
     if (v === DEFAULT_LOCATION) return;
     const arr = locations.includes(v) ? [...locations] : [...locations, v];
@@ -499,7 +566,9 @@ function useCustomLists() {
 
   return {
     customMarques: marques, customModes: modes, customLocations: locations, customJeux: jeux,
-    addMarque, addMode, addLocation, addJeu, moveMarque, moveMode, moveLocation, moveJeu, ready,
+    customDetails: details, modeMarques, detailMarques,
+    addMarque, addMode, addLocation, addJeu, addDetail, moveMarque, moveMode, moveLocation, moveJeu, moveDetail,
+    toggleModeMarque, toggleDetailMarque, ready,
   };
 }
 
@@ -2658,7 +2727,7 @@ function useAllGameJeuOverrides() {
 function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
   const { catches, setCatches, ready, persist, saveState } = useShinyCatches();
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
-  const { customMarques, customModes, customLocations, customJeux, addMarque, addMode, addLocation, addJeu } = useCustomLists();
+  const { customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques, addMarque, addMode, addLocation, addJeu } = useCustomLists();
   const [viewMode, setViewMode] = useCachedState(filterCache, "shiny", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "shiny", "search", "");
   const [filter, setFilter] = useCachedState(filterCache, "shiny", "filter", "all");
@@ -2673,9 +2742,12 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   // utile pour repérer des doublons potentiels (plusieurs captures de la même forme, notamment
   // dans la même marque). Propose uniquement les valeurs réellement présentes dans les données.
   const [occFilter, setOccFilter] = useCachedState(filterCache, "shiny", "occFilter", null);
+  const [evolueFilter, setEvolueFilter] = useCachedState(filterCache, "shiny", "evolueFilter", null);
+  const [detailFilterSel, setDetailFilterSel] = useCachedState(filterCache, "shiny", "detailFilterSel", null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const anyFilterActive = filter !== "all" || region !== null || marque !== null || modeFilter !== null
-    || locationFilter !== null || jeuFilter !== null || alphaFilter !== null || gmaxFilter !== null || occFilter !== null;
+    || locationFilter !== null || jeuFilter !== null || alphaFilter !== null || gmaxFilter !== null || occFilter !== null
+    || evolueFilter !== null || detailFilterSel !== null;
   const [limit, setLimit] = useState(150);
   const [selected, setSelected] = useState(null); // "nom|forme"
   const [listSubMode, setListSubMode] = useCachedState(filterCache, "shiny", "listSubMode", "actuelle"); // "actuelle" | "forme"
@@ -2698,7 +2770,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     // eslint-disable-next-line
   }, [initialFilter]);
 
-  useEffect(() => { setLimit(150); }, [search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter]);
+  useEffect(() => { setLimit(150); }, [search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, evolueFilter, detailFilterSel]);
   useEffect(() => { if (viewMode === "grid") setViewMode("list"); }, [viewMode]);
 
   const openEntry = (key, occIdx) => {
@@ -2729,6 +2801,8 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     setAlphaFilter(null);
     setGmaxFilter(null);
     setOccFilter(null);
+    setEvolueFilter(null);
+    setDetailFilterSel(null);
   };
 
   const rawCatalog = DATA.shinyCatalog;
@@ -2818,6 +2892,17 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     if (catches) Object.values(catches).forEach((arr) => (arr || []).forEach((rec) => { if (rec.mode) discovered.push(rec.mode); }));
     return orderedList(customModes, discovered);
   }, [catches, customModes]);
+
+  const details = useMemo(() => {
+    const discovered = [];
+    if (catches) Object.values(catches).forEach((arr) => (arr || []).forEach((rec) => (rec.details || []).forEach((d) => discovered.push(d))));
+    return orderedList(customDetails, discovered);
+  }, [catches, customDetails]);
+
+  // Méthode/Détail restreints par marque (Paramètres → "Disponibilité par marque") — une valeur
+  // sans restriction reste proposée pour toute marque.
+  const modeOptionsFor = (marqueVal) => optionsForMarque(modes, marqueVal, modeMarques);
+  const detailOptionsFor = (marqueVal) => optionsForMarque(details, marqueVal, detailMarques);
 
   const locations = useMemo(() => {
     const discovered = [];
@@ -2920,10 +3005,12 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         if (!matchesMulti(alphaFilter, recForRow ? (recForRow.alpha ? "yes" : "no") : undefined)) return false;
         if (!matchesMulti(gmaxFilter, recForRow ? (recForRow.gmax ? "gmax" : recForRow.gmaxable ? "gmaxable" : "no") : undefined)) return false;
         if (!matchesMulti(occFilter, recs.length)) return false;
+        if (!matchesMulti(evolueFilter, recForRow ? (recForRow.evolue ? "yes" : "no") : undefined)) return false;
+        if (!matchesMultiAny(detailFilterSel, recForRow ? recForRow.details : undefined)) return false;
         if (viewMode === "list" && listSubMode === "forme" && occIdx !== 0) return false;
         return true;
       });
-  }, [catalog, search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter, catches, viewMode, listSubMode]);
+  }, [catalog, search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter, evolueFilter, detailFilterSel, catches, viewMode, listSubMode]);
   useInfiniteScroll(viewMode !== "box" && filtered.length > limit, () => setLimit((l) => l + 200));
 
   const filteredStats = useMemo(() => {
@@ -2935,6 +3022,8 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
       if (!matchesMulti(jeuFilter, rec.jeu || "__none__")) return false;
       if (!matchesMulti(alphaFilter, rec.alpha ? "yes" : "no")) return false;
       if (!matchesMulti(gmaxFilter, rec.gmax ? "gmax" : rec.gmaxable ? "gmaxable" : "no")) return false;
+      if (!matchesMulti(evolueFilter, rec.evolue ? "yes" : "no")) return false;
+      if (!matchesMultiAny(detailFilterSel, rec.details)) return false;
       return true;
     };
     const seen = new Set();
@@ -2964,7 +3053,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
       }
     });
     return { forms, formsTotal, doublons, total: forms + doublons, homeCount };
-  }, [catalog, catches, occurrenceIndexOf, search, region, filter, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter]);
+  }, [catalog, catches, occurrenceIndexOf, search, region, filter, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter, evolueFilter, detailFilterSel]);
 
   const addCatch = (key, openAfter) => {
     const next = { ...catches };
@@ -3134,7 +3223,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                     <Picker
                       value={rec.mode || ""}
                       onChange={(v) => updateCatch(selected, idx, "mode", v)}
-                      options={modes}
+                      options={modeOptionsFor(rec.marque)}
                       placeholder="-"
                       buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
                       panelWidth={180}
@@ -3150,6 +3239,33 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                       buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
                       panelWidth={200}
                     />
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!rec.evolue} onChange={(e) => updateCatch(selected, idx, "evolue", e.target.checked)} />
+                    Évolué
+                  </label>
+                  <div>
+                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {detailOptionsFor(rec.marque).length === 0 && (
+                        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>Aucun détail disponible pour cette marque.</span>
+                      )}
+                      {detailOptionsFor(rec.marque).map((d) => {
+                        const active = (rec.details || []).includes(d);
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => updateCatch(selected, idx, "details", active ? (rec.details || []).filter((x) => x !== d) : [...(rec.details || []), d])}
+                            style={{
+                              border: "none", borderRadius: 999, padding: "3px 9px", cursor: "pointer",
+                              fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: active ? 700 : 500,
+                              background: active ? GOLD : PANEL, color: active ? BG : MUTED,
+                            }}
+                          >{d}</button>
+                        );
+                      })}
+                    </div>
                   </div>
                   {(rec.marque === "LA" || rec.marque === "LZA") && (
                     <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
@@ -3197,7 +3313,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                           nom, forme, nomApres: nom, formeApres: forme,
                           marque: rec.marque || "", ou: catchLocation(rec), vers: DEFAULT_LOCATION, jeu: rec.jeu || "",
                           shiny: true, transferable: {}, fait: false,
-                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "shiny" },
+                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "shiny", evolue: !!rec.evolue, details: rec.details || [] },
                         });
                         updateCatch(selected, idx, "fromInterjeu", link);
                         window.alert(`Ajouté dans Interjeu — retour vers ${DEFAULT_LOCATION} depuis ${catchLocation(rec)}.`);
@@ -3405,6 +3521,20 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 <MultiSelectFilter label="Lieu" options={locations} selected={locationFilter} onChange={setLocationFilter} width="100%" />
                 <MultiSelectFilter label="Méthode" options={modes} selected={modeFilter} onChange={setModeFilter} width="100%" />
                 <MultiSelectFilter
+                  label="Évolué"
+                  options={[["yes", "Évolué"], ["no", "Non évolué"]]}
+                  selected={evolueFilter}
+                  onChange={setEvolueFilter}
+                  width="100%"
+                />
+                <MultiSelectFilter
+                  label="Détail"
+                  options={[["__none__", "Sans détail"], ...details.map((d) => [d, d])]}
+                  selected={detailFilterSel}
+                  onChange={setDetailFilterSel}
+                  width="100%"
+                />
+                <MultiSelectFilter
                   label="Jeu"
                   options={[["__none__", "Jeu non indiqué"], ...jeuFilterOptions.map((j) => [j, j])]}
                   selected={jeuFilter}
@@ -3459,12 +3589,15 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
 function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
   const { catches, setCatches, ready, persist, saveState } = useDoubleCatches();
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
-  const { customMarques, customModes, customLocations, customJeux, addMarque, addMode, addLocation, addJeu } = useCustomLists();
+  const { customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques, addMarque, addMode, addLocation, addJeu } = useCustomLists();
   const [viewMode, setViewMode] = useCachedState(filterCache, "double", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "double", "search", "");
   const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "double", "shinyFilter", null); // null (Tous) | Set("yes"/"no")
   const [marqueFilter, setMarqueFilter] = useCachedState(filterCache, "double", "marqueFilter", null); // null (Tous) | Set des marques
   const [locationFilter, setLocationFilter] = useCachedState(filterCache, "double", "locationFilter", null); // null (Tous) | Set des emplacements
+  const [evolueFilter, setEvolueFilter] = useCachedState(filterCache, "double", "evolueFilter", null);
+  const [detailFilterSel, setDetailFilterSel] = useCachedState(filterCache, "double", "detailFilterSel", null);
+  const [modeFilter, setModeFilter] = useCachedState(filterCache, "double", "modeFilter", null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Filtre reçu depuis Progression (National) — appliqué à chaque nouvel envoi, pour fonctionner
   // même si cet onglet reste monté en arrière-plan.
@@ -3475,7 +3608,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
-  const anyFilterActive = shinyFilter !== null || marqueFilter !== null || locationFilter !== null;
+  const anyFilterActive = shinyFilter !== null || marqueFilter !== null || locationFilter !== null || evolueFilter !== null || detailFilterSel !== null || modeFilter !== null;
   const [selected, setSelected] = useState(null); // "nom|forme"
   const [selectedRecIdx, setSelectedRecIdx] = useState(null);
   const [detailShowAll, setDetailShowAll] = useState(true);
@@ -3541,6 +3674,15 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     const discovered = catalog.map((r) => r.rec.mode).filter(Boolean);
     return orderedList(customModes, discovered);
   }, [catalog, customModes]);
+  const details = useMemo(() => {
+    const discovered = [];
+    catalog.forEach((r) => (r.rec.details || []).forEach((d) => discovered.push(d)));
+    return orderedList(customDetails, discovered);
+  }, [catalog, customDetails]);
+  // Méthode/Détail restreints par marque (Paramètres → "Disponibilité par marque") — une valeur
+  // sans restriction reste proposée pour toute marque.
+  const modeOptionsFor = (marqueVal) => optionsForMarque(modes, marqueVal, modeMarques);
+  const detailOptionsFor = (marqueVal) => optionsForMarque(details, marqueVal, detailMarques);
   const charWidth = (label, options) => {
     const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
     return `${max + 7}ch`;
@@ -3554,9 +3696,12 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
       if (!matchesMulti(shinyFilter, r.rec.shiny ? "yes" : "no")) return false;
       if (!matchesMulti(marqueFilter, r.rec.marque || "")) return false;
       if (!matchesMulti(locationFilter, catchLocation(r.rec))) return false;
+      if (!matchesMulti(evolueFilter, r.rec.evolue ? "yes" : "no")) return false;
+      if (!matchesMultiAny(detailFilterSel, r.rec.details)) return false;
+      if (!matchesMulti(modeFilter, r.rec.mode || "")) return false;
       return true;
     });
-  }, [catalog, search, shinyFilter, marqueFilter, locationFilter]);
+  }, [catalog, search, shinyFilter, marqueFilter, locationFilter, evolueFilter, detailFilterSel, modeFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
 
   const resetFilters = () => {
@@ -3564,6 +3709,9 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     setShinyFilter(null);
     setMarqueFilter(null);
     setLocationFilter(null);
+    setEvolueFilter(null);
+    setModeFilter(null);
+    setDetailFilterSel(null);
   };
 
   const openEntry = (key, recIdx) => {
@@ -3684,17 +3832,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                       panelWidth={220}
                     />
                   </div>
-                  <div>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Méthode</div>
-                    <Picker
-                      value={rec.mode || ""}
-                      onChange={(v) => updateCatch(selected, idx, "mode", v)}
-                      options={modes}
-                      placeholder="-"
-                      buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
-                      panelWidth={180}
-                    />
-                  </div>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
                     <input type="checkbox" checked={!!rec.shiny} onChange={(e) => updateCatch(selected, idx, "shiny", e.target.checked)} />
                     Shiny
@@ -3710,6 +3847,48 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                       panelWidth={200}
                     />
                   </div>
+                  {rec.shiny && (
+                  <React.Fragment>
+                  <div>
+                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Méthode</div>
+                    <Picker
+                      value={rec.mode || ""}
+                      onChange={(v) => updateCatch(selected, idx, "mode", v)}
+                      options={modeOptionsFor(rec.marque)}
+                      placeholder="-"
+                      buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
+                      panelWidth={180}
+                    />
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!rec.evolue} onChange={(e) => updateCatch(selected, idx, "evolue", e.target.checked)} />
+                    Évolué
+                  </label>
+                  <div>
+                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {detailOptionsFor(rec.marque).length === 0 && (
+                        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>Aucun détail disponible pour cette marque.</span>
+                      )}
+                      {detailOptionsFor(rec.marque).map((d) => {
+                        const active = (rec.details || []).includes(d);
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => updateCatch(selected, idx, "details", active ? (rec.details || []).filter((x) => x !== d) : [...(rec.details || []), d])}
+                            style={{
+                              border: "none", borderRadius: 999, padding: "3px 9px", cursor: "pointer",
+                              fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: active ? 700 : 500,
+                              background: active ? GOLD : PANEL, color: active ? BG : MUTED,
+                            }}
+                          >{d}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  </React.Fragment>
+                  )}
                   {rec.fromInterjeu && (
                     <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INTERJEU }}>
                       ↔ Suivi dans Interjeu jusqu'à l'arrivée en {DEFAULT_LOCATION}.
@@ -3723,7 +3902,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                           nom: selNom, forme: selForme, nomApres: selNom, formeApres: selForme,
                           marque: rec.marque || "", ou: catchLocation(rec), vers: DEFAULT_LOCATION, jeu: rec.jeu || "",
                           shiny: !!rec.shiny, transferable: {}, fait: false,
-                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "double" },
+                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "double", evolue: !!rec.evolue, details: rec.details || [] },
                         });
                         updateCatch(selected, idx, "fromInterjeu", link);
                         window.alert(`Ajouté dans Interjeu — retour vers ${DEFAULT_LOCATION} depuis ${catchLocation(rec)}.`);
@@ -3829,6 +4008,21 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                   width="100%"
                 />
                 <MultiSelectFilter label="Marque" options={marques} selected={marqueFilter} onChange={setMarqueFilter} width="100%" />
+                <MultiSelectFilter label="Méthode" options={modes} selected={modeFilter} onChange={setModeFilter} width="100%" />
+                <MultiSelectFilter
+                  label="Évolué"
+                  options={[["yes", "Évolué"], ["no", "Non évolué"]]}
+                  selected={evolueFilter}
+                  onChange={setEvolueFilter}
+                  width="100%"
+                />
+                <MultiSelectFilter
+                  label="Détail"
+                  options={[["__none__", "Sans détail"], ...details.map((d) => [d, d])]}
+                  selected={detailFilterSel}
+                  onChange={setDetailFilterSel}
+                  width="100%"
+                />
               </div>
             ),
           },
@@ -4465,7 +4659,7 @@ function useCustomInterjeu() {
 function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
   const { items, setItems, ready, persist, saveState } = useCustomInterjeu();
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
-  const { customMarques, addMarque, customLocations, addLocation, customJeux, addJeu, customModes } = useCustomLists();
+  const { customMarques, addMarque, customLocations, addLocation, customJeux, addJeu, customModes, customDetails, modeMarques, detailMarques } = useCustomLists();
   const { liveRows, ready: natReady, hasShinyForGame } = useLiveNat();
   // Lien Interjeu -> Shiny/Double (§ ajout demandé) : accès direct aux deux catalogues de
   // captures pour pouvoir y injecter une nouvelle entrée depuis la fiche Interjeu, et pour
@@ -4483,6 +4677,16 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     if (shinyCatchesData) Object.values(shinyCatchesData).forEach((arr) => (arr || []).forEach((rec) => { if (rec.mode) discovered.push(rec.mode); }));
     return orderedList(customModes, discovered);
   }, [shinyCatchesData, customModes]);
+  // Liste des "Détail" (Charme Chroma, 60+ combats…) proposée sur la fiche Interjeu elle-même —
+  // même patron que interjeuModes ci-dessus.
+  const interjeuDetails = useMemo(() => {
+    const discovered = [];
+    if (shinyCatchesData) Object.values(shinyCatchesData).forEach((arr) => (arr || []).forEach((rec) => (rec.details || []).forEach((d) => discovered.push(d))));
+    return orderedList(customDetails, discovered);
+  }, [shinyCatchesData, customDetails]);
+  // Méthode/Détail restreints par marque (Paramètres → "Disponibilité par marque").
+  const modeOptionsFor2 = (marqueVal) => optionsForMarque(interjeuModes, marqueVal, modeMarques);
+  const detailOptionsFor2 = (marqueVal) => optionsForMarque(interjeuDetails, marqueVal, detailMarques);
   const [viewMode, setViewMode] = useCachedState(filterCache, "interjeu", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "interjeu", "search", "");
   const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "interjeu", "shinyFilter", null);
@@ -4595,17 +4799,25 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     // l'entrée elle-même : ce sont les champs utilisés pour l'appariement, les modifier casserait
     // la détection de confirmation/suppression ci-dessus.
     let syncedAny = false;
+    const sameDetails = (a, b) => {
+      const aa = a || [], bb = b || [];
+      if (aa.length !== bb.length) return false;
+      return aa.every((v) => bb.includes(v));
+    };
     const applySentInfoSync = (rec, list) => {
       if (!rec.fromInterjeu) return;
       const link = rec.fromInterjeu;
-      const fresh = { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "" };
+      // Évolué/Détail (§ nouveau) suivent le même patron que date/méthode/marque : l'exemplaire
+      // Shiny/Double lié reste la source de vérité, recopiée dans sentInfo à chaque montage.
+      const fresh = { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", evolue: !!rec.evolue, details: rec.details || [] };
       list.forEach((it, i) => {
         const match = link.nom === it.nom && (link.forme || null) === (it.forme || null) &&
           link.nomApres === it.nomApres && (link.formeApres || null) === (it.formeApres || null) &&
           link.marque === it.marque;
         if (!match) return;
         const cur = it.sentInfo || {};
-        if (cur.date === fresh.date && cur.mode === fresh.mode && cur.marque === fresh.marque) return;
+        if (cur.date === fresh.date && cur.mode === fresh.mode && cur.marque === fresh.marque
+          && !!cur.evolue === fresh.evolue && sameDetails(cur.details, fresh.details)) return;
         list[i] = { ...it, sentInfo: { ...cur, ...fresh } };
         syncedAny = true;
       });
@@ -4775,7 +4987,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     setMarqueFilter(null);
   };
 
-  const [addForm, setAddForm] = useState(null); // null | { date, mode } — formulaire inline "+ Ajouter dans Shiny/Double"
+  const [addForm, setAddForm] = useState(null); // null | { date, mode, evolue, details } — formulaire inline "+ Ajouter dans Shiny/Double"
   const openEntry = (key) => {
     savedScroll.current = window.scrollY;
     setSelected(key);
@@ -4830,7 +5042,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   // "Où" comme emplacement (Shiny uniquement, Double n'a pas ce champ). L'entrée créée porte un
   // tag "fromInterjeu" qui permet de retirer automatiquement l'entrée Interjeu une fois le
   // transfert confirmé (voir l'effet ci-dessus).
-  const addInterjeuToShinyOrDouble = (r, dateStr, modeStr) => {
+  const addInterjeuToShinyOrDouble = (r, dateStr, modeStr, evolueVal, detailsVal) => {
     const status = targetStatus(r);
     const key = r.nomApres + "|" + (r.formeApres || "");
     const link = { nom: r.nom, forme: r.forme || null, nomApres: r.nomApres, formeApres: r.formeApres || null, marque: r.marque };
@@ -4840,6 +5052,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
       next[key] = [...(next[key] || []), {
         date: dateStr, mode: modeStr, marque: r.marque, jeu: r.jeu || "",
         shiny: true, location: r.ou || DEFAULT_LOCATION, fromInterjeu: link,
+        evolue: !!evolueVal, details: detailsVal || [],
       }];
       setDoubleCatchesData(next);
       persistDoubleCatches(next);
@@ -4848,7 +5061,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
       const next = { ...(shinyCatchesData || {}) };
       next[key] = [...(next[key] || []), {
         date: dateStr, mode: modeStr, marque: r.marque, location: r.ou || DEFAULT_LOCATION, jeu: r.jeu || "",
-        fromInterjeu: link,
+        fromInterjeu: link, evolue: !!evolueVal, details: detailsVal || [],
       }];
       setShinyCatchesData(next);
       persistShinyCatches(next);
@@ -4857,7 +5070,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     // Conserve les infos saisies sur l'entrée Interjeu elle-même et marque le transfert comme
     // déjà envoyé, pour ne pas perdre cette information et éviter les doublons involontaires
     // (demande explicite) — la case peut toujours servir à renvoyer un nouvel exemplaire.
-    updateCustom(r.idx, "sentInfo", { date: dateStr, mode: modeStr, marque: r.marque || "", target });
+    updateCustom(r.idx, "sentInfo", { date: dateStr, mode: modeStr, marque: r.marque || "", target, evolue: !!evolueVal, details: detailsVal || [] });
   };
 
   if (!ready || !items) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
@@ -5053,11 +5266,11 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
                     display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5,
                     color: OK, marginBottom: 8,
                   }}>
-                    ✓ Déjà envoyé — {r.sentInfo.date || "date ?"} · {r.sentInfo.mode || "méthode ?"}{r.sentInfo.marque ? " · " + r.sentInfo.marque : ""} → {r.sentInfo.target === "double" ? "Double" : "Shiny"}
+                    ✓ Déjà envoyé — {r.sentInfo.date || "date ?"} · {r.sentInfo.mode || "méthode ?"}{r.sentInfo.marque ? " · " + r.sentInfo.marque : ""}{r.sentInfo.evolue ? " · Évolué" : ""}{(r.sentInfo.details || []).length > 0 ? " · " + r.sentInfo.details.join(", ") : ""} → {r.sentInfo.target === "double" ? "Double" : "Shiny"}
                   </div>
                 )}
                 {r.shiny && addForm === null && (
-                  <button onClick={() => setAddForm({ date: "", mode: "" })} style={{ ...btnGhost, borderColor: GOLD, color: GOLD }}>
+                  <button onClick={() => setAddForm({ date: "", mode: "", evolue: false, details: [] })} style={{ ...btnGhost, borderColor: GOLD, color: GOLD }}>
                     {r.sentInfo ? "+ Renvoyer un autre exemplaire" : "+ Ajouter dans Shiny/Double"}
                   </button>
                 )}
@@ -5072,14 +5285,41 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
                       <Picker
                         value={addForm.mode}
                         onChange={(v) => setAddForm({ ...addForm, mode: v })}
-                        options={interjeuModes}
+                        options={modeOptionsFor2(r.marque)}
                         placeholder="-"
                         buttonStyle={{ ...miniInput, display: "block", width: "100%", textAlign: "left" }}
                         panelWidth={180}
                       />
                     </div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!addForm.evolue} onChange={(e) => setAddForm({ ...addForm, evolue: e.target.checked })} />
+                      Évolué
+                    </label>
+                    <div style={{ width: "100%" }}>
+                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {detailOptionsFor2(r.marque).length === 0 && (
+                          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>Aucun détail disponible pour cette marque.</span>
+                        )}
+                        {detailOptionsFor2(r.marque).map((d) => {
+                          const active = (addForm.details || []).includes(d);
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => setAddForm({ ...addForm, details: active ? (addForm.details || []).filter((x) => x !== d) : [...(addForm.details || []), d] })}
+                              style={{
+                                border: "none", borderRadius: 999, padding: "3px 9px", cursor: "pointer",
+                                fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: active ? 700 : 500,
+                                background: active ? INTERJEU : PANEL, color: active ? "#fff" : MUTED,
+                              }}
+                            >{d}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
                     <button
-                      onClick={() => { addInterjeuToShinyOrDouble(r, addForm.date, addForm.mode); setAddForm(null); }}
+                      onClick={() => { addInterjeuToShinyOrDouble(r, addForm.date, addForm.mode, addForm.evolue, addForm.details); setAddForm(null); }}
                       style={{ ...tabActive, background: GOLD, color: BG }}
                     >
                       Confirmer
@@ -5291,6 +5531,23 @@ async function cascadeRename(kind, oldValue, newValue, marqueCtx) {
     let interjeuChanged = false;
     interjeu.forEach((it) => { if (it.marque === oldValue) { it.marque = newValue; interjeuChanged = true; } });
     if (interjeuChanged) await writeJSON("custom_interjeu", interjeu);
+
+    // Restrictions par marque des Méthodes/Détails (§ nouveau) : remplace l'ancienne marque par
+    // la nouvelle partout où elle apparaît dans les tableaux de restriction.
+    const renameMarqueInRestrictMap = async (key) => {
+      const map = await readJSON(key, {});
+      let changed = false;
+      Object.keys(map).forEach((k) => {
+        const arr = map[k] || [];
+        if (arr.includes(oldValue)) {
+          map[k] = dedupe(arr.map((m) => (m === oldValue ? newValue : m)));
+          changed = true;
+        }
+      });
+      if (changed) await writeJSON(key, map);
+    };
+    await renameMarqueInRestrictMap("mode_marques");
+    await renameMarqueInRestrictMap("detail_marques");
   }
 
   if (kind === "mode") {
@@ -5310,6 +5567,42 @@ async function cascadeRename(kind, oldValue, newValue, marqueCtx) {
       if (rec.mode === oldValue) { rec.mode = newValue; changed2 = true; }
     }));
     if (changed2) await writeJSON("double_catches", doubles);
+
+    // Déplace la clé de restriction par marque (mode_marques[oldValue] -> mode_marques[newValue]).
+    const modeMarques = await readJSON("mode_marques", {});
+    if (Object.prototype.hasOwnProperty.call(modeMarques, oldValue)) {
+      const merged = dedupe([...(modeMarques[newValue] || []), ...modeMarques[oldValue]]);
+      const next = { ...modeMarques, [newValue]: merged };
+      delete next[oldValue];
+      await writeJSON("mode_marques", next);
+    }
+  }
+
+  if (kind === "detail") {
+    const details = await readJSON("custom_details", []);
+    await writeJSON("custom_details", dedupe(details.map((d) => (d === oldValue ? newValue : d))));
+
+    const renameDetailInRecords = async (key) => {
+      const obj = await readJSON(key, {});
+      let changed = false;
+      Object.keys(obj).forEach((k) => (obj[k] || []).forEach((rec) => {
+        if (Array.isArray(rec.details) && rec.details.includes(oldValue)) {
+          rec.details = dedupe(rec.details.map((d) => (d === oldValue ? newValue : d)));
+          changed = true;
+        }
+      }));
+      if (changed) await writeJSON(key, obj);
+    };
+    await renameDetailInRecords("shiny_catches");
+    await renameDetailInRecords("double_catches");
+
+    const detailMarques = await readJSON("detail_marques", {});
+    if (Object.prototype.hasOwnProperty.call(detailMarques, oldValue)) {
+      const merged = dedupe([...(detailMarques[newValue] || []), ...detailMarques[oldValue]]);
+      const next = { ...detailMarques, [newValue]: merged };
+      delete next[oldValue];
+      await writeJSON("detail_marques", next);
+    }
   }
 
   if (kind === "location") {
@@ -6471,6 +6764,9 @@ function SettingsView({ onSaveStateChange }) {
   const [customModes, setCustomModes] = useState([]);
   const [customLocations, setCustomLocations] = useState([]);
   const [customJeux, setCustomJeux] = useState({});
+  const [customDetails, setCustomDetails] = useState([]);
+  const [modeMarques, setModeMarques] = useState({});
+  const [detailMarques, setDetailMarques] = useState({});
   const [customBoxGroups, setCustomBoxGroups] = useState({});
   const [boxGroupOverridesAll, setBoxGroupOverridesAll] = useState({});
   const [shinyCatches, setShinyCatchesState] = useState({});
@@ -6479,8 +6775,10 @@ function SettingsView({ onSaveStateChange }) {
   const [interjeu, setInterjeuState] = useState([]);
   const [selectedJeuMarque, setSelectedJeuMarque] = useState("");
   const [selectedBoxGroupJeu, setSelectedBoxGroupJeu] = useState("");
-  const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "" });
-  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, catalog: true });
+  const [selectedModeRestrict, setSelectedModeRestrict] = useState("");
+  const [selectedDetailRestrict, setSelectedDetailRestrict] = useState("");
+  const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
+  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, catalog: true, detail: true, restrict: true });
   const toggleSection = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const [saveState, setSaveState] = useState("idle");
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
@@ -6493,7 +6791,7 @@ function SettingsView({ onSaveStateChange }) {
       } catch (e) {}
       return fallback;
     };
-    const [m, mo, lo, je, sh, db, ev, itj, bg, bgo] = await Promise.all([
+    const [m, mo, lo, je, sh, db, ev, itj, bg, bgo, de, mm, dm] = await Promise.all([
       readJSON("custom_marques", []),
       readJSON("custom_modes", []),
       readJSON("custom_locations", []),
@@ -6504,6 +6802,9 @@ function SettingsView({ onSaveStateChange }) {
       readJSON("custom_interjeu", []),
       readJSON("custom_box_groups", {}),
       readJSON("box_group_overrides", {}),
+      readJSON("custom_details", []),
+      readJSON("mode_marques", {}),
+      readJSON("detail_marques", {}),
     ]);
     setCustomMarques(m);
     setCustomModes(mo);
@@ -6515,6 +6816,9 @@ function SettingsView({ onSaveStateChange }) {
     setInterjeuState(itj);
     setCustomBoxGroups(bg);
     setBoxGroupOverridesAll(bgo);
+    setCustomDetails(de);
+    setModeMarques(mm);
+    setDetailMarques(dm);
     setReady(true);
   };
 
@@ -6535,6 +6839,14 @@ function SettingsView({ onSaveStateChange }) {
     Object.values(doubleCatches).forEach((arr) => (arr || []).forEach((r) => { if (r.mode) discovered.push(r.mode); }));
     return orderedList(customModes, discovered);
   }, [customModes, shinyCatches, doubleCatches]);
+
+  const details = useMemo(() => {
+    const discovered = [];
+    Object.values(shinyCatches).forEach((arr) => (arr || []).forEach((r) => (r.details || []).forEach((d) => discovered.push(d))));
+    Object.values(doubleCatches).forEach((arr) => (arr || []).forEach((r) => (r.details || []).forEach((d) => discovered.push(d))));
+    interjeu.forEach((it) => (it.details || []).forEach((d) => discovered.push(d)));
+    return orderedList(customDetails, discovered);
+  }, [customDetails, shinyCatches, doubleCatches, interjeu]);
 
   const locations = useMemo(() => {
     const discovered = [];
@@ -6562,6 +6874,27 @@ function SettingsView({ onSaveStateChange }) {
     return orderedList(customBoxGroups[selectedBoxGroupJeu] || [], discovered);
   }, [selectedBoxGroupJeu, customBoxGroups, boxGroupOverridesAll]);
 
+  // Active/désactive une marque dans la restriction d'une Méthode ou d'un Détail — liste vide
+  // (ou clé absente) veut dire "disponible pour toutes les marques" (comportement par défaut).
+  const doToggleModeMarque = async (mode, marque) => {
+    setSaveState("saving");
+    const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
+    const cur = modeMarques[mode] || [];
+    const next = cur.includes(marque) ? cur.filter((m) => m !== marque) : [...cur, marque];
+    await writeJSON("mode_marques", { ...modeMarques, [mode]: next });
+    await loadAll();
+    setSaveState("saved");
+  };
+  const doToggleDetailMarque = async (detail, marque) => {
+    setSaveState("saving");
+    const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
+    const cur = detailMarques[detail] || [];
+    const next = cur.includes(marque) ? cur.filter((m) => m !== marque) : [...cur, marque];
+    await writeJSON("detail_marques", { ...detailMarques, [detail]: next });
+    await loadAll();
+    setSaveState("saved");
+  };
+
   const doRename = async (kind, oldVal, newVal, marqueCtx) => {
     setSaveState("saving");
     try {
@@ -6580,6 +6913,7 @@ function SettingsView({ onSaveStateChange }) {
     const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
     if (kind === "marque" && !marques.includes(v)) await writeJSON("custom_marques", [...customMarques, v]);
     if (kind === "mode" && !modes.includes(v)) await writeJSON("custom_modes", [...customModes, v]);
+    if (kind === "detail" && !details.includes(v)) await writeJSON("custom_details", [...customDetails, v]);
     if (kind === "location" && !locations.includes(v)) await writeJSON("custom_locations", [...customLocations, v]);
     if (kind === "jeu" && selectedJeuMarque && !jeuxForSelectedMarque.includes(v)) {
       await writeJSON("custom_jeux", { ...customJeux, [selectedJeuMarque]: [...(customJeux[selectedJeuMarque] || []), v] });
@@ -6597,6 +6931,7 @@ function SettingsView({ onSaveStateChange }) {
     const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
     if (kind === "marque") await writeJSON("custom_marques", customMarques.filter((m) => m !== val));
     if (kind === "mode") await writeJSON("custom_modes", customModes.filter((m) => m !== val));
+    if (kind === "detail") await writeJSON("custom_details", customDetails.filter((d) => d !== val));
     if (kind === "location") await writeJSON("custom_locations", customLocations.filter((l) => l !== val));
     if (kind === "jeu" && selectedJeuMarque) {
       await writeJSON("custom_jeux", { ...customJeux, [selectedJeuMarque]: (customJeux[selectedJeuMarque] || []).filter((j) => j !== val) });
@@ -6620,6 +6955,7 @@ function SettingsView({ onSaveStateChange }) {
     const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
     if (kind === "marque") await writeJSON("custom_marques", arr);
     if (kind === "mode") await writeJSON("custom_modes", arr);
+    if (kind === "detail") await writeJSON("custom_details", arr);
     if (kind === "location") await writeJSON("custom_locations", arr);
     if (kind === "jeu" && marqueCtx) await writeJSON("custom_jeux", { ...customJeux, [marqueCtx]: arr });
     if (kind === "boxgroup" && marqueCtx) await writeJSON("custom_box_groups", { ...customBoxGroups, [marqueCtx]: arr });
@@ -6692,6 +7028,7 @@ function SettingsView({ onSaveStateChange }) {
       </div>
       <Section title="Marque" color={TXT} kind="marque" values={marques} />
       <Section title="Méthode de capture" color={GOLD} kind="mode" values={modes} />
+      <Section title="Détail (Charme Chroma, 60+ combats…)" color={INTERJEU} kind="detail" values={details} />
       <Section title="Emplacement" color={LIGHTBLUE} kind="location" values={locations} />
 
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
@@ -6761,6 +7098,83 @@ function SettingsView({ onSaveStateChange }) {
               <button onClick={() => doAdd("jeu")} style={{ ...tabActive, flexShrink: 0 }}>+ Ajouter</button>
             </div>
           </React.Fragment>
+        )}
+        </React.Fragment>
+        )}
+      </div>
+
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
+        <button
+          onClick={() => toggleSection("restrict")}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+            background: "transparent", border: "none", cursor: "pointer", padding: 0,
+            marginBottom: collapsed.restrict ? 0 : 10,
+          }}
+        >
+          <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: GOLD }}>Disponibilité par marque (Méthode / Détail)</span>
+          <span style={{ color: MUTED, fontSize: 12, transform: collapsed.restrict ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+        </button>
+        {!collapsed.restrict && (
+        <React.Fragment>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
+          Choisis une Méthode ou un Détail, puis coche les marques où elle/il est proposé(e). Aucune marque cochée = disponible partout (ex. "Nature"). Cocher une ou plusieurs marques restreint le choix à celles-ci (ex. "Community Day" → Go uniquement).
+        </div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: GOLD, marginBottom: 6 }}>Méthode</div>
+        <Picker
+          value={selectedModeRestrict}
+          onChange={(v) => setSelectedModeRestrict(v)}
+          options={modes}
+          placeholder="— choisir une méthode —"
+          buttonStyle={{ ...selectStyle, width: "100%", marginBottom: 10, display: "block", textAlign: "left" }}
+          panelWidth={220}
+        />
+        {selectedModeRestrict && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+            {marques.map((m) => {
+              const active = (modeMarques[selectedModeRestrict] || []).includes(m);
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => doToggleModeMarque(selectedModeRestrict, m)}
+                  style={{
+                    border: "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer",
+                    fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: active ? 700 : 500,
+                    background: active ? GOLD : PANEL, color: active ? BG : MUTED,
+                  }}
+                >{m}</button>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: INTERJEU, marginBottom: 6 }}>Détail</div>
+        <Picker
+          value={selectedDetailRestrict}
+          onChange={(v) => setSelectedDetailRestrict(v)}
+          options={details}
+          placeholder="— choisir un détail —"
+          buttonStyle={{ ...selectStyle, width: "100%", marginBottom: 10, display: "block", textAlign: "left" }}
+          panelWidth={220}
+        />
+        {selectedDetailRestrict && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {marques.map((m) => {
+              const active = (detailMarques[selectedDetailRestrict] || []).includes(m);
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => doToggleDetailMarque(selectedDetailRestrict, m)}
+                  style={{
+                    border: "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer",
+                    fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: active ? 700 : 500,
+                    background: active ? INTERJEU : PANEL, color: active ? "#fff" : MUTED,
+                  }}
+                >{m}</button>
+              );
+            })}
+          </div>
         )}
         </React.Fragment>
         )}
@@ -8804,6 +9218,9 @@ async function buildCatchSheetRows(storageKey) {
         Location: rec.location || "", Jeu: rec.jeu || "",
         Alpha: rec.alpha ? 1 : 0,
         Gmax: rec.gmax ? "Gmax" : (rec.gmaxable ? "Gmaxable" : ""),
+        Evolue: rec.evolue ? 1 : 0,
+        // Détail (Charme Chroma, 60+ combats…) : plusieurs valeurs possibles, séparées par virgule.
+        Detail: (rec.details || []).join(", "),
         // Lien Interjeu (§43 doc) — sérialisé en JSON dans une cellule texte, pour ne pas perdre
         // le suivi automatique lors d'un aller-retour Export/Import Excel.
         FromInterjeu: rec.fromInterjeu ? JSON.stringify(rec.fromInterjeu) : "",
@@ -8829,7 +9246,8 @@ async function buildInterjeuSheetRows() {
     Marque: it.marque || "", Shiny: it.shiny ? 1 : 0, Ou: it.ou || "", Vers: it.vers || "", Jeu: it.jeu || "",
     // "Déjà envoyé" (§43 doc) — sérialisé en JSON ; de toute façon re-synchronisé automatiquement
     // depuis l'exemplaire Shiny/Double lié à chaque ouverture de l'onglet Interjeu, ceci évite
-    // simplement un aller-retour Excel à blanc entre-temps.
+    // simplement un aller-retour Excel à blanc entre-temps. Porte aussi Méthode/Évolué/Détail
+    // (§ nouveau) puisque ces informations n'existent que dans ce contexte d'envoi.
     SentInfo: it.sentInfo ? JSON.stringify(it.sentInfo) : "",
   }));
 }
@@ -8978,6 +9396,8 @@ async function importCatchSheet(storageKey, rows, mode) {
     if (Number(row.Alpha)) rec.alpha = true;
     const g = String(row.Gmax || "").trim().toLowerCase();
     if (g === "gmax") rec.gmax = true; else if (g === "gmaxable") rec.gmaxable = true;
+    if (Number(row.Evolue)) rec.evolue = true;
+    if (row.Detail) rec.details = String(row.Detail).split(",").map((d) => d.trim()).filter(Boolean);
     if (row.FromInterjeu) { try { rec.fromInterjeu = JSON.parse(row.FromInterjeu); } catch (e) {} }
     if (!obj[key]) obj[key] = [];
     obj[key].push(rec); // jamais de déduplication (doublons shiny légitimes — voir doc §4)
@@ -9300,6 +9720,9 @@ function App() {
     "custom_modes",
     "custom_locations",
     "custom_jeux",
+    "custom_details",
+    "mode_marques",
+    "detail_marques",
     "custom_events",
     "custom_interjeu",
     "catalog_overrides",
