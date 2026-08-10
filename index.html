@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.10.18.40";
+const APP_VERSION = "2026.8.10.18.52";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9328,6 +9328,10 @@ const EXCEL_SHEETS = [
   { key: "double", label: "Double" },
   { key: "event", label: "Event" },
   { key: "interjeu", label: "Interjeu" },
+  { key: "listes", label: "Listes" },
+  { key: "jeuxmarque", label: "Jeu par marque" },
+  { key: "boitesgroupes", label: "Groupe de boîte" },
+  { key: "dispo", label: "Disponibilité" },
   ...GAME_ORDER.map((g) => ({ key: "game_" + g, label: g })),
 ];
 
@@ -9468,6 +9472,67 @@ async function buildInterjeuSheetRows() {
   }));
 }
 
+// ---- Feuilles Excel des listes personnalisées (§50 doc) — pour un aller-retour Excel complet,
+// au même titre que les captures et le catalogue. Symétriques par construction : chaque builder
+// a son pendant importXxxSheet plus bas, qui réécrit exactement la même clé de stockage.
+async function buildListesSheetRows() {
+  const marques = await storageGetJSON("custom_marques", []);
+  const modes = await storageGetJSON("custom_modes", []);
+  const details = await storageGetJSON("custom_details", []);
+  const locations = await storageGetJSON("custom_locations", []);
+  const max = Math.max(marques.length, modes.length, details.length, locations.length, 1);
+  const rows = [];
+  for (let i = 0; i < max; i++) {
+    rows.push({ Marque: marques[i] || "", Méthode: modes[i] || "", Détail: details[i] || "", Emplacement: locations[i] || "" });
+  }
+  return rows;
+}
+
+async function buildJeuxMarqueSheetRows() {
+  const obj = await storageGetJSON("custom_jeux", {});
+  const rows = [];
+  Object.keys(obj).forEach((marque) => {
+    (obj[marque] || []).forEach((jeu) => rows.push({ Marque: marque, Jeu: jeu }));
+  });
+  return rows;
+}
+
+async function buildBoitesGroupesSheetRows() {
+  const groups = await storageGetJSON("custom_box_groups", {});
+  const settings = await storageGetJSON("box_settings", {});
+  const rows = [];
+  const seenGames = new Set();
+  Object.keys(groups).forEach((jeu) => {
+    seenGames.add(jeu);
+    (groups[jeu] || []).forEach((groupe) => {
+      const cfg = settings[jeu] || {};
+      rows.push({ Jeu: jeu, Groupe: groupe, TailleBoite: cfg.size || "", PrefixeBoite: cfg.prefix || "" });
+    });
+  });
+  // Un jeu peut avoir un réglage de taille/préfixe sans aucun groupe personnalisé — ligne dédiée
+  // pour ne pas perdre l'information (Groupe vide).
+  Object.keys(settings).forEach((jeu) => {
+    if (seenGames.has(jeu)) return;
+    rows.push({ Jeu: jeu, Groupe: "", TailleBoite: settings[jeu].size || "", PrefixeBoite: settings[jeu].prefix || "" });
+  });
+  return rows;
+}
+
+async function buildDispoSheetRows() {
+  const modeMarques = await storageGetJSON("mode_marques", {});
+  const detailMarques = await storageGetJSON("detail_marques", {});
+  const rows = [];
+  Object.keys(modeMarques).forEach((v) => {
+    const arr = modeMarques[v] || [];
+    if (arr.length) rows.push({ Type: "Méthode", Valeur: v, Marques: arr.join(", ") });
+  });
+  Object.keys(detailMarques).forEach((v) => {
+    const arr = detailMarques[v] || [];
+    if (arr.length) rows.push({ Type: "Détail", Valeur: v, Marques: arr.join(", ") });
+  });
+  return rows;
+}
+
 async function buildExcelWorkbook(selectedKeys) {
   const wb = XLSX.utils.book_new();
   for (const sheetDef of EXCEL_SHEETS) {
@@ -9479,6 +9544,10 @@ async function buildExcelWorkbook(selectedKeys) {
     else if (sheetDef.key === "double") rows = await buildCatchSheetRows("double_catches");
     else if (sheetDef.key === "event") rows = await buildEventSheetRows();
     else if (sheetDef.key === "interjeu") rows = await buildInterjeuSheetRows();
+    else if (sheetDef.key === "listes") rows = await buildListesSheetRows();
+    else if (sheetDef.key === "jeuxmarque") rows = await buildJeuxMarqueSheetRows();
+    else if (sheetDef.key === "boitesgroupes") rows = await buildBoitesGroupesSheetRows();
+    else if (sheetDef.key === "dispo") rows = await buildDispoSheetRows();
     else if (sheetDef.key.startsWith("game_")) rows = await buildGameSheetRows(sheetDef.key.slice(5));
     if (!rows || !rows.length) rows = [{ Nom: "", Forme: "" }];
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -9724,6 +9793,105 @@ async function importParamsSheet(rows) {
   await window.storage.set("catalog_additions", JSON.stringify(additions), false);
 }
 
+// ---- Import des feuilles de listes personnalisées (§50 doc) — pendant des builders ci-dessus.
+// mode "replace" = la liste/le mapping devient exactement le contenu du fichier ; mode "add" =
+// fusion (ajoute ce qui manque, ne retire jamais une valeur existante), même sémantique que le
+// reste de l'import Excel (§ voir importGameSheet).
+async function importListesSheet(rows, mode) {
+  const readJSON = async (key, fb) => {
+    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
+    return fb;
+  };
+  const dedupe = (arr) => { const seen = new Set(); return arr.filter((v) => { if (seen.has(v)) return false; seen.add(v); return true; }); };
+  const collect = (col) => dedupe(rows.map((r) => String(r[col] || "").trim()).filter(Boolean));
+  const cols = { Marque: "custom_marques", Méthode: "custom_modes", Détail: "custom_details", Emplacement: "custom_locations" };
+  for (const [col, key] of Object.entries(cols)) {
+    const fromSheet = collect(col);
+    const existing = mode === "replace" ? [] : await readJSON(key, []);
+    const next = dedupe([...existing, ...fromSheet]);
+    await window.storage.set(key, JSON.stringify(next), false);
+  }
+}
+
+async function importJeuxMarqueSheet(rows, mode) {
+  const readJSON = async (key, fb) => {
+    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
+    return fb;
+  };
+  const built = {};
+  rows.forEach((r) => {
+    const marque = String(r.Marque || "").trim();
+    const jeu = String(r.Jeu || "").trim();
+    if (!marque || !jeu) return;
+    if (!built[marque]) built[marque] = [];
+    if (!built[marque].includes(jeu)) built[marque].push(jeu);
+  });
+  const existing = mode === "replace" ? {} : await readJSON("custom_jeux", {});
+  const next = { ...existing };
+  Object.keys(built).forEach((marque) => {
+    const base = mode === "replace" ? [] : (existing[marque] || []);
+    const merged = [...base];
+    built[marque].forEach((j) => { if (!merged.includes(j)) merged.push(j); });
+    next[marque] = merged;
+  });
+  await window.storage.set("custom_jeux", JSON.stringify(next), false);
+}
+
+async function importBoitesGroupesSheet(rows, mode) {
+  const readJSON = async (key, fb) => {
+    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
+    return fb;
+  };
+  const builtGroups = {};
+  const builtSettings = {};
+  rows.forEach((r) => {
+    const jeu = String(r.Jeu || "").trim();
+    if (!jeu) return;
+    const groupe = String(r.Groupe || "").trim();
+    if (groupe) {
+      if (!builtGroups[jeu]) builtGroups[jeu] = [];
+      if (!builtGroups[jeu].includes(groupe)) builtGroups[jeu].push(groupe);
+    }
+    const size = Number(r.TailleBoite);
+    const prefix = String(r.PrefixeBoite || "");
+    if (size || prefix) builtSettings[jeu] = { size: size || 30, prefix };
+  });
+  const existingGroups = mode === "replace" ? {} : await readJSON("custom_box_groups", {});
+  const nextGroups = { ...existingGroups };
+  Object.keys(builtGroups).forEach((jeu) => {
+    const base = mode === "replace" ? [] : (existingGroups[jeu] || []);
+    const merged = [...base];
+    builtGroups[jeu].forEach((g) => { if (!merged.includes(g)) merged.push(g); });
+    nextGroups[jeu] = merged;
+  });
+  await window.storage.set("custom_box_groups", JSON.stringify(nextGroups), false);
+
+  const existingSettings = await readJSON("box_settings", {});
+  const nextSettings = { ...existingSettings, ...builtSettings };
+  await window.storage.set("box_settings", JSON.stringify(nextSettings), false);
+}
+
+async function importDispoSheet(rows, mode) {
+  const readJSON = async (key, fb) => {
+    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
+    return fb;
+  };
+  const builtMode = {};
+  const builtDetail = {};
+  rows.forEach((r) => {
+    const type = String(r.Type || "").trim();
+    const valeur = String(r.Valeur || "").trim();
+    if (!valeur) return;
+    const marquesList = String(r.Marques || "").split(",").map((m) => m.trim()).filter(Boolean);
+    if (type === "Méthode") builtMode[valeur] = marquesList;
+    else if (type === "Détail") builtDetail[valeur] = marquesList;
+  });
+  const existingMode = mode === "replace" ? {} : await readJSON("mode_marques", {});
+  const existingDetail = mode === "replace" ? {} : await readJSON("detail_marques", {});
+  await window.storage.set("mode_marques", JSON.stringify({ ...existingMode, ...builtMode }), false);
+  await window.storage.set("detail_marques", JSON.stringify({ ...existingDetail, ...builtDetail }), false);
+}
+
 async function applyExcelWorkbookImport(wb, mode) {
   const gameSet = new Set(GAME_ORDER);
   let touched = 0;
@@ -9738,6 +9906,10 @@ async function applyExcelWorkbookImport(wb, mode) {
     else if (sheetName === "Double") { await importCatchSheet("double_catches", rows, mode); touched++; }
     else if (sheetName === "Event") { await importEventSheet(rows, mode); touched++; }
     else if (sheetName === "Interjeu") { await importInterjeuSheet(rows, mode); touched++; }
+    else if (sheetName === "Listes") { await importListesSheet(rows, mode); touched++; }
+    else if (sheetName === "Jeu par marque") { await importJeuxMarqueSheet(rows, mode); touched++; }
+    else if (sheetName === "Groupe de boîte") { await importBoitesGroupesSheet(rows, mode); touched++; }
+    else if (sheetName === "Disponibilité") { await importDispoSheet(rows, mode); touched++; }
   }
   return touched;
 }
