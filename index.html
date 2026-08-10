@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.10.0.47";
+const APP_VERSION = "2026.8.10.1.31";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -6871,6 +6871,149 @@ function DraggableList({ items, onReorder, renderItem }) {
   );
 }
 
+// Éditeur "marque d'abord" de la disponibilité d'une Méthode/Détail par marque (voir §47) — on
+// choisit une marque, puis on voit les valeurs actuellement disponibles pour elle (pilules pleines
+// en haut, clic = retirer) et on peut en ajouter via le bouton "+ Ajouter" qui ouvre la liste des
+// valeurs encore non disponibles pour cette marque (pilules vides, clic = ajouter, sélection multiple).
+function MarqueAvailabilityEditor({ accent, values, map, marques, selectedMarque, setSelectedMarque, addOpen, setAddOpen, onSetAvailability, placeholder }) {
+  const isAvailable = (value, marque) => {
+    const arr = map[value] || [];
+    return arr.length === 0 || arr.includes(marque);
+  };
+  const selectedValues = selectedMarque ? values.filter((v) => isAvailable(v, selectedMarque)) : [];
+  const nonSelectedValues = selectedMarque ? values.filter((v) => !isAvailable(v, selectedMarque)) : [];
+  const pillStyleFor = (active) => ({
+    ...btnGhost, padding: "6px 12px", fontSize: 12, whiteSpace: "nowrap",
+    background: active ? accent : "transparent",
+    color: active ? "#fff" : MUTED,
+    border: `1px solid ${active ? accent : LINE}`,
+    fontWeight: active ? 700 : 500,
+  });
+  return (
+    <React.Fragment>
+      <Picker
+        value={selectedMarque}
+        onChange={(v) => { setSelectedMarque(v); setAddOpen(false); }}
+        options={marques}
+        placeholder={placeholder}
+        buttonStyle={{ ...selectStyle, width: "100%", marginBottom: 10, display: "block", textAlign: "left" }}
+        panelWidth={220}
+      />
+      {selectedMarque && (
+        <React.Fragment>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: addOpen ? 10 : 16 }}>
+            <button
+              type="button"
+              onClick={() => setAddOpen((o) => !o)}
+              style={{
+                ...btnGhost, padding: "6px 12px", fontSize: 12, whiteSpace: "nowrap",
+                border: `1px dashed ${accent}`, color: accent, fontWeight: 700,
+              }}
+            >{addOpen ? "✕ Fermer" : "+ Ajouter"}</button>
+            {selectedValues.length === 0 && !addOpen && (
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, alignSelf: "center" }}>
+                Aucune valeur disponible pour cette marque pour l'instant.
+              </span>
+            )}
+            {selectedValues.map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => onSetAvailability(v, selectedMarque)}
+                style={pillStyleFor(true)}
+              >{v} ✕</button>
+            ))}
+          </div>
+          {addOpen && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
+              {nonSelectedValues.length === 0 && (
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
+                  Tout est déjà disponible pour cette marque.
+                </span>
+              )}
+              {nonSelectedValues.map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => onSetAvailability(v, selectedMarque)}
+                  style={pillStyleFor(false)}
+                >{v}</button>
+              ))}
+            </div>
+          )}
+        </React.Fragment>
+      )}
+    </React.Fragment>
+  );
+}
+
+// Section "liste éditable" (Marque/Méthode/Détail/Emplacement) — composant STABLE défini au niveau
+// module plutôt qu'à l'intérieur de SettingsView : si ce composant était recréé à chaque rendu
+// (comme une const-fonction locale), React le traiterait comme un type différent à chaque frappe
+// dans le champ "Nouvelle valeur…" et démonterait/remonterait tout le sous-arbre — l'<input>
+// perdrait le focus et le clavier mobile se refermerait après chaque caractère. Piège à garder en
+// tête pour tout futur composant contenant un champ de saisie.
+function SettingsSection({
+  title, color, kind, values, marqueCtx,
+  collapsed, toggleSection,
+  newValue, setNewValue,
+  doAdd, doReorder, doRename, doDelete,
+}) {
+  const isCollapsed = collapsed[kind];
+  return (
+    <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
+      <button
+        onClick={() => toggleSection(kind)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+          background: "transparent", border: "none", cursor: "pointer", padding: 0,
+          marginBottom: isCollapsed ? 0 : 10,
+        }}
+      >
+        <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color }}>{title}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{values.length}</span>
+          <span style={{ color: MUTED, fontSize: 12, transform: isCollapsed ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+        </span>
+      </button>
+      {!isCollapsed && (
+      <React.Fragment>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+        {values.length === 0 && (
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>Aucune valeur pour l'instant.</div>
+        )}
+        {kind === "location" && values.includes(DEFAULT_LOCATION) && (
+          <SettingsListRow value={DEFAULT_LOCATION} locked onRename={() => {}} onDelete={() => {}} />
+        )}
+        <DraggableList
+          items={values.filter((v) => v !== DEFAULT_LOCATION)}
+          onReorder={(arr) => doReorder(kind, arr, marqueCtx)}
+          renderItem={(v, i, dragHandleProps) => (
+            <SettingsListRow
+              value={v}
+              onRename={(oldVal, newVal) => doRename(kind, oldVal, newVal, marqueCtx)}
+              onDelete={(val) => doDelete(kind, val)}
+              dragHandleProps={dragHandleProps}
+            />
+          )}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          value={newValue[kind]}
+          onChange={(e) => setNewValue({ ...newValue, [kind]: e.target.value })}
+          onKeyDown={(e) => { if (e.key === "Enter") doAdd(kind); }}
+          placeholder="Nouvelle valeur…"
+          style={{ ...miniInput, flex: 1 }}
+        />
+        <button onClick={() => doAdd(kind)} style={{ ...tabActive, flexShrink: 0 }}>+ Ajouter</button>
+      </div>
+      </React.Fragment>
+      )}
+    </div>
+  );
+}
+
 function SettingsView({
   onSaveStateChange,
   gistToken, gistId, gistSyncedAt, gistModCount, gistSyncState, gistMsg,
@@ -6892,8 +7035,10 @@ function SettingsView({
   const [interjeu, setInterjeuState] = useState([]);
   const [selectedJeuMarque, setSelectedJeuMarque] = useState("");
   const [selectedBoxGroupJeu, setSelectedBoxGroupJeu] = useState("");
-  const [selectedModeRestrict, setSelectedModeRestrict] = useState("");
-  const [selectedDetailRestrict, setSelectedDetailRestrict] = useState("");
+  const [selectedModeMarque, setSelectedModeMarque] = useState("");
+  const [selectedDetailMarque, setSelectedDetailMarque] = useState("");
+  const [modeAddOpen, setModeAddOpen] = useState(false);
+  const [detailAddOpen, setDetailAddOpen] = useState(false);
   const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
   const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, catalog: true, detail: true, restrict: true, gist: true });
   const [gistTokenDraft, setGistTokenDraft] = useState(gistToken || "");
@@ -6995,23 +7140,23 @@ function SettingsView({
     return orderedList(customBoxGroups[selectedBoxGroupJeu] || [], discovered);
   }, [selectedBoxGroupJeu, customBoxGroups, boxGroupOverridesAll]);
 
-  // Active/désactive une marque dans la restriction d'une Méthode ou d'un Détail — liste vide
-  // (ou clé absente) veut dire "disponible pour toutes les marques" (comportement par défaut).
-  const doToggleModeMarque = async (mode, marque) => {
+  // Bascule la disponibilité d'une Méthode/Détail pour une marque donnée (flux "marque d'abord",
+  // voir §47) — liste vide (ou clé absente) veut dire "disponible pour toutes les marques"
+  // (comportement par défaut, opt-in only pour les valeurs explicitement restreintes).
+  // Retirer une valeur actuellement dispo partout la bascule en "disponible partout SAUF cette
+  // marque" (liste explicite = toutes les marques moins celle-ci), pour rester représentable avec
+  // le même modèle de données par inclusion.
+  const doSetAvailability = async (kind, value, marque) => {
     setSaveState("saving");
-    const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
-    const cur = modeMarques[mode] || [];
-    const next = cur.includes(marque) ? cur.filter((m) => m !== marque) : [...cur, marque];
-    await writeJSON("mode_marques", { ...modeMarques, [mode]: next });
-    await loadAll();
-    setSaveState("saved");
-  };
-  const doToggleDetailMarque = async (detail, marque) => {
-    setSaveState("saving");
-    const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
-    const cur = detailMarques[detail] || [];
-    const next = cur.includes(marque) ? cur.filter((m) => m !== marque) : [...cur, marque];
-    await writeJSON("detail_marques", { ...detailMarques, [detail]: next });
+    const map = kind === "mode" ? modeMarques : detailMarques;
+    const key = kind === "mode" ? "mode_marques" : "detail_marques";
+    const writeJSON = async (k, v) => { try { await window.storage.set(k, JSON.stringify(v), false); } catch (e) {} };
+    const cur = map[value] || [];
+    const currentlyAvailable = cur.length === 0 || cur.includes(marque);
+    const next = currentlyAvailable
+      ? (cur.length === 0 ? marques.filter((m) => m !== marque) : cur.filter((m) => m !== marque))
+      : [...cur, marque];
+    await writeJSON(key, { ...map, [value]: next });
     await loadAll();
     setSaveState("saved");
   };
@@ -7086,71 +7231,23 @@ function SettingsView({
 
   if (!ready) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
 
-  const Section = ({ title, color, kind, values, marqueCtx }) => {
-    const isCollapsed = collapsed[kind];
-    return (
-    <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
-      <button
-        onClick={() => toggleSection(kind)}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-          background: "transparent", border: "none", cursor: "pointer", padding: 0,
-          marginBottom: isCollapsed ? 0 : 10,
-        }}
-      >
-        <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color }}>{title}</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{values.length}</span>
-          <span style={{ color: MUTED, fontSize: 12, transform: isCollapsed ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
-        </span>
-      </button>
-      {!isCollapsed && (
-      <React.Fragment>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
-        {values.length === 0 && (
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>Aucune valeur pour l'instant.</div>
-        )}
-        {kind === "location" && values.includes(DEFAULT_LOCATION) && (
-          <SettingsListRow value={DEFAULT_LOCATION} locked onRename={() => {}} onDelete={() => {}} />
-        )}
-        <DraggableList
-          items={values.filter((v) => v !== DEFAULT_LOCATION)}
-          onReorder={(arr) => doReorder(kind, arr, marqueCtx)}
-          renderItem={(v, i, dragHandleProps) => (
-            <SettingsListRow
-              value={v}
-              onRename={(oldVal, newVal) => doRename(kind, oldVal, newVal, marqueCtx)}
-              onDelete={(val) => doDelete(kind, val)}
-              dragHandleProps={dragHandleProps}
-            />
-          )}
-        />
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        <input
-          value={newValue[kind]}
-          onChange={(e) => setNewValue({ ...newValue, [kind]: e.target.value })}
-          onKeyDown={(e) => { if (e.key === "Enter") doAdd(kind); }}
-          placeholder="Nouvelle valeur…"
-          style={{ ...miniInput, flex: 1 }}
-        />
-        <button onClick={() => doAdd(kind)} style={{ ...tabActive, flexShrink: 0 }}>+ Ajouter</button>
-      </div>
-      </React.Fragment>
-      )}
-    </div>
-    );
-  };
-
   return (
     <div style={{ maxWidth: 640, margin: "0 auto" }}>
       <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 14 }}>
         Modifier une valeur ici la renomme automatiquement partout où elle est utilisée (Shiny, Double, Event, Interjeu, et les listes des filtres). Retirer une valeur ne supprime aucune donnée — si elle est encore utilisée quelque part, elle réapparaîtra dans la liste.
       </div>
-      <Section title="Marque" color={TXT} kind="marque" values={marques} />
-      <Section title="Méthode de capture" color={GOLD} kind="mode" values={modes} />
-      <Section title="Détail (Charme Chroma, 60+ combats…)" color={INTERJEU} kind="detail" values={details} />
-      <Section title="Emplacement" color={LIGHTBLUE} kind="location" values={locations} />
+      <SettingsSection title="Marque" color={TXT} kind="marque" values={marques}
+        collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
+        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
+      <SettingsSection title="Méthode de capture" color={GOLD} kind="mode" values={modes}
+        collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
+        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
+      <SettingsSection title="Détail (Charme Chroma, 60+ combats…)" color={INTERJEU} kind="detail" values={details}
+        collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
+        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
+      <SettingsSection title="Emplacement" color={LIGHTBLUE} kind="location" values={locations}
+        collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
+        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
 
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
         <button
@@ -7239,64 +7336,34 @@ function SettingsView({
         {!collapsed.restrict && (
         <React.Fragment>
         <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
-          Choisis une Méthode ou un Détail, puis coche les marques où elle/il est proposé(e). Aucune marque cochée = disponible partout (ex. "Nature"). Cocher une ou plusieurs marques restreint le choix à celles-ci (ex. "Community Day" → Go uniquement).
+          Choisis une marque, puis gère les Méthodes/Détails disponibles pour elle : les pilules pleines en haut sont déjà disponibles (clic pour retirer) ; "+ Ajouter" affiche celles qui ne le sont pas encore (clic pour en ajouter, plusieurs à la fois). Rien de spécifique choisi pour une valeur = disponible partout par défaut (ex. "Nature").
         </div>
         <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: GOLD, marginBottom: 6 }}>Méthode</div>
-        <Picker
-          value={selectedModeRestrict}
-          onChange={(v) => setSelectedModeRestrict(v)}
-          options={modes}
-          placeholder="— choisir une méthode —"
-          buttonStyle={{ ...selectStyle, width: "100%", marginBottom: 10, display: "block", textAlign: "left" }}
-          panelWidth={220}
+        <MarqueAvailabilityEditor
+          accent={GOLD}
+          values={modes}
+          map={modeMarques}
+          marques={marques}
+          selectedMarque={selectedModeMarque}
+          setSelectedMarque={setSelectedModeMarque}
+          addOpen={modeAddOpen}
+          setAddOpen={setModeAddOpen}
+          onSetAvailability={(value, marque) => doSetAvailability("mode", value, marque)}
+          placeholder="— choisir une marque —"
         />
-        {selectedModeRestrict && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-            {marques.map((m) => {
-              const active = (modeMarques[selectedModeRestrict] || []).includes(m);
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => doToggleModeMarque(selectedModeRestrict, m)}
-                  style={{
-                    border: "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer",
-                    fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: active ? 700 : 500,
-                    background: active ? GOLD : PANEL, color: active ? BG : MUTED,
-                  }}
-                >{m}</button>
-              );
-            })}
-          </div>
-        )}
         <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: INTERJEU, marginBottom: 6 }}>Détail</div>
-        <Picker
-          value={selectedDetailRestrict}
-          onChange={(v) => setSelectedDetailRestrict(v)}
-          options={details}
-          placeholder="— choisir un détail —"
-          buttonStyle={{ ...selectStyle, width: "100%", marginBottom: 10, display: "block", textAlign: "left" }}
-          panelWidth={220}
+        <MarqueAvailabilityEditor
+          accent={INTERJEU}
+          values={details}
+          map={detailMarques}
+          marques={marques}
+          selectedMarque={selectedDetailMarque}
+          setSelectedMarque={setSelectedDetailMarque}
+          addOpen={detailAddOpen}
+          setAddOpen={setDetailAddOpen}
+          onSetAvailability={(value, marque) => doSetAvailability("detail", value, marque)}
+          placeholder="— choisir une marque —"
         />
-        {selectedDetailRestrict && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {marques.map((m) => {
-              const active = (detailMarques[selectedDetailRestrict] || []).includes(m);
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => doToggleDetailMarque(selectedDetailRestrict, m)}
-                  style={{
-                    border: "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer",
-                    fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: active ? 700 : 500,
-                    background: active ? INTERJEU : PANEL, color: active ? "#fff" : MUTED,
-                  }}
-                >{m}</button>
-              );
-            })}
-          </div>
-        )}
         </React.Fragment>
         )}
       </div>
