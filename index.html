@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.10.1.31";
+const APP_VERSION = "2026.8.10.1.47";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2855,12 +2855,11 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   // utile pour repérer des doublons potentiels (plusieurs captures de la même forme, notamment
   // dans la même marque). Propose uniquement les valeurs réellement présentes dans les données.
   const [occFilter, setOccFilter] = useCachedState(filterCache, "shiny", "occFilter", null);
-  const [evolueFilter, setEvolueFilter] = useCachedState(filterCache, "shiny", "evolueFilter", null);
   const [detailFilterSel, setDetailFilterSel] = useCachedState(filterCache, "shiny", "detailFilterSel", null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const anyFilterActive = filter !== "all" || region !== null || marque !== null || modeFilter !== null
     || locationFilter !== null || jeuFilter !== null || alphaFilter !== null || gmaxFilter !== null || occFilter !== null
-    || evolueFilter !== null || detailFilterSel !== null;
+    || detailFilterSel !== null;
   const [limit, setLimit] = useState(150);
   const [selected, setSelected] = useState(null); // "nom|forme"
   const [listSubMode, setListSubMode] = useCachedState(filterCache, "shiny", "listSubMode", "actuelle"); // "actuelle" | "forme"
@@ -2883,7 +2882,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     // eslint-disable-next-line
   }, [initialFilter]);
 
-  useEffect(() => { setLimit(150); }, [search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, evolueFilter, detailFilterSel]);
+  useEffect(() => { setLimit(150); }, [search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, detailFilterSel]);
   useEffect(() => { if (viewMode === "grid") setViewMode("list"); }, [viewMode]);
 
   const openEntry = (key, occIdx) => {
@@ -2914,7 +2913,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     setAlphaFilter(null);
     setGmaxFilter(null);
     setOccFilter(null);
-    setEvolueFilter(null);
     setDetailFilterSel(null);
   };
 
@@ -3118,12 +3116,11 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         if (!matchesMulti(alphaFilter, recForRow ? (recForRow.alpha ? "yes" : "no") : undefined)) return false;
         if (!matchesMulti(gmaxFilter, recForRow ? (recForRow.gmax ? "gmax" : recForRow.gmaxable ? "gmaxable" : "no") : undefined)) return false;
         if (!matchesMulti(occFilter, recs.length)) return false;
-        if (!matchesMulti(evolueFilter, recForRow ? (recForRow.evolue ? "yes" : "no") : undefined)) return false;
         if (!matchesMultiAny(detailFilterSel, recForRow ? recForRow.details : undefined)) return false;
         if (viewMode === "list" && listSubMode === "forme" && occIdx !== 0) return false;
         return true;
       });
-  }, [catalog, search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter, evolueFilter, detailFilterSel, catches, viewMode, listSubMode]);
+  }, [catalog, search, filter, region, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter, detailFilterSel, catches, viewMode, listSubMode]);
   useInfiniteScroll(viewMode !== "box" && filtered.length > limit, () => setLimit((l) => l + 200));
 
   const filteredStats = useMemo(() => {
@@ -3135,7 +3132,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
       if (!matchesMulti(jeuFilter, rec.jeu || "__none__")) return false;
       if (!matchesMulti(alphaFilter, rec.alpha ? "yes" : "no")) return false;
       if (!matchesMulti(gmaxFilter, rec.gmax ? "gmax" : rec.gmaxable ? "gmaxable" : "no")) return false;
-      if (!matchesMulti(evolueFilter, rec.evolue ? "yes" : "no")) return false;
       if (!matchesMultiAny(detailFilterSel, rec.details)) return false;
       return true;
     };
@@ -3166,7 +3162,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
       }
     });
     return { forms, formsTotal, doublons, total: forms + doublons, homeCount };
-  }, [catalog, catches, occurrenceIndexOf, search, region, filter, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter, evolueFilter, detailFilterSel]);
+  }, [catalog, catches, occurrenceIndexOf, search, region, filter, marque, modeFilter, locationFilter, jeuFilter, alphaFilter, gmaxFilter, occFilter, detailFilterSel]);
 
   const addCatch = (key, openAfter) => {
     const next = { ...catches };
@@ -3353,10 +3349,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                       panelWidth={200}
                     />
                   </div>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
-                    <input type="checkbox" checked={!!rec.evolue} onChange={(e) => updateCatch(selected, idx, "evolue", e.target.checked)} />
-                    Évolué
-                  </label>
                   <div>
                     <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -3426,7 +3418,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                           nom, forme, nomApres: nom, formeApres: forme,
                           marque: rec.marque || "", ou: catchLocation(rec), vers: DEFAULT_LOCATION, jeu: rec.jeu || "",
                           shiny: true, transferable: {}, fait: false,
-                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "shiny", evolue: !!rec.evolue, details: rec.details || [] },
+                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "shiny", details: rec.details || [] },
                         });
                         updateCatch(selected, idx, "fromInterjeu", link);
                         window.alert(`Ajouté dans Interjeu — retour vers ${DEFAULT_LOCATION} depuis ${catchLocation(rec)}.`);
@@ -3634,13 +3626,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 <MultiSelectFilter label="Lieu" options={locations} selected={locationFilter} onChange={setLocationFilter} width="100%" />
                 <MultiSelectFilter label="Méthode" options={modes} selected={modeFilter} onChange={setModeFilter} width="100%" />
                 <MultiSelectFilter
-                  label="Évolué"
-                  options={[["yes", "Évolué"], ["no", "Non évolué"]]}
-                  selected={evolueFilter}
-                  onChange={setEvolueFilter}
-                  width="100%"
-                />
-                <MultiSelectFilter
                   label="Détail"
                   options={[["__none__", "Sans détail"], ...details.map((d) => [d, d])]}
                   selected={detailFilterSel}
@@ -3708,7 +3693,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "double", "shinyFilter", null); // null (Tous) | Set("yes"/"no")
   const [marqueFilter, setMarqueFilter] = useCachedState(filterCache, "double", "marqueFilter", null); // null (Tous) | Set des marques
   const [locationFilter, setLocationFilter] = useCachedState(filterCache, "double", "locationFilter", null); // null (Tous) | Set des emplacements
-  const [evolueFilter, setEvolueFilter] = useCachedState(filterCache, "double", "evolueFilter", null);
   const [detailFilterSel, setDetailFilterSel] = useCachedState(filterCache, "double", "detailFilterSel", null);
   const [modeFilter, setModeFilter] = useCachedState(filterCache, "double", "modeFilter", null);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -3721,7 +3705,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
-  const anyFilterActive = shinyFilter !== null || marqueFilter !== null || locationFilter !== null || evolueFilter !== null || detailFilterSel !== null || modeFilter !== null;
+  const anyFilterActive = shinyFilter !== null || marqueFilter !== null || locationFilter !== null || detailFilterSel !== null || modeFilter !== null;
   const [selected, setSelected] = useState(null); // "nom|forme"
   const [selectedRecIdx, setSelectedRecIdx] = useState(null);
   const [detailShowAll, setDetailShowAll] = useState(true);
@@ -3809,12 +3793,11 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
       if (!matchesMulti(shinyFilter, r.rec.shiny ? "yes" : "no")) return false;
       if (!matchesMulti(marqueFilter, r.rec.marque || "")) return false;
       if (!matchesMulti(locationFilter, catchLocation(r.rec))) return false;
-      if (!matchesMulti(evolueFilter, r.rec.evolue ? "yes" : "no")) return false;
       if (!matchesMultiAny(detailFilterSel, r.rec.details)) return false;
       if (!matchesMulti(modeFilter, r.rec.mode || "")) return false;
       return true;
     });
-  }, [catalog, search, shinyFilter, marqueFilter, locationFilter, evolueFilter, detailFilterSel, modeFilter]);
+  }, [catalog, search, shinyFilter, marqueFilter, locationFilter, detailFilterSel, modeFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
 
   const resetFilters = () => {
@@ -3822,7 +3805,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     setShinyFilter(null);
     setMarqueFilter(null);
     setLocationFilter(null);
-    setEvolueFilter(null);
     setModeFilter(null);
     setDetailFilterSel(null);
   };
@@ -3973,10 +3955,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                       panelWidth={180}
                     />
                   </div>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
-                    <input type="checkbox" checked={!!rec.evolue} onChange={(e) => updateCatch(selected, idx, "evolue", e.target.checked)} />
-                    Évolué
-                  </label>
                   <div>
                     <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -4015,7 +3993,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                           nom: selNom, forme: selForme, nomApres: selNom, formeApres: selForme,
                           marque: rec.marque || "", ou: catchLocation(rec), vers: DEFAULT_LOCATION, jeu: rec.jeu || "",
                           shiny: !!rec.shiny, transferable: {}, fait: false,
-                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "double", evolue: !!rec.evolue, details: rec.details || [] },
+                          sentInfo: { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", target: "double", details: rec.details || [] },
                         });
                         updateCatch(selected, idx, "fromInterjeu", link);
                         window.alert(`Ajouté dans Interjeu — retour vers ${DEFAULT_LOCATION} depuis ${catchLocation(rec)}.`);
@@ -4122,13 +4100,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                 />
                 <MultiSelectFilter label="Marque" options={marques} selected={marqueFilter} onChange={setMarqueFilter} width="100%" />
                 <MultiSelectFilter label="Méthode" options={modes} selected={modeFilter} onChange={setModeFilter} width="100%" />
-                <MultiSelectFilter
-                  label="Évolué"
-                  options={[["yes", "Évolué"], ["no", "Non évolué"]]}
-                  selected={evolueFilter}
-                  onChange={setEvolueFilter}
-                  width="100%"
-                />
                 <MultiSelectFilter
                   label="Détail"
                   options={[["__none__", "Sans détail"], ...details.map((d) => [d, d])]}
@@ -4920,9 +4891,9 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     const applySentInfoSync = (rec, list) => {
       if (!rec.fromInterjeu) return;
       const link = rec.fromInterjeu;
-      // Évolué/Détail (§ nouveau) suivent le même patron que date/méthode/marque : l'exemplaire
-      // Shiny/Double lié reste la source de vérité, recopiée dans sentInfo à chaque montage.
-      const fresh = { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", evolue: !!rec.evolue, details: rec.details || [] };
+      // Détail (§45) suit le même patron que date/méthode/marque : l'exemplaire Shiny/Double lié
+      // reste la source de vérité, recopié dans sentInfo à chaque montage.
+      const fresh = { date: rec.date || "", mode: rec.mode || "", marque: rec.marque || "", details: rec.details || [] };
       list.forEach((it, i) => {
         const match = link.nom === it.nom && (link.forme || null) === (it.forme || null) &&
           link.nomApres === it.nomApres && (link.formeApres || null) === (it.formeApres || null) &&
@@ -4930,7 +4901,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
         if (!match) return;
         const cur = it.sentInfo || {};
         if (cur.date === fresh.date && cur.mode === fresh.mode && cur.marque === fresh.marque
-          && !!cur.evolue === fresh.evolue && sameDetails(cur.details, fresh.details)) return;
+          && sameDetails(cur.details, fresh.details)) return;
         list[i] = { ...it, sentInfo: { ...cur, ...fresh } };
         syncedAny = true;
       });
@@ -5100,7 +5071,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     setMarqueFilter(null);
   };
 
-  const [addForm, setAddForm] = useState(null); // null | { date, mode, evolue, details } — formulaire inline "+ Ajouter dans Shiny/Double"
+  const [addForm, setAddForm] = useState(null); // null | { date, mode, details } — formulaire inline "+ Ajouter dans Shiny/Double"
   const openEntry = (key) => {
     savedScroll.current = window.scrollY;
     setSelected(key);
@@ -5155,7 +5126,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   // "Où" comme emplacement (Shiny uniquement, Double n'a pas ce champ). L'entrée créée porte un
   // tag "fromInterjeu" qui permet de retirer automatiquement l'entrée Interjeu une fois le
   // transfert confirmé (voir l'effet ci-dessus).
-  const addInterjeuToShinyOrDouble = (r, dateStr, modeStr, evolueVal, detailsVal) => {
+  const addInterjeuToShinyOrDouble = (r, dateStr, modeStr, detailsVal) => {
     const status = targetStatus(r);
     const key = r.nomApres + "|" + (r.formeApres || "");
     const link = { nom: r.nom, forme: r.forme || null, nomApres: r.nomApres, formeApres: r.formeApres || null, marque: r.marque };
@@ -5165,7 +5136,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
       next[key] = [...(next[key] || []), {
         date: dateStr, mode: modeStr, marque: r.marque, jeu: r.jeu || "",
         shiny: true, location: r.ou || DEFAULT_LOCATION, fromInterjeu: link,
-        evolue: !!evolueVal, details: detailsVal || [],
+        details: detailsVal || [],
       }];
       setDoubleCatchesData(next);
       persistDoubleCatches(next);
@@ -5174,7 +5145,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
       const next = { ...(shinyCatchesData || {}) };
       next[key] = [...(next[key] || []), {
         date: dateStr, mode: modeStr, marque: r.marque, location: r.ou || DEFAULT_LOCATION, jeu: r.jeu || "",
-        fromInterjeu: link, evolue: !!evolueVal, details: detailsVal || [],
+        fromInterjeu: link, details: detailsVal || [],
       }];
       setShinyCatchesData(next);
       persistShinyCatches(next);
@@ -5183,7 +5154,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     // Conserve les infos saisies sur l'entrée Interjeu elle-même et marque le transfert comme
     // déjà envoyé, pour ne pas perdre cette information et éviter les doublons involontaires
     // (demande explicite) — la case peut toujours servir à renvoyer un nouvel exemplaire.
-    updateCustom(r.idx, "sentInfo", { date: dateStr, mode: modeStr, marque: r.marque || "", target, evolue: !!evolueVal, details: detailsVal || [] });
+    updateCustom(r.idx, "sentInfo", { date: dateStr, mode: modeStr, marque: r.marque || "", target, details: detailsVal || [] });
   };
 
   if (!ready || !items) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
@@ -5379,11 +5350,11 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
                     display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5,
                     color: OK, marginBottom: 8,
                   }}>
-                    ✓ Déjà envoyé — {r.sentInfo.date || "date ?"} · {r.sentInfo.mode || "méthode ?"}{r.sentInfo.marque ? " · " + r.sentInfo.marque : ""}{r.sentInfo.evolue ? " · Évolué" : ""}{(r.sentInfo.details || []).length > 0 ? " · " + r.sentInfo.details.join(", ") : ""} → {r.sentInfo.target === "double" ? "Double" : "Shiny"}
+                    ✓ Déjà envoyé — {r.sentInfo.date || "date ?"} · {r.sentInfo.mode || "méthode ?"}{r.sentInfo.marque ? " · " + r.sentInfo.marque : ""}{(r.sentInfo.details || []).length > 0 ? " · " + r.sentInfo.details.join(", ") : ""} → {r.sentInfo.target === "double" ? "Double" : "Shiny"}
                   </div>
                 )}
                 {r.shiny && addForm === null && (
-                  <button onClick={() => setAddForm({ date: "", mode: "", evolue: false, details: [] })} style={{ ...btnGhost, borderColor: GOLD, color: GOLD }}>
+                  <button onClick={() => setAddForm({ date: "", mode: "", details: [] })} style={{ ...btnGhost, borderColor: GOLD, color: GOLD }}>
                     {r.sentInfo ? "+ Renvoyer un autre exemplaire" : "+ Ajouter dans Shiny/Double"}
                   </button>
                 )}
@@ -5404,10 +5375,6 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
                         panelWidth={180}
                       />
                     </div>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
-                      <input type="checkbox" checked={!!addForm.evolue} onChange={(e) => setAddForm({ ...addForm, evolue: e.target.checked })} />
-                      Évolué
-                    </label>
                     <div style={{ width: "100%" }}>
                       <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -5432,7 +5399,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
                       </div>
                     </div>
                     <button
-                      onClick={() => { addInterjeuToShinyOrDouble(r, addForm.date, addForm.mode, addForm.evolue, addForm.details); setAddForm(null); }}
+                      onClick={() => { addInterjeuToShinyOrDouble(r, addForm.date, addForm.mode, addForm.details); setAddForm(null); }}
                       style={{ ...tabActive, background: GOLD, color: BG }}
                     >
                       Confirmer
@@ -9470,7 +9437,6 @@ async function buildCatchSheetRows(storageKey) {
         Location: rec.location || "", Jeu: rec.jeu || "",
         Alpha: rec.alpha ? 1 : 0,
         Gmax: rec.gmax ? "Gmax" : (rec.gmaxable ? "Gmaxable" : ""),
-        Evolue: rec.evolue ? 1 : 0,
         // Détail (Charme Chroma, 60+ combats…) : plusieurs valeurs possibles, séparées par virgule.
         Detail: (rec.details || []).join(", "),
         // Lien Interjeu (§43 doc) — sérialisé en JSON dans une cellule texte, pour ne pas perdre
@@ -9648,7 +9614,6 @@ async function importCatchSheet(storageKey, rows, mode) {
     if (Number(row.Alpha)) rec.alpha = true;
     const g = String(row.Gmax || "").trim().toLowerCase();
     if (g === "gmax") rec.gmax = true; else if (g === "gmaxable") rec.gmaxable = true;
-    if (Number(row.Evolue)) rec.evolue = true;
     if (row.Detail) rec.details = String(row.Detail).split(",").map((d) => d.trim()).filter(Boolean);
     if (row.FromInterjeu) { try { rec.fromInterjeu = JSON.parse(row.FromInterjeu); } catch (e) {} }
     if (!obj[key]) obj[key] = [];
@@ -9842,10 +9807,114 @@ function ExcelImportModal({ sheetNames, onCancel, onChoose }) {
   );
 }
 
+// ---- Aide contextuelle (icône ⓘ dans l'en-tête, voir §48 doc) --------------------------------
+// Un texte différent par onglet, affiché dans une modale au clic sur l'icône ⓘ du bandeau du
+// haut. GAME_ORDER (tous les onglets Home) partage un même texte générique ("game"), les 4
+// onglets principaux et Paramètres ont chacun le leur.
+const HELP_CONTENT = {
+  overview: {
+    title: "% — Progression",
+    body: [
+      "Vue d'ensemble de ta collection : un cercle de progression par onglet jeu, plus les totaux National et Shiny.",
+      "Cliquer sur un cercle ou une carte ouvre directement le tableau détaillé correspondant, ou t'amène sur l'onglet concerné avec un filtre région/statut déjà appliqué.",
+      "Les blocs Alpha, Gmax et \"Jeu - DO\" résument respectivement les captures Alpha (LA/LZA), les formes Dynamax, et l'origine déclarée par Pokémon.",
+    ],
+  },
+  national: {
+    title: "National",
+    body: [
+      "Catalogue complet des Pokémon (toutes formes), indépendant des onglets jeu : une case à cocher par jeu directement dans la page de détail d'un Pokémon.",
+      "Vue Liste (badges Alpha/Shiny) ou Grille (numéro + nom + forme uniquement).",
+      "Filtres : Région, Jeu (limité aux jeux où au moins un Pokémon est déjà attrapé, + \"Sans jeu\"), Taille (= Alpha), Dynamax (= Gmax, basé sur le nom de la forme).",
+      "Bouton cyclique ⟳ : Tous → Attrapés → Manquants. Bouton ↺ : réinitialise les filtres de l'onglet.",
+    ],
+  },
+  shiny: {
+    title: "Shiny",
+    body: [
+      "Journal de toutes tes captures shiny — une ligne par exemplaire, jamais fusionnées même en cas de doublon.",
+      "Rangement automatique en boîtes Home : boîtes primaires triées par numéro national (une par forme), boîtes de doublons regroupées par région d'origine et recalculées à la volée à chaque nouvelle capture.",
+      "Vues Liste (sous-modes Home/Forme), Boîte (grille 5×6 toujours complète) et Grille (colonnes ajustables).",
+      "Chaque capture peut préciser Méthode (filtrée selon la marque choisie), Emplacement, Jeu, Alpha (marques LA/LZA uniquement), Gmax/Gmaxable (formes concernées uniquement), et un ou plusieurs Détails (ex. Charme Chroma, 60+ combats…).",
+      "Filtres : Marque, Région, Lieu, Méthode, Détail, Jeu, Alpha, Gmax, Occurrences (nombre d'exemplaires d'une même forme — utile pour repérer les doublons).",
+    ],
+  },
+  double: {
+    title: "Double",
+    body: [
+      "Suivi des doublons non-shiny et des exemplaires \"pas encore en Home\" (jeu d'origine renseigné dans Emplacement) — structurellement proche de Shiny.",
+      "Méthode, Détail et le filtre Jeu ne s'affichent que si la capture est cochée Shiny — un doublon non-shiny n'a pas ce niveau de détail.",
+      "Filtres : Shiny, Marque, Méthode, Détail, Lieu.",
+    ],
+  },
+  event: {
+    title: "Event",
+    body: [
+      "Catalogue des Pokémon distribués par événement, entièrement éditable (ajout, renommage, suppression comme les autres listes).",
+      "En vue Liste, cocher une ligne bascule directement son statut Attrapé — pas besoin d'ouvrir la page de détail.",
+    ],
+  },
+  interjeu: {
+    title: "Interjeu",
+    body: [
+      "Suivi des transferts prévus entre marques avant capture réelle : marque d'origine, marque cible, méthode, emplacements \"Où\" / \"Vers\".",
+      "\"+ Ajouter dans Shiny/Double\" crée automatiquement la capture correspondante (Shiny si le Pokémon n'est pas encore possédé dans la marque cible, Double sinon) et relie les deux enregistrements.",
+      "Une fois liée, modifier date/méthode/marque/détail dans Shiny ou Double se répercute automatiquement ici — et supprimer l'entrée liée retire aussi le lien côté Interjeu.",
+    ],
+  },
+  game: {
+    title: "Onglet jeu (Home)",
+    body: [
+      "Pokédex complet du jeu sélectionné, avec ses propres formes réellement disponibles dans ce jeu.",
+      "Vues Liste, Boîte (rangement par groupe de boîte configurable dans Paramètres) et Grille (colonnes ajustables via \"Par ligne\").",
+      "Filtres : Région, et Taille (Alpha) pour les onglets LA/LZA uniquement.",
+      "Bouton cyclique ⟳ : Tous → Attrapés → Manquants. Bouton ↺ : réinitialise les filtres de l'onglet.",
+    ],
+  },
+  settings: {
+    title: "Paramètres",
+    body: [
+      "Marque / Méthode / Détail / Emplacement : listes personnalisées — renommer une valeur ici la renomme partout où elle est utilisée (Shiny, Double, Event, Interjeu, filtres) ; retirer une valeur ne supprime aucune donnée existante.",
+      "Catalogue Pokémon : ajout, renommage ou suppression d'une forme, répercuté dans toute l'app.",
+      "Jeu (par marque) et Groupe de boîte (par jeu) : listes dédiées à ces deux usages précis.",
+      "Disponibilité par marque : choisis une marque, les pilules du haut montrent les Méthodes/Détails déjà disponibles pour elle (clic pour retirer), \"+ Ajouter\" propose celles qui ne le sont pas encore.",
+      "Synchronisation GitHub Gist : renseigne un token (scope \"gist\") pour synchroniser la sauvegarde entre appareils via le bouton 🔗 de l'en-tête — reste complémentaire à l'export/import JSON, pas un remplacement.",
+    ],
+  },
+};
+
+function HelpModal({ tab, onClose }) {
+  const key = GAME_ORDER.includes(tab) ? "game" : tab;
+  const content = HELP_CONTENT[key] || HELP_CONTENT.overview;
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "78vh", overflowY: "auto" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 15, color: ACCENT }}>{content.title}</div>
+          <button
+            onClick={onClose}
+            style={{ background: "transparent", border: "none", color: MUTED, fontSize: 18, cursor: "pointer", flexShrink: 0, lineHeight: 1, padding: 4 }}
+          >✕</button>
+        </div>
+        {content.body.map((p, i) => (
+          <div key={i} style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, lineHeight: 1.6, marginBottom: 10 }}>{p}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [tab, setTab] = useState("overview");
   const [ioMsg, setIoMsg] = useState("");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [lastExportAt, setLastExportAt] = useState(undefined); // undefined = pas encore chargé, null = jamais exporté
   const [reminderDismissed, setReminderDismissed] = useState(false);
   const [pendingFilter, setPendingFilter] = useState(null); // { region, status } transmis depuis l'onglet Progression vers un onglet jeu
@@ -10297,6 +10366,14 @@ function App() {
               }}
             />
             <button
+              onClick={() => setShowHelp(true)}
+              title="Aide sur cet onglet"
+              style={{
+                background: "transparent", border: "none", cursor: "pointer", padding: "4px 6px",
+                fontSize: 18, lineHeight: 1, flexShrink: 0, color: MUTED, fontWeight: 700,
+              }}
+            >ⓘ</button>
+            <button
               onClick={() => setTab("settings")}
               title="Paramètres"
               style={{
@@ -10386,6 +10463,8 @@ function App() {
           onChoose={applyExcelImport}
         />
       )}
+
+      {showHelp && <HelpModal tab={tab} onClose={() => setShowHelp(false)} />}
 
       {showResetConfirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
