@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.10.1.47";
+const APP_VERSION = "2026.8.10.18.40";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -7416,8 +7416,7 @@ function SettingsView({
           <input
             type="password"
             value={gistTokenDraft}
-            onChange={(e) => setGistTokenDraft(e.target.value)}
-            onBlur={() => onSaveGistToken(gistTokenDraft.trim())}
+            onChange={(e) => { const v = e.target.value; setGistTokenDraft(v); onSaveGistToken(v.trim()); }}
             placeholder="ghp_…"
             style={{ ...miniInput, width: "100%", marginBottom: 10 }}
           />
@@ -7426,8 +7425,7 @@ function SettingsView({
           </div>
           <input
             value={gistIdDraft}
-            onChange={(e) => setGistIdDraft(e.target.value)}
-            onBlur={() => onSaveGistId(gistIdDraft.trim())}
+            onChange={(e) => { const v = e.target.value; setGistIdDraft(v); onSaveGistId(v.trim()); }}
             placeholder="ex. 3f9a1b2c…"
             style={{ ...miniInput, width: "100%", marginBottom: 12 }}
           />
