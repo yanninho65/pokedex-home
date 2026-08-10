@@ -33,6 +33,13 @@
           localStorage.setItem("pkdx_mod_count", String(n));
           window.dispatchEvent(new CustomEvent("pkdx-mod-count", { detail: n }));
         } catch (e) {}
+        // Compteur jumeau pour la synchro GitHub Gist (voir §46) — indépendant du compteur
+        // d'export JSON ci-dessus, remis à 0 uniquement par une synchro Gist réussie.
+        try {
+          const gn = (parseInt(localStorage.getItem("pkdx_gist_mod_count") || "0", 10) || 0) + 1;
+          localStorage.setItem("pkdx_gist_mod_count", String(gn));
+          window.dispatchEvent(new CustomEvent("pkdx-gist-mod-count", { detail: gn }));
+        } catch (e) {}
       }
       return { key, value, shared: !!shared };
     },
@@ -71,10 +78,77 @@ function isFormeAvailableInGame(nom, forme, marque) {
   return rows.some((r) => r[1] === nom && (r[2] || null) === f);
 }
 
+// ---- Synchronisation GitHub Gist (voir §46 doc) ----------------------------------------------
+// Token, ID de Gist et horodatage de dernière synchro vivent en localStorage BRUT (pas via
+// window.storage) : ils ne doivent jamais transiter par Export/Import JSON ni Excel, et ne
+// doivent pas incrémenter le compteur de modifications (mod_count / gist_mod_count).
+const GIST_FILENAME = "pokedex-sync.json";
+const GIST_TOKEN_KEY = "pkdx_gist_token";
+const GIST_ID_KEY = "pkdx_gist_id";
+const GIST_SYNCED_AT_KEY = "pkdx_gist_synced_at";
+
+function getGistToken() { try { return localStorage.getItem(GIST_TOKEN_KEY) || ""; } catch (e) { return ""; } }
+function setGistTokenRaw(v) { try { if (v) localStorage.setItem(GIST_TOKEN_KEY, v); else localStorage.removeItem(GIST_TOKEN_KEY); } catch (e) {} }
+function getGistIdRaw() { try { return localStorage.getItem(GIST_ID_KEY) || ""; } catch (e) { return ""; } }
+function setGistIdRaw(v) { try { if (v) localStorage.setItem(GIST_ID_KEY, v); else localStorage.removeItem(GIST_ID_KEY); } catch (e) {} }
+function getGistSyncedAtRaw() { try { const v = localStorage.getItem(GIST_SYNCED_AT_KEY); return v ? Number(v) : null; } catch (e) { return null; } }
+function setGistSyncedAtRaw(v) { try { localStorage.setItem(GIST_SYNCED_AT_KEY, String(v)); } catch (e) {} }
+function resetGistModCountRaw() {
+  try { localStorage.setItem("pkdx_gist_mod_count", "0"); } catch (e) {}
+  window.dispatchEvent(new CustomEvent("pkdx-gist-mod-count", { detail: 0 }));
+}
+
+async function gistFetchMeta(gistId, token) {
+  const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+    headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json" },
+  });
+  if (!res.ok) throw new Error(res.status === 404 ? "Gist introuvable (vérifie l'ID)" : "Échec de lecture du Gist (" + res.status + ")");
+  return res.json();
+}
+
+// Le contenu d'un fichier de Gist est tronqué par l'API GitHub au-delà d'1 Mo — on retombe sur
+// raw_url dans ce cas (sauvegarde JSON pouvant dépasser cette taille avec beaucoup de captures).
+async function gistFetchContent(gistId, token) {
+  const meta = await gistFetchMeta(gistId, token);
+  const file = meta.files && meta.files[GIST_FILENAME];
+  if (!file) throw new Error("Fichier '" + GIST_FILENAME + "' absent de ce Gist");
+  let content = file.content;
+  if (file.truncated && file.raw_url) {
+    const raw = await fetch(file.raw_url);
+    if (!raw.ok) throw new Error("Échec de lecture du contenu complet du Gist");
+    content = await raw.text();
+  }
+  return { meta, content };
+}
+
+async function gistCreate(token, contentObj) {
+  const res = await fetch("https://api.github.com/gists", {
+    method: "POST",
+    headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      description: "Pokédex Tracker — sauvegarde",
+      public: false,
+      files: { [GIST_FILENAME]: { content: JSON.stringify(contentObj) } },
+    }),
+  });
+  if (!res.ok) throw new Error("Échec de création du Gist (" + res.status + ")");
+  return res.json();
+}
+
+async function gistUpdate(gistId, token, contentObj) {
+  const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+    method: "PATCH",
+    headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+    body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(contentObj) } } }),
+  });
+  if (!res.ok) throw new Error("Échec d'écriture du Gist (" + res.status + ")");
+  return res.json();
+}
+
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.8.19.0";
+const APP_VERSION = "2026.8.10.0.11";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -930,6 +1004,34 @@ function SaveStatusDot({ state, modCount }) {
         >{modCount}</span>
       )}
     </div>
+  );
+}
+
+// Petit indicateur d'état de la synchro Gist dans l'en-tête (voir doc §46) — cliquable, ouvre
+// directement Paramètres sur la section de synchro pour agir (configurer/résoudre un conflit).
+function GistSyncBadge({ configured, state, modCount, onClick }) {
+  if (!configured) return null;
+  const color = state === "conflict" ? "#E4572E" : state === "error" ? "#E4572E" : state === "syncing" ? "#FFA726" : modCount > 0 ? "#FFA726" : OK;
+  const label =
+    state === "conflict" ? "Conflit de synchro — appuyer pour résoudre"
+    : state === "error" ? "Erreur de synchro"
+    : state === "syncing" ? "Synchronisation…"
+    : modCount > 0 ? `${modCount} modification${modCount > 1 ? "s" : ""} non synchronisée${modCount > 1 ? "s" : ""}`
+    : "Synchronisé avec le Gist";
+  const icon = state === "conflict" || state === "error" ? "⚠️" : "🔗";
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      style={{
+        display: "flex", alignItems: "center", gap: 4, background: "transparent",
+        border: `1px solid ${color}88`, borderRadius: 999, padding: "3px 8px", cursor: "pointer",
+        fontFamily: "Inter, sans-serif", fontSize: 11, color, flexShrink: 0, whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ fontSize: 11, lineHeight: 1 }}>{icon}</span>
+      <span style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0 }} />
+    </button>
   );
 }
 
@@ -6758,7 +6860,11 @@ function DraggableList({ items, onReorder, renderItem }) {
   );
 }
 
-function SettingsView({ onSaveStateChange }) {
+function SettingsView({
+  onSaveStateChange,
+  gistToken, gistId, gistSyncedAt, gistModCount, gistSyncState, gistMsg,
+  onSaveGistToken, onSaveGistId, onGistSync,
+}) {
   const [ready, setReady] = useState(false);
   const [customMarques, setCustomMarques] = useState([]);
   const [customModes, setCustomModes] = useState([]);
@@ -6778,7 +6884,11 @@ function SettingsView({ onSaveStateChange }) {
   const [selectedModeRestrict, setSelectedModeRestrict] = useState("");
   const [selectedDetailRestrict, setSelectedDetailRestrict] = useState("");
   const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
-  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, catalog: true, detail: true, restrict: true });
+  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, catalog: true, detail: true, restrict: true, gist: true });
+  const [gistTokenDraft, setGistTokenDraft] = useState(gistToken || "");
+  const [gistIdDraft, setGistIdDraft] = useState(gistId || "");
+  useEffect(() => { setGistTokenDraft(gistToken || ""); }, [gistToken]);
+  useEffect(() => { setGistIdDraft(gistId || ""); }, [gistId]);
   const toggleSection = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const [saveState, setSaveState] = useState("idle");
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
@@ -7236,6 +7346,70 @@ function SettingsView({ onSaveStateChange }) {
             </div>
           </React.Fragment>
         )}
+        </React.Fragment>
+        )}
+      </div>
+
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
+        <button
+          onClick={() => toggleSection("gist")}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+            background: "transparent", border: "none", cursor: "pointer", padding: 0,
+            marginBottom: collapsed.gist ? 0 : 10,
+          }}
+        >
+          <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: INTERJEU }}>Synchronisation GitHub Gist</span>
+          <span style={{ color: MUTED, fontSize: 12, transform: collapsed.gist ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+        </button>
+        {!collapsed.gist && (
+        <React.Fragment>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
+            Permet de synchroniser la sauvegarde entre appareils via un Gist GitHub privé. Crée un token d'accès personnel sur GitHub (Settings → Developer settings → Personal access tokens) avec uniquement le scope <strong>gist</strong>, colle-le ci-dessous, puis appuie sur "Synchroniser maintenant". Le premier appui crée le Gist automatiquement.
+          </div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: TXT, marginBottom: 4 }}>Token GitHub (scope "gist")</div>
+          <input
+            type="password"
+            value={gistTokenDraft}
+            onChange={(e) => setGistTokenDraft(e.target.value)}
+            onBlur={() => onSaveGistToken(gistTokenDraft.trim())}
+            placeholder="ghp_…"
+            style={{ ...miniInput, width: "100%", marginBottom: 10 }}
+          />
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: TXT, marginBottom: 4 }}>
+            ID du Gist {gistId ? "" : "(laisser vide pour en créer un nouveau)"}
+          </div>
+          <input
+            value={gistIdDraft}
+            onChange={(e) => setGistIdDraft(e.target.value)}
+            onBlur={() => onSaveGistId(gistIdDraft.trim())}
+            placeholder="ex. 3f9a1b2c…"
+            style={{ ...miniInput, width: "100%", marginBottom: 12 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={onGistSync}
+              disabled={gistSyncState === "syncing"}
+              style={{ ...tabActive, background: INTERJEU, color: "#fff", opacity: gistSyncState === "syncing" ? 0.6 : 1 }}
+            >
+              {gistSyncState === "syncing" ? "Synchronisation…" : "🔗 Synchroniser maintenant"}
+            </button>
+            {gistModCount > 0 && (
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: GOLD }}>
+                {gistModCount} modification{gistModCount > 1 ? "s" : ""} non synchronisée{gistModCount > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginTop: 10 }}>
+            {gistSyncedAt
+              ? `Dernière synchro réussie : ${new Date(gistSyncedAt).toLocaleString("fr-FR")}`
+              : "Jamais synchronisé."}
+          </div>
+          {gistMsg && (
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: gistSyncState === "error" || gistSyncState === "conflict" ? "#E4572E" : OK, marginTop: 6 }}>
+              {gistMsg}
+            </div>
+          )}
         </React.Fragment>
         )}
       </div>
@@ -9618,6 +9792,124 @@ function App() {
     try { localStorage.setItem("pkdx_mod_count", "0"); } catch (e) {}
     setModCount(0);
   };
+
+  // ---- Synchronisation GitHub Gist (voir doc §46) --------------------------------------------
+  const [gistToken, setGistTokenState] = useState(() => getGistToken());
+  const [gistId, setGistIdState] = useState(() => getGistIdRaw());
+  const [gistSyncedAt, setGistSyncedAtState] = useState(() => getGistSyncedAtRaw());
+  const [gistModCount, setGistModCount] = useState(() => {
+    try { return parseInt(localStorage.getItem("pkdx_gist_mod_count") || "0", 10) || 0; } catch (e) { return 0; }
+  });
+  const [gistSyncState, setGistSyncState] = useState("idle"); // idle | syncing | synced | conflict | error
+  const [gistMsg, setGistMsg] = useState("");
+  const [gistConflict, setGistConflict] = useState(null); // { meta, content } en attente d'arbitrage utilisateur
+  useEffect(() => {
+    const onGistModCount = (e) => setGistModCount(e.detail);
+    window.addEventListener("pkdx-gist-mod-count", onGistModCount);
+    return () => window.removeEventListener("pkdx-gist-mod-count", onGistModCount);
+  }, []);
+
+  const saveGistToken = (v) => { setGistTokenRaw(v); setGistTokenState(v); };
+  const saveGistId = (v) => { setGistIdRaw(v); setGistIdState(v); };
+
+  // Applique un objet de sauvegarde (même forme que buildExportOut) au stockage local — utilisé
+  // à la fois par l'import JSON classique et par la synchro Gist (pull).
+  const applyImportedObject = async (parsed) => {
+    for (const k of ALL_KEYS) {
+      if (parsed[k] !== undefined) {
+        await window.storage.set(k, parsed[k], false);
+      }
+    }
+  };
+
+  // Synchronise avec le Gist configuré : push si rien de neuf côté distant, pull si le distant a
+  // changé et qu'on n'a aucune modification locale en attente, sinon ouvre une modale de conflit
+  // pour laisser l'utilisateur choisir explicitement quel côté garder (jamais d'écrasement silencieux).
+  const doGistSync = async () => {
+    if (!gistToken) { setGistMsg("Renseigne d'abord ton token GitHub (scope 'gist')."); setGistSyncState("error"); return; }
+    setGistSyncState("syncing");
+    setGistMsg("");
+    try {
+      if (!gistId) {
+        const out = await buildExportOut();
+        const created = await gistCreate(gistToken, out);
+        saveGistId(created.id);
+        const now = Date.parse(created.updated_at) || Date.now();
+        setGistSyncedAtRaw(now); setGistSyncedAtState(now);
+        resetGistModCountRaw();
+        setGistSyncState("synced");
+        setGistMsg("Gist créé et synchronisé.");
+        return;
+      }
+      const { meta, content } = await gistFetchContent(gistId, gistToken);
+      const remoteUpdatedAt = Date.parse(meta.updated_at) || 0;
+      const localSyncedAt = gistSyncedAt || 0;
+      const remoteChangedSinceSync = remoteUpdatedAt > localSyncedAt + 1000; // marge anti-jigue d'horloge
+      const hasLocalChanges = gistModCount > 0;
+
+      if (remoteChangedSinceSync && hasLocalChanges) {
+        setGistConflict({ meta, content });
+        setGistSyncState("conflict");
+        setGistMsg("Le Gist distant a changé et tu as des modifications locales non synchronisées.");
+        return;
+      }
+
+      if (remoteChangedSinceSync && !hasLocalChanges) {
+        const parsed = JSON.parse(content);
+        await applyImportedObject(parsed);
+        setGistSyncedAtRaw(remoteUpdatedAt); setGistSyncedAtState(remoteUpdatedAt);
+        resetGistModCountRaw();
+        setGistMsg("Données récupérées depuis le Gist — rechargement…");
+        setTimeout(() => window.location.reload(), 800);
+        return;
+      }
+
+      const out = await buildExportOut();
+      const updated = await gistUpdate(gistId, gistToken, out);
+      const now = Date.parse(updated.updated_at) || Date.now();
+      setGistSyncedAtRaw(now); setGistSyncedAtState(now);
+      resetGistModCountRaw();
+      setGistSyncState("synced");
+      setGistMsg("Synchronisé.");
+    } catch (e) {
+      setGistSyncState("error");
+      setGistMsg("Erreur de synchronisation : " + (e && e.message ? e.message : "inconnue"));
+    }
+  };
+
+  // Arbitrage explicite d'un conflit détecté par doGistSync — l'utilisateur choisit quel côté
+  // écraser. Aucun des deux choix n'est appliqué automatiquement.
+  const resolveGistConflict = async (choice) => {
+    if (!gistConflict) return;
+    setGistSyncState("syncing");
+    try {
+      if (choice === "keepRemote") {
+        const parsed = JSON.parse(gistConflict.content);
+        await applyImportedObject(parsed);
+        const remoteUpdatedAt = Date.parse(gistConflict.meta.updated_at) || Date.now();
+        setGistSyncedAtRaw(remoteUpdatedAt); setGistSyncedAtState(remoteUpdatedAt);
+        resetGistModCountRaw();
+        setGistConflict(null);
+        setGistMsg("Données distantes appliquées — rechargement…");
+        setTimeout(() => window.location.reload(), 800);
+      } else if (choice === "keepLocal") {
+        const out = await buildExportOut();
+        const updated = await gistUpdate(gistId, gistToken, out);
+        const now = Date.parse(updated.updated_at) || Date.now();
+        setGistSyncedAtRaw(now); setGistSyncedAtState(now);
+        resetGistModCountRaw();
+        setGistConflict(null);
+        setGistSyncState("synced");
+        setGistMsg("Tes données locales ont remplacé le contenu du Gist.");
+      } else {
+        setGistConflict(null);
+        setGistSyncState("conflict");
+      }
+    } catch (e) {
+      setGistSyncState("error");
+      setGistMsg("Erreur lors de la résolution du conflit : " + (e && e.message ? e.message : "inconnue"));
+    }
+  };
   const [showExcelExportModal, setShowExcelExportModal] = useState(false);
   const [excelSelectedKeys, setExcelSelectedKeys] = useState(() => new Set(EXCEL_SHEETS.map((s) => s.key)));
   const [pendingExcelWb, setPendingExcelWb] = useState(null);
@@ -9916,6 +10208,12 @@ function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto" }}>
             {ioMsg && <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, whiteSpace: "nowrap" }}>{ioMsg}</span>}
             <SaveStatusDot state={globalSaveState} modCount={modCount} />
+            <GistSyncBadge
+              configured={!!gistId}
+              state={gistSyncState}
+              modCount={gistModCount}
+              onClick={() => setTab("settings")}
+            />
             <button
               onClick={() => setTab("settings")}
               title="Paramètres"
@@ -9962,6 +10260,30 @@ function App() {
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={exportSave} style={{ ...btnGhost, borderColor: `${GOLD}88`, color: GOLD }}>📤 Exporter maintenant</button>
             <button onClick={() => setReminderDismissed(true)} style={btnGhost}>Plus tard</button>
+          </div>
+        </div>
+      )}
+
+      {gistConflict && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: PANEL2, border: `1px solid #E4572E66`, borderRadius: 20, padding: 18, maxWidth: 400, width: "100%" }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 8 }}>
+              Conflit de synchronisation
+            </div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED, marginBottom: 16, lineHeight: 1.5 }}>
+              Le Gist a été modifié depuis un autre appareil, et tu as aussi des modifications ici qui n'ont pas encore été synchronisées. Choisis quelle version garder — l'autre sera définitivement remplacée.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button onClick={() => resolveGistConflict("keepRemote")} style={{ ...btnGhost, textAlign: "left" }}>
+                📥 Garder la version du Gist (écrase mes données ici)
+              </button>
+              <button onClick={() => resolveGistConflict("keepLocal")} style={{ ...btnGhost, textAlign: "left" }}>
+                📤 Garder mes données ici (écrase le Gist)
+              </button>
+              <button onClick={() => resolveGistConflict("cancel")} style={{ ...btnGhost, textAlign: "left", color: MUTED }}>
+                Annuler pour l'instant
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -10086,7 +10408,20 @@ function App() {
             onSaveStateChange={setGlobalSaveState}
           />
         )}
-        {tab === "settings" && <SettingsView onSaveStateChange={setGlobalSaveState} />}
+        {tab === "settings" && (
+          <SettingsView
+            onSaveStateChange={setGlobalSaveState}
+            gistToken={gistToken}
+            gistId={gistId}
+            gistSyncedAt={gistSyncedAt}
+            gistModCount={gistModCount}
+            gistSyncState={gistSyncState}
+            gistMsg={gistMsg}
+            onSaveGistToken={saveGistToken}
+            onSaveGistId={saveGistId}
+            onGistSync={doGistSync}
+          />
+        )}
       </div>
     </div>
   );
