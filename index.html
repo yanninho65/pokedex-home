@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.10.18.52";
+const APP_VERSION = "2026.8.10.19.1";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9475,11 +9475,46 @@ async function buildInterjeuSheetRows() {
 // ---- Feuilles Excel des listes personnalisées (§50 doc) — pour un aller-retour Excel complet,
 // au même titre que les captures et le catalogue. Symétriques par construction : chaque builder
 // a son pendant importXxxSheet plus bas, qui réécrit exactement la même clé de stockage.
+// Important : comme dans Paramètres (SettingsView), les listes affichées à l'utilisateur ne
+// sont pas seulement `custom_marques`/`custom_modes`/etc. — elles incluent aussi les valeurs
+// "découvertes" dans les captures existantes (rec.marque/mode/details/location) qui n'ont
+// jamais été explicitement ajoutées via "+ Ajouter". Sans ce même calcul ici, l'export omettrait
+// silencieusement des valeurs pourtant visibles et utilisées dans l'app (bug rapporté : "Jeu par
+// marque" vide alors que des jeux étaient bien renseignés — ils n'existaient que par découverte).
 async function buildListesSheetRows() {
-  const marques = await storageGetJSON("custom_marques", []);
-  const modes = await storageGetJSON("custom_modes", []);
-  const details = await storageGetJSON("custom_details", []);
-  const locations = await storageGetJSON("custom_locations", []);
+  const marquesC = await storageGetJSON("custom_marques", []);
+  const modesC = await storageGetJSON("custom_modes", []);
+  const detailsC = await storageGetJSON("custom_details", []);
+  const locationsC = await storageGetJSON("custom_locations", []);
+  const shiny = await storageGetJSON("shiny_catches", {});
+  const double = await storageGetJSON("double_catches", {});
+  const events = await storageGetJSON("custom_events", []);
+  const interjeu = await storageGetJSON("custom_interjeu", []);
+  const dedupe = (arr) => { const seen = new Set(); return arr.filter((v) => { if (!v || seen.has(v)) return false; seen.add(v); return true; }); };
+
+  const marquesDiscovered = [];
+  Object.values(shiny).forEach((arr) => (arr || []).forEach((r) => { if (r.marque) marquesDiscovered.push(r.marque); }));
+  Object.values(double).forEach((arr) => (arr || []).forEach((r) => { if (r.marque) marquesDiscovered.push(r.marque); }));
+  events.forEach((e) => { if (e.marque) marquesDiscovered.push(e.marque); });
+  interjeu.forEach((it) => { if (it.marque) marquesDiscovered.push(it.marque); });
+  const marques = dedupe([...marquesC, ...marquesDiscovered]);
+
+  const modesDiscovered = [];
+  Object.values(shiny).forEach((arr) => (arr || []).forEach((r) => { if (r.mode) modesDiscovered.push(r.mode); }));
+  Object.values(double).forEach((arr) => (arr || []).forEach((r) => { if (r.mode) modesDiscovered.push(r.mode); }));
+  const modes = dedupe([...modesC, ...modesDiscovered]);
+
+  const detailsDiscovered = [];
+  Object.values(shiny).forEach((arr) => (arr || []).forEach((r) => (r.details || []).forEach((d) => detailsDiscovered.push(d))));
+  Object.values(double).forEach((arr) => (arr || []).forEach((r) => (r.details || []).forEach((d) => detailsDiscovered.push(d))));
+  interjeu.forEach((it) => (it.details || []).forEach((d) => detailsDiscovered.push(d)));
+  const details = dedupe([...detailsC, ...detailsDiscovered]);
+
+  const locationsDiscovered = [];
+  Object.values(shiny).forEach((arr) => (arr || []).forEach((r) => { if (r.location) locationsDiscovered.push(r.location); }));
+  interjeu.forEach((it) => { if (it.ou) locationsDiscovered.push(it.ou); if (it.vers) locationsDiscovered.push(it.vers); });
+  const locations = dedupe([...locationsC, ...locationsDiscovered]);
+
   const max = Math.max(marques.length, modes.length, details.length, locations.length, 1);
   const rows = [];
   for (let i = 0; i < max; i++) {
@@ -9489,22 +9524,45 @@ async function buildListesSheetRows() {
 }
 
 async function buildJeuxMarqueSheetRows() {
-  const obj = await storageGetJSON("custom_jeux", {});
+  const custom = await storageGetJSON("custom_jeux", {});
+  const shiny = await storageGetJSON("shiny_catches", {});
+  const double = await storageGetJSON("double_catches", {});
+  const byMarque = {};
+  const addTo = (marque, jeu) => {
+    if (!marque || !jeu) return;
+    if (!byMarque[marque]) byMarque[marque] = [];
+    if (!byMarque[marque].includes(jeu)) byMarque[marque].push(jeu);
+  };
+  Object.keys(custom).forEach((marque) => (custom[marque] || []).forEach((jeu) => addTo(marque, jeu)));
+  Object.values(shiny).forEach((arr) => (arr || []).forEach((r) => addTo(r.marque, r.jeu)));
+  Object.values(double).forEach((arr) => (arr || []).forEach((r) => addTo(r.marque, r.jeu)));
   const rows = [];
-  Object.keys(obj).forEach((marque) => {
-    (obj[marque] || []).forEach((jeu) => rows.push({ Marque: marque, Jeu: jeu }));
-  });
+  Object.keys(byMarque).forEach((marque) => byMarque[marque].forEach((jeu) => rows.push({ Marque: marque, Jeu: jeu })));
   return rows;
 }
 
 async function buildBoitesGroupesSheetRows() {
   const groups = await storageGetJSON("custom_box_groups", {});
   const settings = await storageGetJSON("box_settings", {});
+  const overrides = await storageGetJSON("box_group_overrides", {});
+  const byGame = {};
+  const addTo = (jeu, groupe) => {
+    if (!jeu || !groupe) return;
+    if (!byGame[jeu]) byGame[jeu] = [];
+    if (!byGame[jeu].includes(groupe)) byGame[jeu].push(groupe);
+  };
+  Object.keys(groups).forEach((jeu) => (groups[jeu] || []).forEach((g) => addTo(jeu, g)));
+  // Groupes "découverts" via les surcharges par Pokémon (box_group_overrides) — déjà sauvegardés
+  // dans la colonne Groupe des feuilles par jeu, ajoutés ici aussi pour que la liste des noms de
+  // groupes elle-même (indépendamment de leur assignation) soit visible dans cette feuille.
+  Object.keys(overrides).forEach((jeu) => {
+    Array.from(computeEffectiveBoxGroupSet(jeu, overrides[jeu] || {})).forEach((g) => addTo(jeu, g));
+  });
   const rows = [];
   const seenGames = new Set();
-  Object.keys(groups).forEach((jeu) => {
+  Object.keys(byGame).forEach((jeu) => {
     seenGames.add(jeu);
-    (groups[jeu] || []).forEach((groupe) => {
+    byGame[jeu].forEach((groupe) => {
       const cfg = settings[jeu] || {};
       rows.push({ Jeu: jeu, Groupe: groupe, TailleBoite: cfg.size || "", PrefixeBoite: cfg.prefix || "" });
     });
