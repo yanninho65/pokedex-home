@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.10.0.40";
+const APP_VERSION = "2026.8.10.0.47";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1015,22 +1015,33 @@ function GistSyncBadge({ configured, state, modCount, onClick }) {
   const label =
     state === "conflict" ? "Conflit de synchro — appuyer pour résoudre"
     : state === "error" ? "Erreur de synchro"
-    : state === "syncing" ? "Synchronisation…"
+    : state === "syncing" ? "Synchronisation en cours…"
     : modCount > 0 ? `${modCount} modification${modCount > 1 ? "s" : ""} non synchronisée${modCount > 1 ? "s" : ""}`
     : "Synchronisé — appuyer pour resynchroniser";
-  const icon = state === "conflict" || state === "error" ? "⚠️" : "🔗";
+  const syncing = state === "syncing";
+  const icon = state === "conflict" || state === "error" ? "⚠️" : syncing ? "🔄" : "🔗";
   return (
     <button
       onClick={onClick}
       title={label}
       style={{
         display: "flex", alignItems: "center", gap: 4, background: "transparent",
-        border: `1px solid ${color}88`, borderRadius: 999, padding: "3px 8px", cursor: "pointer",
+        border: `1px solid ${color}88`, borderRadius: 999, padding: "3px 8px", cursor: syncing ? "default" : "pointer",
         fontFamily: "Inter, sans-serif", fontSize: 11, color, flexShrink: 0, whiteSpace: "nowrap",
       }}
     >
-      <span style={{ fontSize: 11, lineHeight: 1 }}>{icon}</span>
-      <span style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0 }} />
+      {syncing && (
+        <style>{`@keyframes pkdxGistSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      )}
+      <span style={{
+        fontSize: 11, lineHeight: 1, display: "inline-block",
+        animation: syncing ? "pkdxGistSpin 0.9s linear infinite" : "none",
+      }}>{icon}</span>
+      {syncing ? (
+        <span style={{ fontSize: 10.5, fontWeight: 600 }}>Synchro…</span>
+      ) : (
+        <span style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0 }} />
+      )}
     </button>
   );
 }
