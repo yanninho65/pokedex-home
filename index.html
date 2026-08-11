@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.10.19.1";
+const APP_VERSION = "2026.8.11.1.1";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9354,6 +9354,29 @@ async function storageGetJSON(key, fallback) {
   return fallback;
 }
 
+// ---- Formatage Excel commun (§51 doc) — forme vide affichée "-" (jamais une cellule blanche
+// ambiguë avec "colonne absente"), dates au format JJ/MM/AAAA (lisible directement dans Excel,
+// contrairement à l'ISO natif des <input type="date">). Chaque fonction d'export a son inverse
+// pour l'import, appliqué symétriquement sur toutes les feuilles concernées.
+function excelForme(v) { return v ? v : "-"; }
+function excelParseForme(v) {
+  const s = String(v == null ? "" : v).trim();
+  return (s === "" || s === "-") ? "" : s;
+}
+function excelFormatDateFR(iso) {
+  if (!iso) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
+}
+function excelParseDateFR(v) {
+  const s = String(v == null ? "" : v).trim();
+  if (!s) return "";
+  let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); // repli ISO, au cas où un ancien export serait réimporté
+  return m ? s.slice(0, 10) : s;
+}
+
 async function buildGameSheetRows(g) {
   const base = DATA.games[g] || [];
   const dict = await readGameCaughtDict(g);
@@ -9374,7 +9397,7 @@ async function buildGameSheetRows(g) {
   return base.map((r, i) => {
     const key = r[1] + "|" + (r[2] || "");
     const row = {
-      Nom: r[1], Forme: r[2] || "", Attrape: dict[key] ? 1 : 0, Jeu: jeuForGame[key] || "",
+      Nom: r[1], Forme: excelForme(r[2]), Attrape: dict[key] ? 1 : 0, Jeu: jeuForGame[key] || "",
       Groupe: effectiveBoxGroup(g, i, r, boxGroupOverridesForGame),
     };
     if (isAlphaGame) row.Alpha = alpha[g + "|" + key] ? 1 : 0;
@@ -9390,7 +9413,7 @@ async function buildParamsSheetRows() {
     const key = nom + "|" + (forme || "");
     const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
     const row = {
-      Nom: nom, Forme: forme || "", Numero: nat, Region: r[3] || "",
+      Nom: nom, Forme: excelForme(forme), Numero: nat, Region: r[3] || "",
       Evolution: DATA.evolutionMode[key] || "-",
       AlphaLA: alpha.LA ? 1 : 0, AlphaLZA: alpha.LZA ? 1 : 0,
       HomeDex: (DATA.homeDex && DATA.homeDex[key]) ? 1 : 0,
@@ -9415,7 +9438,7 @@ async function buildNationalSheetRows() {
     const r = DATA.nat[idx];
     const [, nom, forme] = r;
     const key = nom + "|" + (forme || "");
-    const row = { Nom: nom, Forme: forme || "" };
+    const row = { Nom: nom, Forme: excelForme(forme) };
     for (const g of GAME_ORDER) {
       const hasSlot = DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key);
       row[g] = hasSlot ? (dictByGame[g][key] ? 1 : 0) : "";
@@ -9434,8 +9457,8 @@ async function buildCatchSheetRows(storageKey) {
     const [nom, forme] = splitPokemonKey(key);
     (obj[key] || []).forEach((rec) => {
       rows.push({
-        Nom: nom, Forme: forme || "",
-        Date: rec.date || "", Mode: rec.mode || "", Marque: rec.marque || "",
+        Nom: nom, Forme: excelForme(forme),
+        Date: excelFormatDateFR(rec.date), Mode: rec.mode || "", Marque: rec.marque || "",
         Location: rec.location || "", Jeu: rec.jeu || "",
         Alpha: rec.alpha ? 1 : 0,
         Gmax: rec.gmax ? "Gmax" : (rec.gmaxable ? "Gmaxable" : ""),
@@ -9453,7 +9476,7 @@ async function buildCatchSheetRows(storageKey) {
 async function buildEventSheetRows() {
   const arr = await storageGetJSON("custom_events", []);
   return arr.map((e) => ({
-    Nom: e.nom, Forme: e.forme || "", Marque: e.marque || "", DO: e.do || "", ID: e.id || "",
+    Nom: e.nom, Forme: excelForme(e.forme), Marque: e.marque || "", DO: e.do || "", ID: e.id || "",
     Distribution: e.jeux || "", Shiny: e.shiny ? 1 : 0, Gmax: e.gmax ? 1 : 0,
     Attrape: e.attrape ? 1 : 0, DansBoite: e.boite ? 1 : 0,
   }));
@@ -9462,7 +9485,7 @@ async function buildEventSheetRows() {
 async function buildInterjeuSheetRows() {
   const arr = await storageGetJSON("custom_interjeu", []);
   return arr.map((it) => ({
-    Nom: it.nom, Forme: it.forme || "", NomApres: it.nomApres || "", FormeApres: it.formeApres || "",
+    Nom: it.nom, Forme: excelForme(it.forme), NomApres: it.nomApres || "", FormeApres: excelForme(it.formeApres),
     Marque: it.marque || "", Shiny: it.shiny ? 1 : 0, Ou: it.ou || "", Vers: it.vers || "", Jeu: it.jeu || "",
     // "Déjà envoyé" (§43 doc) — sérialisé en JSON ; de toute façon re-synchronisé automatiquement
     // depuis l'exemplaire Shiny/Double lié à chaque ouverture de l'onglet Interjeu, ceci évite
@@ -9591,6 +9614,108 @@ async function buildDispoSheetRows() {
   return rows;
 }
 
+// ---- Feuille Excel dédiée à Shiny (§51 doc, remplace l'usage générique de buildCatchSheetRows
+// pour cet onglet) — structure différente du reste : une ligne PAR FORME du catalogue (même les
+// non capturées), dans l'ordre du catalogue (= ordre de la vue Liste), suivie des exemplaires
+// supplémentaires (doublons, y compris entre marques différentes) à la fin — même répartition en
+// boîtes "Shiny XG" par région que la vue Boîte de l'onglet. La colonne Attrape fait double
+// usage : "0" = pas capturé, "1" = capturé à l'emplacement par défaut (Home 1), toute autre
+// valeur = capturé à cet emplacement précis — évite une colonne Emplacement séparée.
+async function buildShinySheetRows() {
+  const catchesObj = await storageGetJSON("shiny_catches", {});
+  const keyOf = (nom, forme) => nom + "|" + (forme || "");
+  const recordsFor = (key) => catchesObj[key] || [];
+
+  const seen = new Set();
+  const primaryRows = [];
+  (DATA.shinyCatalog || []).forEach((r) => {
+    const k = keyOf(r[1], r[2]);
+    if (seen.has(k)) return;
+    seen.add(k);
+    primaryRows.push(r);
+  });
+
+  const rowFor = (nom, forme, rec, boiteName) => {
+    if (!rec) {
+      return { Nom: nom, Forme: excelForme(forme), Attrape: 0, Marque: "", Mode: "", Detail: "", Date: "", Jeu: "", Gmax: "", Alpha: "", NomBoite: boiteName || "" };
+    }
+    const loc = catchLocation(rec);
+    return {
+      Nom: nom, Forme: excelForme(forme),
+      Attrape: loc === DEFAULT_LOCATION ? 1 : loc,
+      Marque: rec.marque || "", Mode: rec.mode || "", Detail: (rec.details || []).join(", "),
+      Date: excelFormatDateFR(rec.date), Jeu: rec.jeu || "",
+      Gmax: rec.gmax ? "Gmax" : (rec.gmaxable ? "Gmaxable" : ""),
+      Alpha: rec.alpha ? 1 : 0,
+      NomBoite: boiteName || "",
+    };
+  };
+
+  const rows = [];
+  primaryRows.forEach((r) => {
+    const recs = recordsFor(keyOf(r[1], r[2]));
+    rows.push(rowFor(r[1], r[2], recs[0], r[5] || ("Boîte " + r[4])));
+  });
+
+  // Doublons — même algorithme de répartition par région/génération que ShinyView.
+  const REGION_GEN = { Kanto: 1, Johto: 2, Hoenn: 3, Sinnoh: 4, Unys: 5, Kalos: 6, Alola: 7, Extra: 7, Galar: 8, Hisui: 8, Paldea: 9 };
+  const DUP_BOX_SIZE = 30;
+  const byRegion = new Map();
+  primaryRows.forEach((r) => {
+    const recs = recordsFor(keyOf(r[1], r[2]));
+    if (recs.length <= 1) return;
+    const region = r[3] || "";
+    if (!byRegion.has(region)) byRegion.set(region, []);
+    const list = byRegion.get(region);
+    for (let i = 1; i < recs.length; i++) list.push({ r, rec: recs[i] });
+  });
+  const regionsWithDup = Array.from(byRegion.keys()).sort((a, b) => (REGION_GEN[a] || 99) - (REGION_GEN[b] || 99));
+  regionsWithDup.forEach((region) => {
+    const items = [...byRegion.get(region)].sort((a, b) => a.r[0] - b.r[0]);
+    const gen = REGION_GEN[region] || "?";
+    const chunks = [];
+    for (let i = 0; i < items.length; i += DUP_BOX_SIZE) chunks.push(items.slice(i, i + DUP_BOX_SIZE));
+    chunks.forEach((chunk, ci) => {
+      const name = chunks.length === 1 ? `Shiny ${gen}G` : `Shiny ${gen}G-${ci + 1}`;
+      chunk.forEach(({ r, rec }) => rows.push(rowFor(r[1], r[2], rec, name)));
+    });
+  });
+
+  return rows;
+}
+
+// Reconstruit shiny_catches à partir de la feuille "Shiny" ci-dessus. Comme le fichier liste déjà
+// chaque exemplaire dans l'ordre (forme primaire d'abord, doublons ensuite), relire séquentiellement
+// suffit à reconstituer le bon ordre des tableaux par forme — pas besoin de connaître le numéro
+// d'occurrence explicitement.
+async function importShinySheet(rows, mode) {
+  const next = mode === "replace" ? {} : await storageGetJSON("shiny_catches", {});
+  const sameRec = (a, b) => a.date === b.date && a.mode === b.mode && a.marque === b.marque
+    && a.location === b.location && a.jeu === b.jeu && (a.details || []).join(",") === (b.details || []).join(",");
+  rows.forEach((row) => {
+    const nom = String(row.Nom || "").trim();
+    if (!nom) return;
+    const forme = excelParseForme(row.Forme);
+    const key = nom + "|" + (forme || "");
+    const attrapeStr = String(row.Attrape == null ? "" : row.Attrape).trim();
+    if (!attrapeStr || attrapeStr === "0") return; // pas capturé, rien à créer pour cette ligne
+    const location = attrapeStr === "1" ? DEFAULT_LOCATION : attrapeStr;
+    const g = String(row.Gmax || "").toLowerCase();
+    const rec = {
+      date: excelParseDateFR(row.Date), mode: String(row.Mode || ""), marque: String(row.Marque || ""),
+      location, jeu: String(row.Jeu || ""), alpha: !!Number(row.Alpha),
+      details: row.Detail ? String(row.Detail).split(",").map((d) => d.trim()).filter(Boolean) : [],
+    };
+    if (g === "gmax") rec.gmax = true; else if (g === "gmaxable") rec.gmaxable = true;
+    if (!next[key]) next[key] = [];
+    // Mode "Ajouter" : ne pas créer de doublon si un exemplaire strictement identique existe déjà
+    // (ex. ré-import du même fichier) — mode "Remplacer" repart d'un tableau vide, donc sans risque.
+    if (mode !== "replace" && next[key].some((r) => sameRec(r, rec))) return;
+    next[key].push(rec);
+  });
+  await window.storage.set("shiny_catches", JSON.stringify(next), false);
+}
+
 async function buildExcelWorkbook(selectedKeys) {
   const wb = XLSX.utils.book_new();
   for (const sheetDef of EXCEL_SHEETS) {
@@ -9598,7 +9723,7 @@ async function buildExcelWorkbook(selectedKeys) {
     let rows;
     if (sheetDef.key === "national") rows = await buildNationalSheetRows();
     else if (sheetDef.key === "params") rows = await buildParamsSheetRows();
-    else if (sheetDef.key === "shiny") rows = await buildCatchSheetRows("shiny_catches");
+    else if (sheetDef.key === "shiny") rows = await buildShinySheetRows();
     else if (sheetDef.key === "double") rows = await buildCatchSheetRows("double_catches");
     else if (sheetDef.key === "event") rows = await buildEventSheetRows();
     else if (sheetDef.key === "interjeu") rows = await buildInterjeuSheetRows();
@@ -9649,7 +9774,7 @@ async function importGameSheet(g, rows, mode) {
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
-    const forme = String(row.Forme || "").trim();
+    const forme = excelParseForme(row.Forme);
     const key = nom + "|" + forme;
     if (DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key)) {
       if (hasAttrapeColumn) dict[key] = Number(row.Attrape) ? 1 : 0;
@@ -9703,7 +9828,7 @@ async function importNationalSheet(rows, mode) {
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
-    const forme = String(row.Forme || "").trim();
+    const forme = excelParseForme(row.Forme);
     const key = nom + "|" + forme;
     for (const g of GAME_ORDER) {
       if (row[g] === "" || row[g] === undefined) continue;
@@ -9731,9 +9856,9 @@ async function importCatchSheet(storageKey, rows, mode) {
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
-    const forme = String(row.Forme || "").trim();
+    const forme = excelParseForme(row.Forme);
     const key = nom + "|" + forme;
-    const rec = { date: String(row.Date || ""), mode: String(row.Mode || ""), marque: String(row.Marque || "") };
+    const rec = { date: excelParseDateFR(row.Date), mode: String(row.Mode || ""), marque: String(row.Marque || "") };
     if (row.Location) rec.location = String(row.Location);
     if (row.Jeu) rec.jeu = String(row.Jeu);
     if (Number(row.Alpha)) rec.alpha = true;
@@ -9755,7 +9880,7 @@ async function importEventSheet(rows, mode) {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
     const rec = {
-      nom, forme: String(row.Forme || "") || null, marque: String(row.Marque || ""),
+      nom, forme: excelParseForme(row.Forme) || null, marque: String(row.Marque || ""),
       do: String(row.DO || ""), id: String(row.ID || ""), jeux: String(row.Distribution || ""),
       shiny: !!Number(row.Shiny), gmax: !!Number(row.Gmax),
       attrape: !!Number(row.Attrape), boite: !!Number(row.DansBoite),
@@ -9777,8 +9902,8 @@ async function importInterjeuSheet(rows, mode) {
     let sentInfo = existing ? existing.sentInfo || null : null;
     if (row.SentInfo) { try { sentInfo = JSON.parse(row.SentInfo); } catch (e) {} }
     const rec = {
-      nom, forme: String(row.Forme || "") || null,
-      nomApres: String(row.NomApres || "") || null, formeApres: String(row.FormeApres || "") || null,
+      nom, forme: excelParseForme(row.Forme) || null,
+      nomApres: String(row.NomApres || "") || null, formeApres: excelParseForme(row.FormeApres) || null,
       marque: String(row.Marque || ""), shiny: !!Number(row.Shiny),
       ou: String(row.Ou || ""), vers: String(row.Vers || ""), jeu: String(row.Jeu || ""),
       transferable: (existing && existing.transferable) || { Galar: false, LA: false, DEPS: false, Paldea: false, LZA: false },
@@ -9818,7 +9943,7 @@ async function importParamsSheet(rows) {
   rows.forEach((sheetRow) => {
     const nom = String(sheetRow.Nom || "").trim();
     if (!nom) return;
-    const forme = String(sheetRow.Forme || "").trim();
+    const forme = excelParseForme(sheetRow.Forme);
     const fields = { nom, forme: forme || null };
     if (hasNumero && sheetRow.Numero !== "") fields.nat = sheetRow.Numero;
     if (hasRegion && sheetRow.Region) fields.region = sheetRow.Region;
@@ -9960,7 +10085,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     if (gameSet.has(sheetName)) { await importGameSheet(sheetName, rows, mode); touched++; }
     else if (sheetName === "National") { await importNationalSheet(rows, mode); touched++; }
     else if (sheetName === "Paramètres") { await importParamsSheet(rows); touched++; }
-    else if (sheetName === "Shiny") { await importCatchSheet("shiny_catches", rows, mode); touched++; }
+    else if (sheetName === "Shiny") { await importShinySheet(rows, mode); touched++; }
     else if (sheetName === "Double") { await importCatchSheet("double_catches", rows, mode); touched++; }
     else if (sheetName === "Event") { await importEventSheet(rows, mode); touched++; }
     else if (sheetName === "Interjeu") { await importInterjeuSheet(rows, mode); touched++; }
