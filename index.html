@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.12.33";
+const APP_VERSION = "2026.8.11.13.38";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9414,26 +9414,27 @@ async function buildParamsSheetRows() {
   });
 }
 
+// National (§ voir doc) — ne duplique plus le statut Attrapé/Alpha (déjà dans les feuilles de jeu
+// et LA/LZA), mais garde une colonne par marque et AlphaLA/AlphaLZA en tant qu'info STRUCTURELLE
+// pure (disponibilité, pas possession) : 1 si le Pokémon existe dans ce jeu / peut être Alpha,
+// 0 sinon — pratique à copier tel quel (grille 0/1) dans un tableur externe. Différent de la
+// feuille Paramètres, qui donne le numéro exact dans chaque jeu plutôt qu'un simple booléen.
+// Purement informatif : ces colonnes ne sont pas relues à l'import (voir importNationalSheet).
 async function buildNationalSheetRows() {
-  const dictByGame = {};
-  for (const g of GAME_ORDER) {
-    dictByGame[g] = await readGameCaughtDict(g);
-  }
   const manual = await storageGetJSON("manual_caught", {});
-  const alpha = await storageGetJSON("alpha_caught", {});
   const order = DATA.natSortOrder || DATA.nat.map((_, i) => i);
   return order.map((idx) => {
     const r = DATA.nat[idx];
     const [, nom, forme] = r;
     const key = nom + "|" + (forme || "");
+    const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
     const row = { Nom: nom, Forme: excelForme(forme) };
     for (const g of GAME_ORDER) {
-      const hasSlot = DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key);
-      row[g] = hasSlot ? (dictByGame[g][key] ? 1 : 0) : "";
+      row[g] = (DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key)) ? 1 : 0;
     }
     row["Forme(manuel)"] = manual["Forme|" + key] ? 1 : 0;
-    row["AlphaLA"] = alpha["LA|" + key] ? 1 : 0;
-    row["AlphaLZA"] = alpha["LZA|" + key] ? 1 : 0;
+    row["AlphaLA"] = alpha.LA ? 1 : 0;
+    row["AlphaLZA"] = alpha.LZA ? 1 : 0;
     return row;
   });
 }
@@ -9813,37 +9814,25 @@ async function importGameSheet(g, rows, mode) {
   return matched;
 }
 
+// Miroir de buildNationalSheetRows ci-dessus : ne touche qu'à manual_caught (pseudo-jeu "Forme").
+// Les colonnes par marque et AlphaLA/AlphaLZA de cette feuille sont volontairement IGNORÉES à
+// l'import — ce sont des colonnes structurelles informatives (disponibilité, pas possession),
+// non éditables depuis cette feuille (la disponibilité se modifie via le Catalogue, §21bis).
+// caught_<jeu> et alpha_caught (ownership) restent exclusivement pilotés par les feuilles de jeu
+// (importGameSheet) — ne pas les réécrire ici évite qu'un import National désynchronisé n'écrase
+// silencieusement un statut Attrapé/Alpha déjà à jour ailleurs.
 async function importNationalSheet(rows, mode) {
-  const dictByGame = {};
-  for (const g of GAME_ORDER) {
-    dictByGame[g] = mode === "replace" ? {} : await readGameCaughtDict(g);
-  }
   let manual = mode === "replace" ? {} : await storageGetJSON("manual_caught", {});
-  let alpha = mode === "replace" ? {} : await storageGetJSON("alpha_caught", {});
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
     const forme = excelParseForme(row.Forme);
     const key = nom + "|" + forme;
-    for (const g of GAME_ORDER) {
-      if (row[g] === "" || row[g] === undefined) continue;
-      if (DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key)) {
-        dictByGame[g][key] = Number(row[g]) ? 1 : 0;
-      }
-    }
     if (row["Forme(manuel)"] !== "" && row["Forme(manuel)"] !== undefined) {
       if (Number(row["Forme(manuel)"])) manual["Forme|" + key] = 1; else delete manual["Forme|" + key];
     }
-    if (row["AlphaLA"] !== "" && row["AlphaLA"] !== undefined) {
-      if (Number(row["AlphaLA"])) alpha["LA|" + key] = 1; else delete alpha["LA|" + key];
-    }
-    if (row["AlphaLZA"] !== "" && row["AlphaLZA"] !== undefined) {
-      if (Number(row["AlphaLZA"])) alpha["LZA|" + key] = 1; else delete alpha["LZA|" + key];
-    }
   });
-  for (const g of GAME_ORDER) await window.storage.set("caught_" + g, JSON.stringify(dictByGame[g]), false);
   await window.storage.set("manual_caught", JSON.stringify(manual), false);
-  await window.storage.set("alpha_caught", JSON.stringify(alpha), false);
 }
 
 async function importCatchSheet(storageKey, rows, mode) {
