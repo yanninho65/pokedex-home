@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.23.17";
+const APP_VERSION = "2026.8.11.23.26";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -5868,6 +5868,31 @@ async function cascadeRename(kind, oldValue, newValue, marqueCtx) {
       if ((rec.marque || "") === mk && rec.jeu === oldValue) { rec.jeu = newValue; changed2 = true; }
     }));
     if (changed2) await writeJSON("double_catches", doubles);
+
+    // Onglets jeu (§37 doc, game_jeu_overrides = { [jeu]: { "nom|forme": jeuDOID } }) — le champ
+    // "Jeu - DO" par Pokémon des onglets jeu (ex. "Go") avait été oublié de ce renommage en
+    // cascade : un renommage dans Paramètres se répercutait sur Shiny/Double mais pas là.
+    const gameJeu = await readJSON("game_jeu_overrides", {});
+    if (gameJeu[mk]) {
+      let changed3 = false;
+      const forGame = { ...gameJeu[mk] };
+      Object.keys(forGame).forEach((key) => {
+        if (forGame[key] === oldValue) { forGame[key] = newValue; changed3 = true; }
+      });
+      if (changed3) await writeJSON("game_jeu_overrides", { ...gameJeu, [mk]: forGame });
+    }
+
+    // Event — "DO personnel" (§ nouveau, jeuDO par entrée).
+    const events = await readJSON("custom_events", []);
+    let changed4 = false;
+    events.forEach((e) => { if ((e.marque || "") === mk && e.jeuDO === oldValue) { e.jeuDO = newValue; changed4 = true; } });
+    if (changed4) await writeJSON("custom_events", events);
+
+    // Interjeu (champ "Jeu - DO" de la fiche, §37 doc).
+    const interjeu = await readJSON("custom_interjeu", []);
+    let changed5 = false;
+    interjeu.forEach((it) => { if ((it.marque || "") === mk && it.jeu === oldValue) { it.jeu = newValue; changed5 = true; } });
+    if (changed5) await writeJSON("custom_interjeu", interjeu);
   }
 
   // "boxgroup" : liste "Groupe de boîte" gérée par jeu (marqueCtx = code du jeu, ex. "Galar").
