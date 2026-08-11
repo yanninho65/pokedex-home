@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.1.1";
+const APP_VERSION = "2026.8.11.1.57";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9368,7 +9368,23 @@ function excelFormatDateFR(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
 }
+// Cellule Date native (pas du texte) — construite en UTC pour que le jour ne se décale pas
+// d'un cran selon le fuseau horaire du navigateur. SheetJS écrit un objet Date comme une vraie
+// cellule Excel (type 'd'), reconnue par Excel comme une date et non comme du texte ; le format
+// d'affichage "dd/mm/yyyy" est appliqué après coup sur la cellule (voir buildExcelWorkbook).
+function excelDateCell(iso) {
+  if (!iso) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+  if (!m) return String(iso);
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+}
 function excelParseDateFR(v) {
+  // Cellule Date native relue depuis Excel (lecture avec cellDates:true) — reconvertie en ISO en
+  // UTC, symétrique de excelDateCell ci-dessus.
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    const y = v.getUTCFullYear(), mo = String(v.getUTCMonth() + 1).padStart(2, "0"), d = String(v.getUTCDate()).padStart(2, "0");
+    return `${y}-${mo}-${d}`;
+  }
   const s = String(v == null ? "" : v).trim();
   if (!s) return "";
   let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
@@ -9458,7 +9474,7 @@ async function buildCatchSheetRows(storageKey) {
     (obj[key] || []).forEach((rec) => {
       rows.push({
         Nom: nom, Forme: excelForme(forme),
-        Date: excelFormatDateFR(rec.date), Mode: rec.mode || "", Marque: rec.marque || "",
+        Date: excelDateCell(rec.date), Mode: rec.mode || "", Marque: rec.marque || "",
         Location: rec.location || "", Jeu: rec.jeu || "",
         Alpha: rec.alpha ? 1 : 0,
         Gmax: rec.gmax ? "Gmax" : (rec.gmaxable ? "Gmaxable" : ""),
@@ -9644,7 +9660,7 @@ async function buildShinySheetRows() {
       Nom: nom, Forme: excelForme(forme),
       Attrape: loc === DEFAULT_LOCATION ? 1 : loc,
       Marque: rec.marque || "", Mode: rec.mode || "", Detail: (rec.details || []).join(", "),
-      Date: excelFormatDateFR(rec.date), Jeu: rec.jeu || "",
+      Date: excelDateCell(rec.date), Jeu: rec.jeu || "",
       Gmax: rec.gmax ? "Gmax" : (rec.gmaxable ? "Gmaxable" : ""),
       Alpha: rec.alpha ? 1 : 0,
       NomBoite: boiteName || "",
@@ -9734,6 +9750,13 @@ async function buildExcelWorkbook(selectedKeys) {
     else if (sheetDef.key.startsWith("game_")) rows = await buildGameSheetRows(sheetDef.key.slice(5));
     if (!rows || !rows.length) rows = [{ Nom: "", Forme: "" }];
     const ws = XLSX.utils.json_to_sheet(rows);
+    // Applique un format d'affichage jour/mois/année aux cellules Date natives (voir
+    // excelDateCell) — sans ça, SheetJS utilise un format numérique par défaut à l'anglo-saxonne.
+    Object.keys(ws).forEach((addr) => {
+      if (addr[0] === "!") return;
+      const cell = ws[addr];
+      if (cell && cell.t === "d") cell.z = "dd/mm/yyyy";
+    });
     XLSX.utils.book_append_sheet(wb, ws, excelSheetName(sheetDef.label));
   }
   return wb;
@@ -10598,7 +10621,7 @@ function App() {
   const onExcelFileChosen = async (file) => {
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
       if (!wb.SheetNames.length) throw new Error("empty");
       setPendingExcelWb(wb);
       setShowExcelImportModal(true);
