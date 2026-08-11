@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.3.4";
+const APP_VERSION = "2026.8.11.12.27";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -970,71 +970,37 @@ const DOUBLE_VIEW_OPTIONS = [["list","Liste"],["box","Boîte"]];
 
 // Menu "⋮" du header regroupant les actions Excel / Export / Import / Réinitialiser,
 // plutôt que quatre boutons séparés en permanence à côté du logo.
-// Petit indicateur de statut de sauvegarde (remplace le texte "Synchronisé" affiché
-// auparavant sous les cercles de chaque onglet) : vert = à jour, orange = sauvegarde en
-// cours, rouge = erreur. Un appui affiche le libellé en texte à côté, un second appui le
-// masque à nouveau.
-function SaveStatusDot({ state, modCount }) {
-  const [showLabel, setShowLabel] = useState(false);
-  const color = state === "saving" ? "#FFA726" : state === "error" ? "#E4572E" : OK;
-  const label = state === "saving" ? "Sauvegarde…" : state === "error" ? "Erreur de sauvegarde" : "Synchronisé";
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-      {showLabel && (
-        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, whiteSpace: "nowrap" }}>{label}</span>
-      )}
-      <button
-        onClick={() => setShowLabel((s) => !s)}
-        title={label}
-        style={{
-          width: 14, height: 14, borderRadius: 999, background: color, border: "none",
-          cursor: "pointer", flexShrink: 0, padding: 0,
-        }}
-      />
-      {/* Discret rappel du nombre de modifications depuis le dernier export (voir doc §7bis/§9) —
-          n'apparaît que s'il y a au moins une modification en attente. */}
-      {modCount > 0 && (
-        <span
-          title={`${modCount} modification${modCount > 1 ? "s" : ""} depuis le dernier export`}
-          style={{
-            fontFamily: "Inter, sans-serif", fontSize: 10, fontWeight: 700, color: MUTED,
-            border: `1px solid ${LINE}`, borderRadius: 999, padding: "1px 5px",
-            lineHeight: "13px", whiteSpace: "nowrap", flexShrink: 0,
-          }}
-        >{modCount}</span>
-      )}
-    </div>
-  );
-}
-
 // Petit indicateur d'état de la synchro Gist dans l'en-tête (voir doc §46) — cliquable, ouvre
 // directement Paramètres sur la section de synchro pour agir (configurer/résoudre un conflit).
 // Bouton de synchro Gist minimal dans l'en-tête (voir §52 doc) — pas de compteur de
 // modifications ni d'indicateur "synchronisé" affiché en continu : juste une icône, qui tourne
 // pendant la synchro (sans texte), et qui vire à l'alerte en cas de conflit/erreur.
-function GistSyncBadge({ configured, state, onClick }) {
+function GistSyncBadge({ configured, state, modCount, onClick }) {
   if (!configured) return null;
   const syncing = state === "syncing";
   const isAlert = state === "conflict" || state === "error";
+  const dotColor = isAlert ? "#E4572E" : (syncing || modCount > 0) ? "#FFA726" : OK;
   const icon = isAlert ? "⚠️" : syncing ? "🔄" : "🔗";
   const label =
     state === "conflict" ? "Conflit de synchro — appuyer pour résoudre"
     : state === "error" ? "Erreur de synchro"
     : syncing ? "Synchronisation en cours…"
-    : "Synchroniser avec le Gist";
+    : modCount > 0 ? `${modCount} modification${modCount > 1 ? "s" : ""} non synchronisée${modCount > 1 ? "s" : ""}`
+    : "Synchronisé — appuyer pour resynchroniser";
   return (
     <button
       onClick={onClick}
       title={label}
       style={{
-        background: "transparent", border: "none", cursor: syncing ? "default" : "pointer",
-        padding: "4px 6px", fontSize: 18, lineHeight: 1, flexShrink: 0, color: isAlert ? "#E4572E" : MUTED,
+        display: "flex", alignItems: "center", gap: 4, background: "transparent", border: "none",
+        cursor: syncing ? "default" : "pointer", padding: "4px 6px", flexShrink: 0, color: isAlert ? "#E4572E" : MUTED,
       }}
     >
       {syncing && (
         <style>{`@keyframes pkdxGistSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       )}
-      <span style={{ display: "inline-block", animation: syncing ? "pkdxGistSpin 0.9s linear infinite" : "none" }}>{icon}</span>
+      <span style={{ fontSize: 17, lineHeight: 1, display: "inline-block", animation: syncing ? "pkdxGistSpin 0.9s linear infinite" : "none" }}>{icon}</span>
+      <span style={{ width: 7, height: 7, borderRadius: 999, background: dotColor, flexShrink: 0 }} />
     </button>
   );
 }
@@ -10843,7 +10809,6 @@ function App() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto" }}>
             {ioMsg && <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, whiteSpace: "nowrap" }}>{ioMsg}</span>}
-            <SaveStatusDot state={globalSaveState} modCount={modCount} />
             <GistSyncBadge
               configured={!!gistId}
               state={gistSyncState}
