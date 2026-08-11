@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.19.37";
+const APP_VERSION = "2026.8.11.20.28";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2824,6 +2824,26 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   const [listSubMode, setListSubMode] = useCachedState(filterCache, "shiny", "listSubMode", "actuelle"); // "actuelle" | "forme"
   const [selectedOccIdx, setSelectedOccIdx] = useState(null); // occurrence cliquée (mode "actuelle")
   const [detailShowAll, setDetailShowAll] = useState(true); // affichage dans le panneau de détail
+  // Carte affichée (parmi plusieurs captures de la même forme) dans le panneau de détail —
+  // navigation "Précédent/Suivant" (voir plus bas) au lieu du défilement horizontal, plus
+  // pratique au clavier (flèches ←/→) sur ordinateur qu'un scroll horizontal à la souris.
+  const [cardPos, setCardPos] = useState(0);
+  useEffect(() => { setCardPos(0); }, [selected]);
+  const cardTotalRef = useRef(1);
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e) => {
+      // Ignore les flèches si le focus est dans un champ de saisie (input date, recherche…) —
+      // sinon la navigation entre cartes interfère avec la navigation normale au clavier dans
+      // ces champs (ex. jours/mois/années d'un <input type="date">).
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowRight") setCardPos((p) => Math.min(p + 1, cardTotalRef.current - 1));
+      else if (e.key === "ArrowLeft") setCardPos((p) => Math.max(p - 1, 0));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
   const [gridCols, setGridCols] = useCachedState(filterCache, "shiny", "gridCols", 6); // nombre de Pokémon par ligne en vue Grille
   const windowWidth = useWindowWidth();
   const effCols = effectiveGridCols(gridCols, windowWidth);
@@ -3215,6 +3235,9 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         const rowsToShow = showingAll
           ? allRecs.map((rec, idx) => ({ rec, idx }))
           : [{ rec: singleRec, idx: allRecs.indexOf(singleRec) }];
+        cardTotalRef.current = rowsToShow.length;
+        const cp = Math.min(cardPos, rowsToShow.length - 1);
+        const current = rowsToShow[cp];
         return (
         <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
@@ -3244,9 +3267,9 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 </button>
               )}
 
-              <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8, marginBottom: 4 }}>
-              {rowsToShow.map(({ rec, idx }) => (
-                <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch", flexShrink: 0, minWidth: 260, background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
+              {current && [current].map(({ rec, idx }) => (
+                <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch", width: "100%", background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12 }}>
                   <Picker
                     value={rec.marque || ""}
                     onChange={(v) => changeMarque(selected, idx, v)}
@@ -3310,7 +3333,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                   </div>
                   <div>
                     <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", justifyItems: "start", gap: 4 }}>
                       {detailOptionsFor(rec.marque).length === 0 && (
                         <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>Aucun détail disponible pour cette marque.</span>
                       )}
@@ -3324,7 +3347,8 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                             style={{
                               border: "none", borderRadius: 999, padding: "3px 9px", cursor: "pointer",
                               fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: active ? 700 : 500,
-                              background: active ? GOLD : PANEL, color: active ? BG : MUTED,
+                              background: active ? GOLD : PANEL, color: active ? BG : MUTED, maxWidth: "100%",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                             }}
                           >{d}</button>
                         );
@@ -3391,6 +3415,13 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 </div>
               ))}
               </div>
+              {rowsToShow.length > 1 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 10 }}>
+                  <button onClick={() => setCardPos((p) => Math.max(p - 1, 0))} disabled={cp === 0} style={{ ...btnGhost, opacity: cp === 0 ? 0.4 : 1, cursor: cp === 0 ? "default" : "pointer" }}>← Précédent</button>
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>{cp + 1} / {rowsToShow.length}</span>
+                  <button onClick={() => setCardPos((p) => Math.min(p + 1, rowsToShow.length - 1))} disabled={cp === rowsToShow.length - 1} style={{ ...btnGhost, opacity: cp === rowsToShow.length - 1 ? 0.4 : 1, cursor: cp === rowsToShow.length - 1 ? "default" : "pointer" }}>Suivant →</button>
+                </div>
+              )}
             </div>
 
             <button
@@ -3668,6 +3699,25 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   const [selected, setSelected] = useState(null); // "nom|forme"
   const [selectedRecIdx, setSelectedRecIdx] = useState(null);
   const [detailShowAll, setDetailShowAll] = useState(true);
+  // Carte affichée (parmi plusieurs exemplaires de la même forme) dans le panneau de détail —
+  // navigation "Précédent/Suivant" au lieu du défilement horizontal (§ voir ShinyView, même patron).
+  const [cardPos, setCardPos] = useState(0);
+  useEffect(() => { setCardPos(0); }, [selected]);
+  const cardTotalRef = useRef(1);
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e) => {
+      // Ignore les flèches si le focus est dans un champ de saisie (input date, recherche…) —
+      // sinon la navigation entre cartes interfère avec la navigation normale au clavier dans
+      // ces champs (ex. jours/mois/années d'un <input type="date">).
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowRight") setCardPos((p) => Math.min(p + 1, cardTotalRef.current - 1));
+      else if (e.key === "ArrowLeft") setCardPos((p) => Math.max(p - 1, 0));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
   const [limit, setLimit] = useState(150);
   const savedScroll = useRef(0);
   const BOX_SIZE = 30;
@@ -3829,6 +3879,9 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
         const canToggle = !!singleEntry && allRecs.length > 1;
         const showingAll = detailShowAll || !singleEntry;
         const rowsToShow = showingAll ? allRecs : [singleEntry];
+        cardTotalRef.current = rowsToShow.length;
+        const cp = Math.min(cardPos, rowsToShow.length - 1);
+        const current = rowsToShow[cp];
         const sepIdx = selected.indexOf("|");
         const selNom = selected.slice(0, sepIdx);
         const selForme = selected.slice(sepIdx + 1) || null;
@@ -3838,7 +3891,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
             <FloatingBackButton onClick={closeEntry} />
             <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                <Sprite nom={selNom} forme={selForme} size={56} shiny={!!(rowsToShow[0] && rowsToShow[0].rec.shiny)} />
+                <Sprite nom={selNom} forme={selForme} size={56} shiny={!!(current && current.rec.shiny)} />
                 <div>
                   <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 17, color: TXT }}>
                     {selNom}{selForme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {selForme}</span> : null}
@@ -3855,9 +3908,9 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                 </button>
               )}
 
-              <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8, marginBottom: 4 }}>
-              {rowsToShow.map(({ rec, idx }) => (
-                <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch", flexShrink: 0, minWidth: 260, background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
+              {current && [current].map(({ rec, idx }) => (
+                <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch", width: "100%", background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12 }}>
                   <Picker
                     value={rec.marque || ""}
                     onChange={(v) => updateCatch(selected, idx, "marque", v)}
@@ -3916,7 +3969,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                   </div>
                   <div>
                     <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", justifyItems: "start", gap: 4 }}>
                       {detailOptionsFor(rec.marque).length === 0 && (
                         <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>Aucun détail disponible pour cette marque.</span>
                       )}
@@ -3930,7 +3983,8 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                             style={{
                               border: "none", borderRadius: 999, padding: "3px 9px", cursor: "pointer",
                               fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: active ? 700 : 500,
-                              background: active ? GOLD : PANEL, color: active ? BG : MUTED,
+                              background: active ? GOLD : PANEL, color: active ? BG : MUTED, maxWidth: "100%",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                             }}
                           >{d}</button>
                         );
@@ -3966,6 +4020,13 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                 </div>
               ))}
               </div>
+              {rowsToShow.length > 1 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 10 }}>
+                  <button onClick={() => setCardPos((p) => Math.max(p - 1, 0))} disabled={cp === 0} style={{ ...btnGhost, opacity: cp === 0 ? 0.4 : 1, cursor: cp === 0 ? "default" : "pointer" }}>← Précédent</button>
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>{cp + 1} / {rowsToShow.length}</span>
+                  <button onClick={() => setCardPos((p) => Math.min(p + 1, rowsToShow.length - 1))} disabled={cp === rowsToShow.length - 1} style={{ ...btnGhost, opacity: cp === rowsToShow.length - 1 ? 0.4 : 1, cursor: cp === rowsToShow.length - 1 ? "default" : "pointer" }}>Suivant →</button>
+                </div>
+              )}
 
               <button onClick={() => addCatch(selected, false)} style={{ ...tabActive, background: GOLD, color: BG, marginTop: 4 }}>+ Ajouter un exemplaire</button>
             </div>
