@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.13.45";
+const APP_VERSION = "2026.8.11.19.37";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9426,27 +9426,61 @@ async function buildNationalSheetRows() {
   });
 }
 
-async function buildCatchSheetRows(storageKey) {
-  const obj = await storageGetJSON(storageKey, {});
+// ---- Feuille Excel dédiée à Double (même principe que Shiny, §51 doc) — une ligne par exemplaire
+// (double_catches n'a pas de catalogue de référence comme shinyCatalog, donc pas de "ligne par
+// forme non capturée" ici, juste une ligne par capture réelle). Colonne Attrape fusionnée avec
+// l'emplacement, comme Shiny : "1" = capturé à Home 1 (par défaut), toute autre valeur = capturé
+// à cet emplacement précis (jamais "0" ici, un enregistrement Double représente toujours un
+// exemplaire réellement possédé). Ordre des colonnes demandé explicitement : Nom, Forme, Attrape,
+// Marque, Mode, Detail, Date, Shiny, Jeu, Alpha, Gmax, FromInterjeu.
+async function buildDoubleSheetRows() {
+  const obj = await storageGetJSON("double_catches", {});
   const rows = [];
   Object.keys(obj).forEach((key) => {
     const [nom, forme] = splitPokemonKey(key);
     (obj[key] || []).forEach((rec) => {
+      const loc = catchLocation(rec);
       rows.push({
         Nom: nom, Forme: excelForme(forme),
-        Date: excelDateCell(rec.date), Mode: rec.mode || "", Marque: rec.marque || "",
-        Location: rec.location || "", Jeu: rec.jeu || "",
+        Attrape: loc === DEFAULT_LOCATION ? 1 : loc,
+        Marque: rec.marque || "", Mode: rec.mode || "",
+        Detail: (rec.details || []).join(", "),
+        Date: excelDateCell(rec.date),
+        Shiny: rec.shiny ? 1 : 0,
+        Jeu: rec.jeu || "",
         Alpha: rec.alpha ? 1 : 0,
         Gmax: rec.gmax ? "Gmax" : (rec.gmaxable ? "Gmaxable" : ""),
-        // Détail (Charme Chroma, 60+ combats…) : plusieurs valeurs possibles, séparées par virgule.
-        Detail: (rec.details || []).join(", "),
-        // Lien Interjeu (§43 doc) — sérialisé en JSON dans une cellule texte, pour ne pas perdre
-        // le suivi automatique lors d'un aller-retour Export/Import Excel.
         FromInterjeu: rec.fromInterjeu ? JSON.stringify(rec.fromInterjeu) : "",
       });
     });
   });
   return rows;
+}
+
+// Miroir de buildDoubleSheetRows. Remplace importCatchSheet("double_catches", ...) pour cet onglet.
+async function importDoubleSheet(rows, mode) {
+  const obj = mode === "replace" ? {} : await storageGetJSON("double_catches", {});
+  rows.forEach((row) => {
+    const nom = String(row.Nom || "").trim();
+    if (!nom) return;
+    const forme = excelParseForme(row.Forme);
+    const key = nom + "|" + forme;
+    const attrapeStr = String(row.Attrape == null ? "" : row.Attrape).trim();
+    const location = (!attrapeStr || attrapeStr === "1") ? DEFAULT_LOCATION : attrapeStr;
+    const rec = {
+      date: excelParseDateFR(row.Date), mode: String(row.Mode || ""), marque: String(row.Marque || ""),
+      location, shiny: !!Number(row.Shiny),
+    };
+    if (row.Jeu) rec.jeu = String(row.Jeu);
+    if (Number(row.Alpha)) rec.alpha = true;
+    const g = String(row.Gmax || "").trim().toLowerCase();
+    if (g === "gmax") rec.gmax = true; else if (g === "gmaxable") rec.gmaxable = true;
+    if (row.Detail) rec.details = String(row.Detail).split(",").map((d) => d.trim()).filter(Boolean);
+    if (row.FromInterjeu) { try { rec.fromInterjeu = JSON.parse(row.FromInterjeu); } catch (e) {} }
+    if (!obj[key]) obj[key] = [];
+    obj[key].push(rec); // jamais de déduplication (doublons légitimes)
+  });
+  await window.storage.set("double_catches", JSON.stringify(obj), false);
 }
 
 async function buildEventSheetRows() {
@@ -9700,7 +9734,7 @@ async function buildExcelWorkbook(selectedKeys) {
     if (sheetDef.key === "national") rows = await buildNationalSheetRows();
     else if (sheetDef.key === "params") rows = await buildParamsSheetRows();
     else if (sheetDef.key === "shiny") rows = await buildShinySheetRows();
-    else if (sheetDef.key === "double") rows = await buildCatchSheetRows("double_catches");
+    else if (sheetDef.key === "double") rows = await buildDoubleSheetRows();
     else if (sheetDef.key === "event") rows = await buildEventSheetRows();
     else if (sheetDef.key === "interjeu") rows = await buildInterjeuSheetRows();
     else if (sheetDef.key === "listes") rows = await buildListesSheetRows();
@@ -9820,27 +9854,6 @@ async function importNationalSheet(rows, mode) {
     }
   });
   await window.storage.set("manual_caught", JSON.stringify(manual), false);
-}
-
-async function importCatchSheet(storageKey, rows, mode) {
-  const obj = mode === "replace" ? {} : await storageGetJSON(storageKey, {});
-  rows.forEach((row) => {
-    const nom = String(row.Nom || "").trim();
-    if (!nom) return;
-    const forme = excelParseForme(row.Forme);
-    const key = nom + "|" + forme;
-    const rec = { date: excelParseDateFR(row.Date), mode: String(row.Mode || ""), marque: String(row.Marque || "") };
-    if (row.Location) rec.location = String(row.Location);
-    if (row.Jeu) rec.jeu = String(row.Jeu);
-    if (Number(row.Alpha)) rec.alpha = true;
-    const g = String(row.Gmax || "").trim().toLowerCase();
-    if (g === "gmax") rec.gmax = true; else if (g === "gmaxable") rec.gmaxable = true;
-    if (row.Detail) rec.details = String(row.Detail).split(",").map((d) => d.trim()).filter(Boolean);
-    if (row.FromInterjeu) { try { rec.fromInterjeu = JSON.parse(row.FromInterjeu); } catch (e) {} }
-    if (!obj[key]) obj[key] = [];
-    obj[key].push(rec); // jamais de déduplication (doublons shiny légitimes — voir doc §4)
-  });
-  await window.storage.set(storageKey, JSON.stringify(obj), false);
 }
 
 async function importEventSheet(rows, mode) {
@@ -10057,7 +10070,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     else if (sheetName === "National") { await importNationalSheet(rows, mode); touched++; }
     else if (sheetName === "Paramètres") { await importParamsSheet(rows); touched++; }
     else if (sheetName === "Shiny") { await importShinySheet(rows, mode); touched++; }
-    else if (sheetName === "Double") { await importCatchSheet("double_catches", rows, mode); touched++; }
+    else if (sheetName === "Double") { await importDoubleSheet(rows, mode); touched++; }
     else if (sheetName === "Event") { await importEventSheet(rows, mode); touched++; }
     else if (sheetName === "Interjeu") { await importInterjeuSheet(rows, mode); touched++; }
     else if (sheetName === "Listes") { await importListesSheet(rows, mode); touched++; }
