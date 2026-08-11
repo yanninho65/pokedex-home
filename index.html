@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.20.28";
+const APP_VERSION = "2026.8.11.23.17";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -198,12 +198,12 @@ const NAT_LOOKUP = (() => {
   const map = {};
   (DATA.nat || []).forEach((r) => {
     const key = r[1] + "|" + (r[2] || "");
-    if (!(key in map)) map[key] = { n: r[0], region: r[3], famille: r[14] != null ? r[14] : null, avail: r[7] || [] };
+    if (!(key in map)) map[key] = { n: r[0], region: r[3], lien: r[4] || "", famille: r[14] != null ? r[14] : null, avail: r[7] || [] };
   });
   return map;
 })();
 function natInfoFor(nom, forme) {
-  return NAT_LOOKUP[nom + "|" + (forme || "")] || { n: 999999, region: "", famille: null, avail: [] };
+  return NAT_LOOKUP[nom + "|" + (forme || "")] || { n: 999999, region: "", lien: "", famille: null, avail: [] };
 }
 // Un Pokémon est envoyable vers un jeu Switch donné (voir INTERJEU_TRANSFER_GAMES) s'il est
 // disponible dans le Pokédex de ce jeu (colonne "avail" de DATA.nat) — calculé dynamiquement
@@ -1959,6 +1959,15 @@ function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptio
             panelWidth={220}
           />
         </label>
+        {(() => {
+          const lien = natInfoFor(nom, forme).lien;
+          if (!lien) return null;
+          return (
+            <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 10, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+              Voir sur Poképédia ↗
+            </a>
+          );
+        })()}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
           <button onClick={onCancel} style={btnGhost}>Annuler</button>
           <button onClick={() => onSave(value, jeu)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
@@ -1995,6 +2004,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     if (!initialFilter) return;
     if (initialFilter.status) setFilter(initialFilter.status);
     if (initialFilter.region) setRegion(new Set([initialFilter.region]));
+    if (initialFilter.jeu) setJeuFilter(new Set([initialFilter.jeu]));
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
@@ -2857,6 +2867,8 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     if (initialFilter.status) setFilter(initialFilter.status);
     if (initialFilter.region) setRegion(new Set([initialFilter.region]));
     if (initialFilter.marque) setMarque(new Set([initialFilter.marque]));
+    if (initialFilter.jeu) setJeuFilter(new Set([initialFilter.jeu]));
+    if (initialFilter.home) setLocationFilter(new Set([DEFAULT_LOCATION]));
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
@@ -3241,10 +3253,8 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         return (
         <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-              <FloatingBackButton onClick={closeEntry} />
-              <CatalogQuickEditButton nom={selectedEntry[1]} forme={selectedEntry[2]} label />
-            </div>
+            <FloatingBackButton onClick={closeEntry} />
+            <CatalogQuickEditButton nom={selectedEntry[1]} forme={selectedEntry[2]} corner />
             <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
                 <Sprite nom={selectedEntry[1]} forme={selectedEntry[2]} size={56} shiny />
@@ -3255,6 +3265,15 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                   <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
                     {showingAll ? `${allRecs.length} capture(s) enregistrée(s)` : `1 capture affichée sur ${allRecs.length}`}
                   </div>
+                  {(() => {
+                    const lien = natInfoFor(selectedEntry[1], selectedEntry[2]).lien;
+                    if (!lien) return null;
+                    return (
+                      <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+                        Voir sur Poképédia ↗
+                      </a>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -3685,17 +3704,20 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   const [locationFilter, setLocationFilter] = useCachedState(filterCache, "double", "locationFilter", null); // null (Tous) | Set des emplacements
   const [detailFilterSel, setDetailFilterSel] = useCachedState(filterCache, "double", "detailFilterSel", null);
   const [modeFilter, setModeFilter] = useCachedState(filterCache, "double", "modeFilter", null);
+  const [jeuFilter, setJeuFilter] = useCachedState(filterCache, "double", "jeuFilter", null); // null (Tous) | Set des valeurs Jeu - DO
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Filtre reçu depuis Progression (National) — appliqué à chaque nouvel envoi, pour fonctionner
   // même si cet onglet reste monté en arrière-plan.
   useEffect(() => {
     if (!initialFilter) return;
     if (initialFilter.marque) setMarqueFilter(new Set([initialFilter.marque]));
+    if (initialFilter.jeu) setJeuFilter(new Set([initialFilter.jeu]));
+    if (initialFilter.home) setLocationFilter(new Set([DEFAULT_LOCATION]));
     setFiltersOpen(true);
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
-  const anyFilterActive = shinyFilter !== null || marqueFilter !== null || locationFilter !== null || detailFilterSel !== null || modeFilter !== null;
+  const anyFilterActive = shinyFilter !== null || marqueFilter !== null || locationFilter !== null || detailFilterSel !== null || modeFilter !== null || jeuFilter !== null;
   const [selected, setSelected] = useState(null); // "nom|forme"
   const [selectedRecIdx, setSelectedRecIdx] = useState(null);
   const [detailShowAll, setDetailShowAll] = useState(true);
@@ -3789,6 +3811,19 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   // sans restriction reste proposée pour toute marque.
   const modeOptionsFor = (marqueVal) => optionsForMarque(modes, marqueVal, modeMarques);
   const detailOptionsFor = (marqueVal) => optionsForMarque(details, marqueVal, detailMarques);
+  // Options "Jeu - DO" restreintes à une marque — même patron que ShinyView.
+  const jeuOptionsFor = (marqueVal) => {
+    const mk = marqueVal || "";
+    const s = new Set([...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...((customJeux && customJeux[mk]) || [])]);
+    return Array.from(s);
+  };
+  const jeuFilterOptions = useMemo(() => {
+    const s = new Set();
+    const marquesToConsider = marqueFilter && marqueFilter.size > 0 ? Array.from(marqueFilter) : marques;
+    marquesToConsider.forEach((m) => jeuOptionsFor(m).forEach((j) => s.add(j)));
+    catalog.forEach((r) => { if (r.rec.jeu) s.add(r.rec.jeu); });
+    return Array.from(s);
+  }, [marqueFilter, marques, customJeux, catalog]);
   const charWidth = (label, options) => {
     const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
     return `${max + 7}ch`;
@@ -3804,9 +3839,10 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
       if (!matchesMulti(locationFilter, catchLocation(r.rec))) return false;
       if (!matchesMultiAny(detailFilterSel, r.rec.details)) return false;
       if (!matchesMulti(modeFilter, r.rec.mode || "")) return false;
+      if (!matchesMulti(jeuFilter, r.rec.jeu || "__none__")) return false;
       return true;
     });
-  }, [catalog, search, shinyFilter, marqueFilter, locationFilter, detailFilterSel, modeFilter]);
+  }, [catalog, search, shinyFilter, marqueFilter, locationFilter, detailFilterSel, modeFilter, jeuFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
 
   const resetFilters = () => {
@@ -3816,6 +3852,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     setLocationFilter(null);
     setModeFilter(null);
     setDetailFilterSel(null);
+    setJeuFilter(null);
   };
 
   const openEntry = (key, recIdx) => {
@@ -4127,6 +4164,13 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                   onChange={setDetailFilterSel}
                   width="100%"
                 />
+                <MultiSelectFilter
+                  label="Jeu - DO"
+                  options={[["__none__", "Jeu non indiqué"], ...jeuFilterOptions.map((j) => [j, j])]}
+                  selected={jeuFilter}
+                  onChange={setJeuFilter}
+                  width="100%"
+                />
               </div>
             ),
           },
@@ -4224,7 +4268,7 @@ function isGmaxForme(forme) {
 function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
   const { events, setEvents, ready, persist, saveState } = useCustomEvents();
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
-  const { customMarques, addMarque } = useCustomLists();
+  const { customMarques, addMarque, customJeux } = useCustomLists();
   const [viewMode, setViewMode] = useCachedState(filterCache, "event", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "event", "search", "");
   const [filter, setFilter] = useCachedState(filterCache, "event", "filter", "all"); // "all" | "caught" | "missing" (statut attrapé)
@@ -4233,6 +4277,11 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   const [tailleFilter, setTailleFilter] = useCachedState(filterCache, "event", "tailleFilter", null); // null (Tous) | Set("alpha"/"normal")
   const [dynamaxFilter, setDynamaxFilter] = useCachedState(filterCache, "event", "dynamaxFilter", null); // null (Tous) | Set("gmax"/"nogmax")
   const [boiteFilter, setBoiteFilter] = useCachedState(filterCache, "event", "boiteFilter", null); // null (Tous) | Set("oui"/"non")
+  // "DO personnel" (§ nouveau) : ce Pokémon d'event a-t-il été obtenu sur un jeu/compte personnel
+  // (par opposition à un event simplement recensé mais jamais reçu/joué) ? Si oui, un "Jeu - DO"
+  // restreint à la marque peut être renseigné, même patron que Shiny/Double/onglets jeu.
+  const [doPersoFilter, setDoPersoFilter] = useCachedState(filterCache, "event", "doPersoFilter", null); // null (Tous) | Set("oui"/"non")
+  const [jeuDOFilter, setJeuDOFilter] = useCachedState(filterCache, "event", "jeuDOFilter", null); // null (Tous) | Set des valeurs Jeu - DO
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Filtre reçu depuis Progression (National) — appliqué à chaque nouvel envoi, pour fonctionner
   // même si cet onglet reste monté en arrière-plan.
@@ -4241,12 +4290,14 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     if (initialFilter.status) setFilter(initialFilter.status);
     if (initialFilter.marque) setMarqueFilter(new Set([initialFilter.marque]));
     if (initialFilter.boite !== undefined) setBoiteFilter(new Set([initialFilter.boite ? "oui" : "non"]));
+    if (initialFilter.jeu) { setJeuDOFilter(new Set([initialFilter.jeu])); setDoPersoFilter(new Set(["oui"])); }
     setFiltersOpen(true);
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
   const anyFilterActive = filter !== "all" || shinyFilter !== null || marqueFilter !== null
-    || tailleFilter !== null || dynamaxFilter !== null || boiteFilter !== null;
+    || tailleFilter !== null || dynamaxFilter !== null || boiteFilter !== null
+    || doPersoFilter !== null || jeuDOFilter !== null;
   const [selected, setSelected] = useState(null); // clé "base-i" ou "custom-i"
   const [limit, setLimit] = useState(150);
   const [gridCols, setGridCols] = useCachedState(filterCache, "event", "gridCols", 6);
@@ -4272,6 +4323,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
         idx: i,
         nat: info.n, nom: e.nom, forme: e.forme, marque: e.marque, do: e.do, id: e.id, jeux: e.jeux,
         shiny: !!e.shiny, gmax: !!e.gmax, attrape: !!e.attrape, enBoite: !!e.boite, region: info.region,
+        doPerso: !!e.doPerso, jeuDO: e.jeuDO || "",
       };
     });
     // Rang de groupe : 0 = capturés (uniquement via cet event) — 1 = capturés mais déjà présents
@@ -4308,6 +4360,19 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     return `${max + 7}ch`;
   };
   const marqueWidth = useMemo(() => charWidth("Marque", marques), [marques]);
+  // Options "Jeu - DO" restreintes à une marque — même patron que Shiny/Double/onglets jeu.
+  const jeuOptionsFor = (marqueVal) => {
+    const mk = marqueVal || "";
+    const s = new Set([...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...((customJeux && customJeux[mk]) || [])]);
+    return Array.from(s);
+  };
+  const jeuDOFilterOptions = useMemo(() => {
+    const s = new Set();
+    const marquesToConsider = marqueFilter && marqueFilter.size > 0 ? Array.from(marqueFilter) : marques;
+    marquesToConsider.forEach((m) => jeuOptionsFor(m).forEach((j) => s.add(j)));
+    catalog.forEach((r) => { if (r.jeuDO) s.add(r.jeuDO); });
+    return Array.from(s);
+  }, [marqueFilter, marques, customJeux, catalog]);
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -4320,9 +4385,11 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
       if (!matchesMulti(tailleFilter, (r.marque === "LA" || r.marque === "LZA") ? "alpha" : "normal")) return false;
       if (!matchesMulti(dynamaxFilter, r.gmax ? "gmax" : "nogmax")) return false;
       if (!matchesMulti(boiteFilter, r.enBoite ? "oui" : "non")) return false;
+      if (!matchesMulti(doPersoFilter, r.doPerso ? "oui" : "non")) return false;
+      if (!matchesMulti(jeuDOFilter, r.jeuDO || "__none__")) return false;
       return true;
     });
-  }, [catalog, search, filter, shinyFilter, marqueFilter, tailleFilter, dynamaxFilter, boiteFilter]);
+  }, [catalog, search, filter, shinyFilter, marqueFilter, tailleFilter, dynamaxFilter, boiteFilter, doPersoFilter, jeuDOFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
 
   const resetFilters = () => {
@@ -4333,6 +4400,8 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     setTailleFilter(null);
     setDynamaxFilter(null);
     setBoiteFilter(null);
+    setDoPersoFilter(null);
+    setJeuDOFilter(null);
   };
 
   const openEntry = (key) => {
@@ -4346,7 +4415,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   };
 
   const addEntry = (nom, forme) => {
-    const next = [...(events || []), { nom, forme, marque: "", do: "", id: "", jeux: "", shiny: false, gmax: false, attrape: true, boite: false }];
+    const next = [...(events || []), { nom, forme, marque: "", do: "", id: "", jeux: "", shiny: false, gmax: false, attrape: true, boite: false, doPerso: false, jeuDO: "" }];
     setEvents(next);
     persist(next);
     openEntry("evt-" + (next.length - 1));
@@ -4470,6 +4539,23 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
                   <input type="checkbox" checked={!!events[r.idx].boite} onChange={(e) => updateCustom(r.idx, "boite", e.target.checked)} />
                   Déjà dans une boîte de jeu
                 </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }} title="Ce Pokémon d'event a-t-il été obtenu sur l'un de mes jeux/comptes personnels ?">
+                  <input type="checkbox" checked={!!events[r.idx].doPerso} onChange={(e) => updateCustom(r.idx, "doPerso", e.target.checked)} />
+                  DO personnel
+                </label>
+                {events[r.idx].doPerso && (
+                  <div>
+                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 3 }}>Jeu - DO</div>
+                    <Picker
+                      value={events[r.idx].jeuDO || ""}
+                      onChange={(v) => updateCustom(r.idx, "jeuDO", v)}
+                      options={jeuOptionsFor(events[r.idx].marque)}
+                      placeholder="-"
+                      buttonStyle={{ ...miniInput, display: "block", width: "100%", textAlign: "left" }}
+                      panelWidth={200}
+                    />
+                  </div>
+                )}
                 <button onClick={() => removeCustom(r.idx)} style={{ ...btnGhost, color: "#E4572E", borderColor: "#E4572E55" }}>Supprimer</button>
               </div>
             </div>
@@ -4657,6 +4743,20 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
                   onChange={setBoiteFilter}
                   width="100%"
                 />
+                <MultiSelectFilter
+                  label="DO personnel"
+                  options={[["oui", "Oui"], ["non", "Non"]]}
+                  selected={doPersoFilter}
+                  onChange={setDoPersoFilter}
+                  width="100%"
+                />
+                <MultiSelectFilter
+                  label="Jeu - DO"
+                  options={[["__none__", "Jeu non indiqué"], ...jeuDOFilterOptions.map((j) => [j, j])]}
+                  selected={jeuDOFilter}
+                  onChange={setJeuDOFilter}
+                  width="100%"
+                />
               </div>
             ),
           },
@@ -4797,6 +4897,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   const [ouFilter, setOuFilter] = useCachedState(filterCache, "interjeu", "ouFilter", null);
   const [versFilter, setVersFilter] = useCachedState(filterCache, "interjeu", "versFilter", null);
   const [marqueFilter, setMarqueFilter] = useCachedState(filterCache, "interjeu", "marqueFilter", null);
+  const [jeuFilter, setJeuFilter] = useCachedState(filterCache, "interjeu", "jeuFilter", null); // null (Tous) | Set des valeurs Jeu - DO
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Filtre reçu depuis Progression (National) — appliqué à chaque nouvel envoi, pour fonctionner
   // même si cet onglet reste monté en arrière-plan. Le filtre "Où = Home" (ligne "Interjeu (Home 1)"
@@ -4951,12 +5052,13 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   useEffect(() => {
     if (!initialFilter) return;
     if (initialFilter.marque) setMarqueFilter(new Set([initialFilter.marque]));
+    if (initialFilter.jeu) setJeuFilter(new Set([initialFilter.jeu]));
     if (initialFilter.home) wantsHomeFilter.current = true;
     setFiltersOpen(true);
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
-  const anyFilterActive = shinyFilter !== null || ouFilter !== null || versFilter !== null || marqueFilter !== null;
+  const anyFilterActive = shinyFilter !== null || ouFilter !== null || versFilter !== null || marqueFilter !== null || jeuFilter !== null;
   const [selected, setSelected] = useState(null);
   const [limit, setLimit] = useState(150);
   const [gridCols, setGridCols] = useCachedState(filterCache, "interjeu", "gridCols", 6);
@@ -5029,6 +5131,13 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     const mk = marqueVal || "";
     return [...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...((customJeux && customJeux[mk]) || [])];
   };
+  const jeuFilterOptions = useMemo(() => {
+    const s = new Set();
+    const marquesToConsider = marqueFilter && marqueFilter.size > 0 ? Array.from(marqueFilter) : marqueOptions;
+    marquesToConsider.forEach((m) => jeuOptionsFor(m).forEach((j) => s.add(j)));
+    catalog.forEach((r) => { if (r.jeu) s.add(r.jeu); });
+    return Array.from(s);
+  }, [marqueFilter, marqueOptions, customJeux, catalog]);
   const charWidth = (label, options) => {
     const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
     return `${max + 7}ch`;
@@ -5078,9 +5187,10 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
       if (!matchesMulti(ouFilter, r.ou || "")) return false;
       if (!matchesMulti(versFilter, r.vers || "")) return false;
       if (!matchesMulti(marqueFilter, r.marque || "")) return false;
+      if (!matchesMulti(jeuFilter, r.jeu || "__none__")) return false;
       return true;
     });
-  }, [catalog, search, shinyFilter, ouFilter, versFilter, marqueFilter]);
+  }, [catalog, search, shinyFilter, ouFilter, versFilter, marqueFilter, jeuFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
 
   const resetFilters = () => {
@@ -5089,6 +5199,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     setOuFilter(null);
     setVersFilter(null);
     setMarqueFilter(null);
+    setJeuFilter(null);
   };
 
   const [addForm, setAddForm] = useState(null); // null | { date, mode, details } — formulaire inline "+ Ajouter dans Shiny/Double"
@@ -5555,6 +5666,13 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
                 <MultiSelectFilter label="Marque" options={marqueOptions} selected={marqueFilter} onChange={setMarqueFilter} width="100%" />
                 <MultiSelectFilter label="Où" options={ouOptions} selected={ouFilter} onChange={setOuFilter} width="100%" />
                 <MultiSelectFilter label="Vers" options={versOptions} selected={versFilter} onChange={setVersFilter} width="100%" />
+                <MultiSelectFilter
+                  label="Jeu - DO"
+                  options={[["__none__", "Jeu non indiqué"], ...jeuFilterOptions.map((j) => [j, j])]}
+                  selected={jeuFilter}
+                  onChange={setJeuFilter}
+                  width="100%"
+                />
               </div>
             ),
           },
@@ -6420,7 +6538,7 @@ function catalogDraftForRow(idx) {
 // Bouton "Modifier" réutilisable, posé sur la page détail d'un Pokémon et sur les lignes de
 // liste (onglets jeu). Si `allForms` contient plusieurs formes (page détail d'une espèce
 // affichant toutes ses formes), demande d'abord laquelle modifier — voir §21bis.
-function CatalogQuickEditButton({ nom, forme, allForms, label }) {
+function CatalogQuickEditButton({ nom, forme, allForms, label, corner }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState(null); // { idx, draft }
 
@@ -6454,13 +6572,18 @@ function CatalogQuickEditButton({ nom, forme, allForms, label }) {
       <button
         onClick={handleClick}
         title="Modifier ce Pokémon"
-        style={label ? {
+        style={corner ? {
+          position: "fixed", top: 14, right: 14, zIndex: 56,
+          width: 34, height: 34, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center",
+          background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
+          border: GLASS_BORDER, boxShadow: GLASS_SHADOW, color: "#fff", fontSize: 15, cursor: "pointer",
+        } : label ? {
           ...btnGhost, display: "flex", alignItems: "center", gap: 5, flexShrink: 0,
         } : {
           background: "transparent", border: "none", cursor: "pointer", color: MUTED,
           fontSize: 13, padding: "2px 4px", flexShrink: 0,
         }}
-      >✎{label ? " Modifier" : ""}</button>
+      >✎{!corner && label ? " Modifier" : ""}</button>
       {pickerOpen && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
@@ -7665,6 +7788,22 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [limit, setLimit] = useState(150);
   const [onlyFormKey, setOnlyFormKey] = useState(null);
   const [selectedNom, setSelectedNom] = useState(null);
+  // Carte de forme affichée (parmi plusieurs formes d'une même espèce, ex. Zarbi, Motisma) —
+  // navigation "Précédent/Suivant" au lieu du défilement horizontal (même patron que Shiny/Double).
+  const [cardPos, setCardPos] = useState(0);
+  useEffect(() => { setCardPos(0); }, [selectedNom, onlyFormKey]);
+  const cardTotalRef = useRef(1);
+  useEffect(() => {
+    if (!selectedNom) return;
+    const onKey = (e) => {
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowRight") setCardPos((p) => Math.min(p + 1, cardTotalRef.current - 1));
+      else if (e.key === "ArrowLeft") setCardPos((p) => Math.max(p - 1, 0));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedNom]);
   const savedScroll = useRef(0);
   const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
   const { customMarques, customModes, addMarque, addMode } = useCustomLists();
@@ -8038,15 +8177,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       {selectedForms && (
         <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
           <div style={{ maxWidth: 720, margin: "0 auto" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-              <FloatingBackButton onClick={closeSpecies} />
-              <CatalogQuickEditButton
-                nom={selectedForms[0][1]}
-                forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
-                allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
-                label
-              />
-            </div>
+            <FloatingBackButton onClick={closeSpecies} />
+            <CatalogQuickEditButton
+              nom={selectedForms[0][1]}
+              forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
+              allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
+              corner
+            />
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <Sprite nom={selectedNom} size={56} />
@@ -8080,8 +8217,12 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 Voir toutes les formes ({allSelectedForms.length})
               </button>
             )}
-            <div style={selectedForms.length > 1 ? { display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 } : undefined}>
-            {selectedForms.map((f, idx) => {
+            <div>
+            {(() => {
+              cardTotalRef.current = selectedForms.length;
+              const cp = Math.min(cardPos, selectedForms.length - 1);
+              const formsToShow = selectedForms.length > 1 ? [selectedForms[cp]] : selectedForms;
+              return formsToShow.map((f, idx) => {
               const m = marksOf(f);
               const availableGames = games.map((g, gi) => ({ g, gi })).filter(({ gi }) => f[7][gi]);
               const genericCaught = !!f[10];
@@ -8089,9 +8230,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
               return (
               <div key={idx} style={{
                 background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12,
-                marginBottom: selectedForms.length > 1 ? 0 : 10,
-                flexShrink: selectedForms.length > 1 ? 0 : undefined,
-                width: selectedForms.length > 1 ? 320 : undefined,
+                marginBottom: 10,
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
                   <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 600 }}>
@@ -8202,8 +8341,19 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 </div>
               </div>
               );
-            })}
+              });
+            })()}
             </div>
+            {selectedForms.length > 1 && (() => {
+              const cp = Math.min(cardPos, selectedForms.length - 1);
+              return (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 4 }}>
+                  <button onClick={() => setCardPos((p) => Math.max(p - 1, 0))} disabled={cp === 0} style={{ ...btnGhost, opacity: cp === 0 ? 0.4 : 1, cursor: cp === 0 ? "default" : "pointer" }}>← Précédent</button>
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>{cp + 1} / {selectedForms.length}</span>
+                  <button onClick={() => setCardPos((p) => Math.min(p + 1, selectedForms.length - 1))} disabled={cp === selectedForms.length - 1} style={{ ...btnGhost, opacity: cp === selectedForms.length - 1 ? 0.4 : 1, cursor: cp === selectedForms.length - 1 ? "default" : "pointer" }}>Suivant →</button>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -8957,6 +9107,8 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
   const [showNationalDetail, setShowNationalDetail] = useState(false);
   const [showDoList, setShowDoList] = useState(false);
   const [doMarqueFilter, setDoMarqueFilter] = useState(null); // null = toutes, ou Set de marques cochées
+  // Popup de répartition par onglet (§ nouveau) — DO actuellement affiché dans le popup, ou null.
+  const [doBreakdownFor, setDoBreakdownFor] = useState(null);
 
   // Sélection reçue depuis un onglet jeu/shiny/national (clic sur le cercle de %) — appliquée à
   // chaque nouvel envoi, pour fonctionner même si cet onglet reste monté en arrière-plan.
@@ -9078,6 +9230,9 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
   const doStats = useMemo(() => {
     const allDO = new Set();
     const marquesByDO = {};
+    // Répartition par onglet (§ nouveau, pour le popup de détail) : clé = code de jeu (GAME_ORDER)
+    // pour les onglets jeu, ou "shiny"/"double"/"event"/"interjeu" pour les 4 autres.
+    const tabCountsByDO = {};
     const addMarqueFor = (v, g) => {
       if (!marquesByDO[v]) marquesByDO[v] = new Set();
       marquesByDO[v].add(g);
@@ -9088,33 +9243,45 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     });
     const counts = {};
     allDO.forEach((v) => { counts[v] = 0; });
-    const bump = (v, g) => {
+    const bump = (v, g, tabKey) => {
       if (!v) return;
       counts[v] = (counts[v] || 0) + 1;
       allDO.add(v);
       if (g) addMarqueFor(v, g);
+      if (tabKey) {
+        if (!tabCountsByDO[v]) tabCountsByDO[v] = {};
+        tabCountsByDO[v][tabKey] = (tabCountsByDO[v][tabKey] || 0) + 1;
+      }
     };
-    // Onglets jeu (game_jeu_overrides, tous jeux confondus).
+    // Onglets jeu (game_jeu_overrides, tous jeux confondus) — tabKey = code du jeu lui-même.
     if (gameJeuOverridesAll) {
       Object.keys(gameJeuOverridesAll).forEach((g) => {
-        Object.values(gameJeuOverridesAll[g] || {}).forEach((v) => bump(v, g));
+        Object.values(gameJeuOverridesAll[g] || {}).forEach((v) => bump(v, g, g));
       });
     }
     // Shiny et Double ont eux aussi un champ "Jeu" par capture (voir §Shiny/Double) — sans ça,
-    // le bloc DO ignorait toutes les captures Shiny/Double taguées avec un DO.
+    // le bloc DO ignorait toutes les captures Shiny/Double taguées avec un DO. Uniquement les
+    // exemplaires actuellement en Home 1 (même convention que Interjeu ci-dessous et que le clic
+    // sur un nombre, qui ouvre l'onglet avec le filtre Emplacement = Home 1 — les deux chiffres
+    // doivent rester alignés).
     if (shinyCatchesLive) {
-      Object.values(shinyCatchesLive).forEach((arr) => (arr || []).forEach((rec) => bump(rec.jeu, rec.marque)));
+      Object.values(shinyCatchesLive).forEach((arr) => (arr || []).forEach((rec) => { if ((rec.location || DEFAULT_LOCATION) === DEFAULT_LOCATION) bump(rec.jeu, rec.marque, "shiny"); }));
     }
     if (doubleCatchesLive) {
-      Object.values(doubleCatchesLive).forEach((arr) => (arr || []).forEach((rec) => bump(rec.jeu, rec.marque)));
+      Object.values(doubleCatchesLive).forEach((arr) => (arr || []).forEach((rec) => { if (catchLocation(rec) === DEFAULT_LOCATION) bump(rec.jeu, rec.marque, "double"); }));
+    }
+    // Event : uniquement les entrées marquées "DO personnel" (§ nouveau) — un event recensé mais
+    // jamais reçu/joué n'a pas de Jeu - DO personnel à faire remonter ici.
+    if (eventsLive) {
+      eventsLive.forEach((e) => { if (e.doPerso) bump(e.jeuDO, e.marque, "event"); });
     }
     // Interjeu : uniquement les entrées actuellement dans Home (même convention que le reste
     // des agrégats Interjeu — voir Total Home).
     if (interjeuLive) {
-      interjeuLive.forEach((it) => { if (/^Home/i.test(it.ou || "")) bump(it.jeu, it.marque); });
+      interjeuLive.forEach((it) => { if (/^Home/i.test(it.ou || "")) bump(it.jeu, it.marque, "interjeu"); });
     }
-    return Array.from(allDO).sort().map((v) => ({ do: v, count: counts[v] || 0, marques: marquesByDO[v] || new Set() }));
-  }, [customJeux, gameJeuOverridesAll, shinyCatchesLive, doubleCatchesLive, interjeuLive]);
+    return Array.from(allDO).sort().map((v) => ({ do: v, count: counts[v] || 0, marques: marquesByDO[v] || new Set(), tabs: tabCountsByDO[v] || {} }));
+  }, [customJeux, gameJeuOverridesAll, shinyCatchesLive, doubleCatchesLive, eventsLive, interjeuLive]);
   // Liste affichée : DO dont le compte est > 0, et dont au moins une marque associée correspond
   // au filtre marque actif (aucune marque connue pour un DO purement custom => toujours affiché).
   const doStatsVisible = useMemo(() => {
@@ -9128,6 +9295,21 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     });
   }, [doStats, doMarqueFilter]);
   const totalPokemonWithDO = useMemo(() => doStatsVisible.reduce((sum, d) => sum + d.count, 0), [doStatsVisible]);
+  // Libellé affiché pour un onglet dans le popup de répartition (§ nouveau) — les codes de jeu
+  // (GAME_ORDER) s'affichent tels quels, comme partout ailleurs dans cette vue.
+  const tabLabel = (tabKey) => ({ shiny: "Shiny", double: "Double", event: "Event", interjeu: "Interjeu" }[tabKey] || tabKey);
+  const tabColor = (tabKey) => ({ shiny: GOLD, double: TXT, event: EVENTORANGE, interjeu: INTERJEU }[tabKey] || ACCENT);
+  // Ouvre l'onglet correspondant avec le filtre Jeu - DO préchargé (et Home 1 si applicable,
+  // géré directement dans open*).
+  const openTabForDO = (tabKey, doValue) => {
+    setDoBreakdownFor(null);
+    setShowDoList(false);
+    if (GAME_ORDER.includes(tabKey)) openGame(tabKey, undefined, undefined, doValue);
+    else if (tabKey === "shiny") openShiny(undefined, undefined, undefined, doValue);
+    else if (tabKey === "double") openDouble(undefined, doValue);
+    else if (tabKey === "event") openEvent(undefined, undefined, doValue);
+    else if (tabKey === "interjeu") openInterjeu(undefined, doValue);
+  };
   // Total Home : même calcul exact que la ligne "Total Home" du tableau récap du détail
   // National (§ NationalDetailTable) — captures normales de toutes les marques + captures
   // Shiny comptées une fois par forme et par marque (pas par capture individuelle, donc les
@@ -9272,9 +9454,50 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
             {doStatsVisible.map((d) => (
               <div key={d.do} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 12.5 }}>
                 <span style={{ color: TXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.do}</span>
-                <span style={{ color: OK, fontWeight: 700, flexShrink: 0 }}>{d.count}</span>
+                <button
+                  onClick={() => setDoBreakdownFor(d)}
+                  style={{ background: "transparent", border: "none", cursor: "pointer", color: OK, fontWeight: 700, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12.5, padding: 0 }}
+                  title="Voir la répartition par onglet"
+                >{d.count}</button>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {doBreakdownFor && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={() => setDoBreakdownFor(null)}
+        >
+          <div
+            style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 4 }}>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>{doBreakdownFor.do}</div>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: OK, flexShrink: 0 }}>{doBreakdownFor.count}</div>
+            </div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 12 }}>Répartition par onglet — clique un nombre pour l'ouvrir filtré.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {Object.keys(doBreakdownFor.tabs).length === 0 && (
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>Aucune répartition disponible.</div>
+              )}
+              {Object.keys(doBreakdownFor.tabs).sort((a, b) => doBreakdownFor.tabs[b] - doBreakdownFor.tabs[a]).map((tabKey) => (
+                <button
+                  key={tabKey}
+                  onClick={() => openTabForDO(tabKey, doBreakdownFor.do)}
+                  style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    background: PANEL, border: `1px solid ${LINE}`, borderRadius: 10, padding: "8px 12px",
+                    cursor: "pointer", fontFamily: "Inter, sans-serif",
+                  }}
+                >
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: tabColor(tabKey) }}>{tabLabel(tabKey)}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: OK }}>{doBreakdownFor.tabs[tabKey]}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setDoBreakdownFor(null)} style={{ ...btnGhost, marginTop: 12, width: "100%" }}>Fermer</button>
           </div>
         </div>
       )}
@@ -9550,6 +9773,9 @@ async function buildEventSheetRows() {
     Nom: e.nom, Forme: excelForme(e.forme), Marque: e.marque || "", DO: e.do || "", ID: e.id || "",
     Distribution: e.jeux || "", Shiny: e.shiny ? 1 : 0, Gmax: e.gmax ? 1 : 0,
     Attrape: e.attrape ? 1 : 0, DansBoite: e.boite ? 1 : 0,
+    // "DO personnel" (§ nouveau) — distinct du champ DO ("Dresseur d'origine") ci-dessus : indique
+    // si ce Pokémon d'event a été obtenu sur un jeu/compte personnel, avec son Jeu - DO associé.
+    DOPersonnel: e.doPerso ? 1 : 0, JeuDO: e.jeuDO || "",
   }));
 }
 
@@ -9929,6 +10155,7 @@ async function importEventSheet(rows, mode) {
       do: String(row.DO || ""), id: String(row.ID || ""), jeux: String(row.Distribution || ""),
       shiny: !!Number(row.Shiny), gmax: !!Number(row.Gmax),
       attrape: !!Number(row.Attrape), boite: !!Number(row.DansBoite),
+      doPerso: !!Number(row.DOPersonnel), jeuDO: String(row.JeuDO || ""),
     };
     map.set(identity(rec), rec);
   });
@@ -10486,15 +10713,16 @@ function App() {
     }
   }, [tab]);
 
-  // Ouvre un onglet jeu avec un filtre région/statut prérempli (depuis l'onglet Progression).
-  const openGame = (gameKey, region, status) => {
-    setPendingFilter({ region, status });
+  // Ouvre un onglet jeu avec un filtre région/statut/Jeu-DO prérempli (depuis l'onglet Progression).
+  const openGame = (gameKey, region, status, jeu) => {
+    setPendingFilter({ region, status, jeu });
     setTab(gameKey);
   };
 
-  // Ouvre l'onglet Shiny avec un filtre région/statut/marque prérempli (depuis l'onglet Progression).
-  const openShiny = (region, status, marque) => {
-    setPendingShinyFilter({ region, status, marque });
+  // Ouvre l'onglet Shiny avec un filtre région/statut/marque/Jeu-DO prérempli (le dernier depuis
+  // le popup de répartition du bloc Jeu - DO de Progression, avec emplacement Home 1 implicite).
+  const openShiny = (region, status, marque, jeu) => {
+    setPendingShinyFilter({ region, status, marque, jeu, home: !!jeu });
     setTab("shiny");
   };
 
@@ -10504,23 +10732,25 @@ function App() {
     setTab("national");
   };
 
-  // Ouvre l'onglet Event avec un filtre marque (et, pour la ligne "Doublon (event)", "Dans boîte")
-  // prérempli — depuis la section récap de l'onglet Progression (National).
-  const openEvent = (marque, boite) => {
-    setPendingEventFilter({ marque, boite });
+  // Ouvre l'onglet Event avec un filtre marque/Jeu-DO (et, pour la ligne "Doublon (event)", "Dans
+  // boîte") prérempli — depuis la section récap de l'onglet Progression (National) ou le popup
+  // de répartition du bloc Jeu - DO.
+  const openEvent = (marque, boite, jeu) => {
+    setPendingEventFilter({ marque, boite, jeu });
     setTab("event");
   };
 
-  // Ouvre l'onglet Double avec un filtre marque prérempli.
-  const openDouble = (marque) => {
-    setPendingDoubleFilter({ marque });
+  // Ouvre l'onglet Double avec un filtre marque et/ou Jeu - DO prérempli (le second depuis le
+  // popup de répartition du bloc Jeu - DO de Progression, avec emplacement Home 1 implicite).
+  const openDouble = (marque, jeu) => {
+    setPendingDoubleFilter({ marque, jeu, home: !!jeu });
     setTab("double");
   };
 
   // Ouvre l'onglet Interjeu avec un filtre marque prérempli, et "Où = Home…" (la ligne
   // "Interjeu (Home 1)" du récap ne concerne que les entrées actuellement dans Home).
-  const openInterjeu = (marque) => {
-    setPendingInterjeuFilter({ marque, home: true });
+  const openInterjeu = (marque, jeu) => {
+    setPendingInterjeuFilter({ marque, jeu, home: true });
     setTab("interjeu");
   };
 
