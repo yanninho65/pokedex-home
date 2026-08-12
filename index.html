@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.23.31";
+const APP_VERSION = "2026.8.11.23.51";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -528,6 +528,43 @@ function useCustomLists() {
         const res = await window.storage.get("custom_jeux", false);
         if (res && res.value) je = JSON.parse(res.value);
       } catch (e) {}
+      // Migration ponctuelle (§ demande explicite : hormis "marque", toute valeur d'une liste doit
+      // soit avoir été ajoutée par l'utilisateur, soit venir de la lecture des données — jamais
+      // d'une table figée séparée). JEU_OPTIONS_BY_MARQUE (venue une fois de l'onglet Index de
+      // l'Excel) enfreignait cette règle et en était la cause : servant de source vivante partout,
+      // une valeur personnalisée portant le même nom qu'une valeur de cette table s'affichait en
+      // double, et le glisser-déposer réécrivait ce doublon à chaque réorganisation — 1 devenait 2,
+      // puis 3... Fix définitif : fusionner une seule fois ce contenu dans `custom_jeux` (dédupliqué),
+      // marquer la migration faite (`jeu_options_migrated`), puis ne plus jamais lire cette table
+      // ailleurs dans l'app — elle ne sert plus que de source ponctuelle pour cette fusion initiale.
+      try {
+        const migRes = await window.storage.get("jeu_options_migrated", false);
+        if (!migRes || !migRes.value) {
+          const merged = {};
+          const allKeys = new Set([...Object.keys(JEU_OPTIONS_BY_MARQUE), ...Object.keys(je)]);
+          allKeys.forEach((mk) => {
+            merged[mk] = Array.from(new Set([...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...(je[mk] || [])]));
+          });
+          je = merged;
+          await window.storage.set("custom_jeux", JSON.stringify(je), false);
+          await window.storage.set("jeu_options_migrated", "1", false);
+        } else {
+          // Auto-guérison : si des doublons internes subsistent malgré tout (ex. données
+          // importées après la migration), on les purge silencieusement à chaque chargement.
+          let jeCleaned = false;
+          const jeFixed = {};
+          Object.keys(je).forEach((mk) => {
+            const original = je[mk] || [];
+            const cleaned = Array.from(new Set(original));
+            jeFixed[mk] = cleaned;
+            if (cleaned.length !== original.length) jeCleaned = true;
+          });
+          if (jeCleaned) {
+            je = jeFixed;
+            await window.storage.set("custom_jeux", JSON.stringify(je), false);
+          }
+        }
+      } catch (e) {}
       try {
         const res = await window.storage.get("custom_details", false);
         if (res && res.value) de = JSON.parse(res.value);
@@ -653,8 +690,12 @@ function catchLocation(rec) {
   return (rec && rec.location) || DEFAULT_LOCATION;
 }
 
-// Jeux/ID possibles par marque, repris de l'onglet Index (colonne T = Marque, colonne W = Jeu-DO)
-// du classeur de référence. Sert de base pour le menu déroulant "Jeu" ; complétable via le bouton +.
+// Jeux/ID possibles par marque, repris une fois de l'onglet Index (colonne T = Marque, colonne
+// W = Jeu-DO) du classeur de référence. N'est PLUS une source vivante nulle part dans l'app (règle
+// du projet : hormis "marque", toute valeur vient d'un ajout utilisateur ou d'une découverte dans
+// les données, jamais d'une table figée séparée — voir bug "Jeu-DO qui se multiplient"). Sert
+// uniquement de contenu de départ, fusionné une seule fois dans `custom_jeux` au premier chargement
+// (§ useCustomLists, clé `jeu_options_migrated`) ; à partir de là, tout passe par custom_jeux.
 const JEU_OPTIONS_BY_MARQUE = {
   "Alola": ["Ultra-soleil - 528008", "Ultra-soleil - Event", "Soleil - Event"],
   "DEPS": ["Home - 550775"],
@@ -2039,11 +2080,11 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const { size: boxSize, prefix: boxPrefix, save: saveBoxSettings } = useBoxSettings(gameKey);
   const { overrides: boxOverrides, setGroup: setBoxGroup } = useBoxGroupOverrides(gameKey);
   const { overrides: jeuOverrides, setJeu } = useGameJeuOverrides(gameKey);
-  // Options "Jeu - DO" restreintes à cette marque (colonne Jeu de l'onglet Index de
-  // l'Excel, par marque) + valeurs personnalisées ajoutées depuis Paramètres — même source que
-  // le champ homonyme d'Interjeu.
+  // Options "Jeu - DO" restreintes à cette marque — uniquement les valeurs ajoutées par
+  // l'utilisateur (Paramètres) ou découvertes dans les données réelles (voir jeuValuesAvailable
+  // plus bas, qui complète avec game_jeu_overrides). Même source que le champ homonyme d'Interjeu.
   const jeuOptionsForGame = useMemo(
-    () => [...(JEU_OPTIONS_BY_MARQUE[gameKey] || []), ...((customJeux && customJeux[gameKey]) || [])],
+    () => (customJeux && customJeux[gameKey]) || [],
     [gameKey, customJeux]
   );
   const boxGroupOptions = useBoxGroupOptions(gameKey);
@@ -2135,7 +2176,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   }, [boxInfo]);
 
   // Valeurs "Jeu - DO" effectivement assignées à un Pokémon de ce jeu, pour le filtre — union
-  // avec les options connues (JEU_OPTIONS_BY_MARQUE/customJeux) pour que le filtre reste
+  // avec les options connues (customJeux, aucune table figée) pour que le filtre reste
   // cochable même sur une valeur pas encore utilisée.
   const jeuValuesAvailable = useMemo(() => {
     const s = new Set(jeuOptionsForGame);
@@ -3021,11 +3062,11 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   const marqueWidth = useMemo(() => charWidth("Marque", ["Sans marque", ...marques]), [marques]);
   const lieuWidth = useMemo(() => charWidth("Lieu", locations), [locations]);
 
-  // Options de "Jeu" pour une marque donnée : table de référence (Index T/W) + valeurs
-  // personnalisées ajoutées via le bouton + + valeurs déjà utilisées ailleurs pour cette marque.
+  // Options de "Jeu" pour une marque donnée : valeurs personnalisées (bouton +) + valeurs déjà
+  // utilisées ailleurs pour cette marque (découvertes dans les captures) — jamais de table figée.
   const jeuOptionsFor = (marqueVal) => {
     const mk = marqueVal && marqueVal !== "__none__" ? marqueVal : "";
-    const s = new Set([...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...((customJeux && customJeux[mk]) || [])]);
+    const s = new Set((customJeux && customJeux[mk]) || []);
     if (catches) Object.values(catches).forEach((arr) => (arr || []).forEach((rec) => {
       if (rec.jeu && (rec.marque || "") === mk) s.add(rec.jeu);
     }));
@@ -3811,11 +3852,10 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   // sans restriction reste proposée pour toute marque.
   const modeOptionsFor = (marqueVal) => optionsForMarque(modes, marqueVal, modeMarques);
   const detailOptionsFor = (marqueVal) => optionsForMarque(details, marqueVal, detailMarques);
-  // Options "Jeu - DO" restreintes à une marque — même patron que ShinyView.
+  // Options "Jeu - DO" restreintes à une marque — même patron que ShinyView (aucune table figée).
   const jeuOptionsFor = (marqueVal) => {
     const mk = marqueVal || "";
-    const s = new Set([...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...((customJeux && customJeux[mk]) || [])]);
-    return Array.from(s);
+    return Array.from(new Set((customJeux && customJeux[mk]) || []));
   };
   const jeuFilterOptions = useMemo(() => {
     const s = new Set();
@@ -3970,7 +4010,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                     <Picker
                       value={rec.jeu || ""}
                       onChange={(v) => updateCatch(selected, idx, "jeu", v)}
-                      options={[...(JEU_OPTIONS_BY_MARQUE[rec.marque || ""] || []), ...(((customJeux && customJeux[rec.marque || ""]) || []))]}
+                      options={(customJeux && customJeux[rec.marque || ""]) || []}
                       placeholder="-"
                       buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
                       panelWidth={220}
@@ -4363,8 +4403,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   // Options "Jeu - DO" restreintes à une marque — même patron que Shiny/Double/onglets jeu.
   const jeuOptionsFor = (marqueVal) => {
     const mk = marqueVal || "";
-    const s = new Set([...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...((customJeux && customJeux[mk]) || [])]);
-    return Array.from(s);
+    return Array.from(new Set((customJeux && customJeux[mk]) || []));
   };
   const jeuDOFilterOptions = useMemo(() => {
     const s = new Set();
@@ -5129,7 +5168,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   // pas un texte libre.
   const jeuOptionsFor = (marqueVal) => {
     const mk = marqueVal || "";
-    return [...(JEU_OPTIONS_BY_MARQUE[mk] || []), ...((customJeux && customJeux[mk]) || [])];
+    return (customJeux && customJeux[mk]) || [];
   };
   const jeuFilterOptions = useMemo(() => {
     const s = new Set();
@@ -7256,9 +7295,17 @@ function SettingsView({
     return orderedList([DEFAULT_LOCATION, ...customLocations], discovered);
   }, [customLocations, shinyCatches, interjeu]);
 
+  // BUG identifié ("les Jeu-DO de Go se multiplient") : la liste affichée en Paramètres mélangeait
+  // une table figée (JEU_OPTIONS_BY_MARQUE, importée une fois de l'Excel) et les valeurs
+  // personnalisées (customJeux). Cette table figée n'aurait jamais dû être une source vivante
+  // (règle du projet : hormis "marque", toute valeur vient soit d'un ajout utilisateur, soit
+  // d'une découverte dans les données) — elle causait des doublons, et le glisser-déposer
+  // (DraggableList) réécrivait ce doublon à chaque réorganisation, le multipliant. Fix définitif :
+  // la table figée a été fusionnée une seule fois dans `custom_jeux` (§ useCustomLists,
+  // `jeu_options_migrated`) ; elle n'est plus lue nulle part ailleurs dans l'app.
   const jeuxForSelectedMarque = useMemo(() => {
     if (!selectedJeuMarque) return [];
-    const base = [...(JEU_OPTIONS_BY_MARQUE[selectedJeuMarque] || []), ...((customJeux[selectedJeuMarque]) || [])];
+    const base = Array.from(new Set(customJeux[selectedJeuMarque] || []));
     const discovered = [];
     Object.values(shinyCatches).forEach((arr) => (arr || []).forEach((r) => {
       if (r.marque === selectedJeuMarque && r.jeu) discovered.push(r.jeu);
@@ -7354,12 +7401,18 @@ function SettingsView({
   const doReorder = async (kind, arr, marqueCtx) => {
     setSaveState("saving");
     const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
-    if (kind === "marque") await writeJSON("custom_marques", arr);
-    if (kind === "mode") await writeJSON("custom_modes", arr);
-    if (kind === "detail") await writeJSON("custom_details", arr);
-    if (kind === "location") await writeJSON("custom_locations", arr);
-    if (kind === "jeu" && marqueCtx) await writeJSON("custom_jeux", { ...customJeux, [marqueCtx]: arr });
-    if (kind === "boxgroup" && marqueCtx) await writeJSON("custom_box_groups", { ...customBoxGroups, [marqueCtx]: arr });
+    // Garde-fou générique contre les doublons (voir bug "Jeu-DO qui se multiplient" ci-dessus) —
+    // `arr` vient de ce qui est affiché ; le dédupliquer avant d'écrire empêche toute réécriture
+    // de propager un doublon déjà présent, quelle qu'en soit l'origine.
+    const dedupedArr = Array.from(new Set(arr));
+    if (kind === "marque") await writeJSON("custom_marques", dedupedArr);
+    if (kind === "mode") await writeJSON("custom_modes", dedupedArr);
+    if (kind === "detail") await writeJSON("custom_details", dedupedArr);
+    if (kind === "location") await writeJSON("custom_locations", dedupedArr);
+    if (kind === "jeu" && marqueCtx) {
+      await writeJSON("custom_jeux", { ...customJeux, [marqueCtx]: dedupedArr });
+    }
+    if (kind === "boxgroup" && marqueCtx) await writeJSON("custom_box_groups", { ...customBoxGroups, [marqueCtx]: dedupedArr });
     await loadAll();
     setSaveState("saved");
   };
@@ -9263,7 +9316,6 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
       marquesByDO[v].add(g);
     };
     GAME_ORDER.forEach((g) => {
-      (JEU_OPTIONS_BY_MARQUE[g] || []).forEach((v) => { allDO.add(v); addMarqueFor(v, g); });
       ((customJeux && customJeux[g]) || []).forEach((v) => { allDO.add(v); addMarqueFor(v, g); });
     });
     const counts = {};
@@ -10973,6 +11025,11 @@ function App() {
     // supprimées, pour empêcher le re-seed au rechargement.
     try { await window.storage.set("custom_events", "[]", false); } catch (e) {}
     try { await window.storage.set("custom_interjeu", "[]", false); } catch (e) {}
+    // "jeu_options_migrated" n'est pas dans ALL_KEYS (métadonnée locale, § useCustomLists) donc
+    // pas touchée par la boucle ci-dessus — il faut l'effacer explicitement, sinon la migration
+    // ponctuelle du contenu de JEU_OPTIONS_BY_MARQUE vers custom_jeux ne se relance jamais après
+    // un reset, et ces valeurs de départ resteraient perdues pour de bon.
+    try { await window.storage.delete("jeu_options_migrated", false); } catch (e) {}
     resetModCount();
     setShowResetConfirm(false);
     setIoMsg("Sauvegarde exportée automatiquement, puis toutes les données réinitialisées — rechargement…");
