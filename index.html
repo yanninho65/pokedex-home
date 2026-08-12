@@ -159,7 +159,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.12.22.51";
+const APP_VERSION = "2026.8.12.23.11";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2302,7 +2302,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         if (filter === "missing" && c) return false;
         if (!matchesMulti(region, r.region)) return false;
         if (!matchesMulti(boxGroupFilter, boxInfo[r.i] && boxInfo[r.i].groupe)) return false;
-        if (!matchesMulti(jeuFilter, jeuOverrides && jeuOverrides[boxGroupKeyFor(r.nom, r.forme)])) return false;
+        if (!matchesMulti(jeuFilter, (jeuOverrides && jeuOverrides[boxGroupKeyFor(r.nom, r.forme)]) || "__none__")) return false;
         if (isGoGame && !matchesMulti(sortiFilter, goSortiFor(r.nom, r.forme) ? "oui" : "non")) return false;
         if (isAlphaGame && alphaFilter !== null) {
           if (!canBeAlpha(r.nom, r.forme)) return false;
@@ -2356,7 +2356,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (s && !(String(r[1]).toLowerCase().includes(s) || (r[2] && String(r[2]).toLowerCase().includes(s)) || String(r[0]).toLowerCase().includes(s))) return;
       if (!matchesMulti(region, r[4])) return;
       if (!matchesMulti(boxGroupFilter, boxInfo[i] && boxInfo[i].groupe)) return;
-      if (!matchesMulti(jeuFilter, jeuOverrides && jeuOverrides[boxGroupKeyFor(r[1], r[2])])) return;
+      if (!matchesMulti(jeuFilter, (jeuOverrides && jeuOverrides[boxGroupKeyFor(r[1], r[2])]) || "__none__")) return;
       if (isGoGame && !matchesMulti(sortiFilter, goSortiFor(r[1], r[2]) ? "oui" : "non")) return;
       if (isAlphaGame && alphaFilter !== null) {
         if (!canBeAlpha(r[1], r[2])) return;
@@ -2739,7 +2739,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                 </div>
                 <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} width="100%" />
                 <MultiSelectFilter label="Groupe de boîte" options={boxGroupsAvailable} selected={boxGroupFilter} onChange={setBoxGroupFilter} width="100%" />
-                <MultiSelectFilter label="Jeu - DO" options={jeuValuesAvailable} selected={jeuFilter} onChange={setJeuFilter} width="100%" />
+                <MultiSelectFilter label="Jeu - DO" options={[["__none__", "Jeu non indiqué"], ...jeuValuesAvailable.map((j) => [j, j])]} selected={jeuFilter} onChange={setJeuFilter} width="100%" />
                 {isGoGame && (
                   <MultiSelectFilter
                     label="Sorti"
@@ -9552,14 +9552,14 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     });
   }, [doStats, doMarqueFilter]);
   const totalPokemonWithDO = useMemo(() => doStatsVisible.reduce((sum, d) => sum + d.count, 0), [doStatsVisible]);
-  // Ligne "DO Event" (§ nouveau, en bas du bloc) : events capturés sans Jeu - DO personnel et
+  // Ligne "DO Event" (§ nouveau, en bas du bloc) : events CAPTURÉS sans Jeu - DO personnel et
   // absents des boîtes de jeu — ni comptés dans un onglet de marque (pas "Déjà dans une boîte de
   // jeu"), ni dans un DO personnel ci-dessus (pas "DO personnel") ; sinon invisibles du bloc DO.
   // Respecte le filtre Marque du bloc, comme le reste de la liste.
   const doEventOnly = useMemo(() => {
     if (!eventsLive) return 0;
     return eventsLive.filter((e) => {
-      if (e.boite || e.doPerso) return false;
+      if (!e.attrape || e.boite || e.doPerso) return false;
       if (doMarqueFilter !== null && !doMarqueFilter.has(e.marque)) return false;
       return true;
     }).length;
@@ -9710,7 +9710,7 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
         </div>
         <button onClick={() => setShowDoList((s) => !s)} style={overviewGridCell} title="Total de Pokémon avec un Jeu - DO renseigné, et nombre de DO distincts utilisés">
           <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>Jeu - DO {showDoList ? "▲" : "▼"}</div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{totalPokemonWithDO} ({doStatsVisible.length} DO)</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{totalPokemonWithDO + doEventOnly} ({doStatsVisible.length} DO)</div>
         </button>
       </div>
       {showDoList && (
@@ -9734,7 +9734,7 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 12.5, borderTop: `1px solid ${LINE}`, paddingTop: 6, marginTop: 2 }}>
                 <span style={{ color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title="Events capturés sans Jeu - DO personnel, absents des boîtes de jeu">DO Event</span>
                 <button
-                  onClick={() => openEvent(null, false, undefined, false)}
+                  onClick={() => openEvent(null, false, undefined, false, "caught")}
                   style={{ background: "transparent", border: "none", cursor: "pointer", color: EVENTORANGE, fontWeight: 700, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12.5, padding: 0 }}
                   title="Ouvrir l'onglet Event filtré"
                 >{doEventOnly}</button>
@@ -11733,10 +11733,10 @@ function App() {
 
   // Ouvre l'onglet Event avec un filtre marque/Jeu-DO (et, pour la ligne "Doublon (event)", "Dans
   // boîte") prérempli — depuis la section récap de l'onglet Progression (National) ou le popup
-  // de répartition du bloc Jeu - DO. `doPerso` (optionnel) permet d'ouvrir directement sur les
-  // events sans DO personnel (ligne "DO Event" du bloc Jeu - DO).
-  const openEvent = (marque, boite, jeu, doPerso) => {
-    setPendingEventFilter({ marque, boite, jeu, doPerso });
+  // de répartition du bloc Jeu - DO. `doPerso`/`status` (optionnels) permettent d'ouvrir
+  // directement sur les events capturés sans DO personnel (ligne "DO Event" du bloc Jeu - DO).
+  const openEvent = (marque, boite, jeu, doPerso, status) => {
+    setPendingEventFilter({ marque, boite, jeu, doPerso, status });
     setTab("event");
   };
 
