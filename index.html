@@ -70,13 +70,6 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 
 const DATA = window.DATA; // voir <script> précédent (données structurelles hors Babel)
-// Pseudo-jeux de l'onglet "Jeu" → Go 1 (voir doc §5bis) : réutilisent le Pokédex structurel de
-// Go (mêmes lignes, mêmes formes) mais avec un stockage de capture totalement indépendant
-// (clés "caught_Go1"/"caught_Go1Pokedex"/"caught_Go1Shiny" via useCollection). Un simple alias
-// suffit ici : aucune donnée n'est dupliquée, seule la clé de stockage change.
-DATA.games["Go1"] = DATA.games["Go"];
-DATA.games["Go1Pokedex"] = DATA.games["Go"];
-DATA.games["Go1Shiny"] = DATA.games["Go"];
 const GAME_ORDER = ["IàV", "VI", "Alola", "GB", "LG", "Go", "DEPS", "Galar", "LA", "Paldea", "LZA"];
 // Nouvel onglet "Jeu" (après Home) : suivi des Pokémon dans les jeux vidéo (par opposition à
 // Home), présenté comme les marques du menu Home (GameNavSelect) via un même sélecteur déroulant.
@@ -166,7 +159,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.12.14.35";
+const APP_VERSION = "2026.8.12.22.51";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1071,8 +1064,6 @@ function MultiSelectFilter({ label, options, selected, onChange, width }) {
 }
 
 const GAME_VIEW_OPTIONS = [["list","Liste"],["box","Boîte"],["grid","Grille"]];
-// Pseudo-jeux de l'onglet "Jeu" (Go 1) : pas de vue Boîte (ni groupe/nom de boîte, voir doc §5bis).
-const GO1_GAME_VIEW_OPTIONS = [["list","Liste"],["grid","Grille"]];
 const SHINY_VIEW_OPTIONS = [["list","Liste"],["box","Boîte"],["grille","Grille"]];
 const DOUBLE_VIEW_OPTIONS = [["list","Liste"],["box","Boîte"]];
 
@@ -1736,6 +1727,14 @@ function useCollection(key, length) {
 // placeholder, title } — même contrat que l'ancien bouton d'ajout séparé.
 // Icônes simples réutilisées par les boutons de menu ajoutés à la barre flottante.
 const BarIcon = {
+  dex: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <circle cx="7.5" cy="6" r="1.3" fill="#fff" stroke="none" />
+      <circle cx="12" cy="15" r="3.4" />
+    </svg>
+  ),
   view: (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" />
@@ -2125,10 +2124,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [alphaMap, setAlphaMap] = useState({});
   const effective = flags || baseline;
   const isAlphaGame = gameKey === "LA" || gameKey === "LZA";
-  // Pseudo-jeux de l'onglet "Jeu" (Go 1) : réutilisent GameView pour la capture de base et les
-  // sous-vues "toutes formes" de Pokédex/Shiny (aliasés sur DATA.games["Go"], stockage séparé
-  // via useCollection). La vue Boîte et les noms/groupes de boîte n'ont pas de sens pour eux.
-  const isGo1Pseudo = gameKey === "Go1" || gameKey === "Go1Pokedex" || gameKey === "Go1Shiny";
 
   useEffect(() => {
     if (!isAlphaGame) return;
@@ -2181,7 +2176,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, gameKey, "jeuFilter", null); // null = tous, ou Set de valeurs Jeu - DO cochées
   // "Sorti" (§ nouveau, onglet Go uniquement) : Pokémon GO ne sort pas tous ses Pokémon d'un coup,
   // contrairement aux jeux Switch/3DS. Renseigné depuis la fiche catalogue (bloc "Jeu vidéo").
-  const isGoGame = gameKey === "Go" || gameKey === "Go1";
+  const isGoGame = gameKey === "Go";
   const [sortiFilter, setSortiFilter] = useCachedState(filterCache, gameKey, "sortiFilter", null); // null = tous, ou Set { "oui", "non" }
   const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || boxGroupFilter !== null || jeuFilter !== null || sortiFilter !== null;
 
@@ -2409,17 +2404,15 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             rings: [{ pct: pct(combinedStats.matchedCount, combinedStats.matchedTotal), size: 46, stroke: 5, color: OK, caption: `${combinedStats.matchedCount}/${combinedStats.matchedTotal}` }],
           }}
         />
-        {!isGo1Pseudo && (
-          <button
-            onClick={() => setBoxSettingsOpen(true)}
-            title="Réglages des boîtes (nombre par boîte, préfixe)"
-            style={{
-              marginLeft: "auto", background: "transparent", border: `1px solid ${LINE}`,
-              borderRadius: 10, width: 32, height: 32, display: "flex", alignItems: "center",
-              justifyContent: "center", cursor: "pointer", color: MUTED, fontSize: 15, flexShrink: 0,
-            }}
-          >⚙️</button>
-        )}
+        <button
+          onClick={() => setBoxSettingsOpen(true)}
+          title="Réglages des boîtes (nombre par boîte, préfixe)"
+          style={{
+            marginLeft: "auto", background: "transparent", border: `1px solid ${LINE}`,
+            borderRadius: 10, width: 32, height: 32, display: "flex", alignItems: "center",
+            justifyContent: "center", cursor: "pointer", color: MUTED, fontSize: 15, flexShrink: 0,
+          }}
+        >⚙️</button>
       </div>
 
       {boxSettingsOpen && (
@@ -2697,7 +2690,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={isGo1Pseudo ? GO1_GAME_VIEW_OPTIONS : GAME_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={GAME_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
                   <React.Fragment>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
@@ -2709,18 +2702,14 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     <ViewToggle mode={grilleSortMode} setMode={setGrilleSortMode} options={[["boite", "Boîte"], ["numero", "Numéro"]]} />
                   </React.Fragment>
                 )}
-                {!isGo1Pseudo && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                    <input type="checkbox" checked={showBoxGroup} onChange={(e) => setShowBoxGroup(e.target.checked)} />
-                    Afficher le groupe de boîte
-                  </label>
-                )}
-                {!isGo1Pseudo && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                    <input type="checkbox" checked={showBoxName} onChange={(e) => setShowBoxName(e.target.checked)} />
-                    Afficher le nom de boîte
-                  </label>
-                )}
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                  <input type="checkbox" checked={showBoxGroup} onChange={(e) => setShowBoxGroup(e.target.checked)} />
+                  Afficher le groupe de boîte
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                  <input type="checkbox" checked={showBoxName} onChange={(e) => setShowBoxName(e.target.checked)} />
+                  Afficher le nom de boîte
+                </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
                   <input type="checkbox" checked={showJeu} onChange={(e) => setShowJeu(e.target.checked)} />
                   Afficher le Jeu - DO
@@ -4427,6 +4416,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     if (initialFilter.marque) setMarqueFilter(new Set([initialFilter.marque]));
     if (initialFilter.boite !== undefined) setBoiteFilter(new Set([initialFilter.boite ? "oui" : "non"]));
     if (initialFilter.jeu) { setJeuDOFilter(new Set([initialFilter.jeu])); setDoPersoFilter(new Set(["oui"])); }
+    else if (initialFilter.doPerso !== undefined) setDoPersoFilter(new Set([initialFilter.doPerso ? "oui" : "non"]));
     setFiltersOpen(true);
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
@@ -9536,9 +9526,11 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
       Object.values(doubleCatchesLive).forEach((arr) => (arr || []).forEach((rec) => { if (catchLocation(rec) === DEFAULT_LOCATION) bump(rec.jeu, rec.marque, "double"); }));
     }
     // Event : uniquement les entrées marquées "DO personnel" (§ nouveau) — un event recensé mais
-    // jamais reçu/joué n'a pas de Jeu - DO personnel à faire remonter ici.
+    // jamais reçu/joué n'a pas de Jeu - DO personnel à faire remonter ici. Celles "Déjà dans une
+    // boîte de jeu" sont exclues : elles sont déjà comptées dans l'onglet de la marque (via
+    // game_jeu_overrides, bump ci-dessus) — les compter aussi ici ferait un double comptage.
     if (eventsLive) {
-      eventsLive.forEach((e) => { if (e.doPerso) bump(e.jeuDO, e.marque, "event"); });
+      eventsLive.forEach((e) => { if (e.doPerso && !e.boite) bump(e.jeuDO, e.marque, "event"); });
     }
     // Interjeu : uniquement les entrées actuellement dans Home (même convention que le reste
     // des agrégats Interjeu — voir Total Home).
@@ -9560,6 +9552,18 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     });
   }, [doStats, doMarqueFilter]);
   const totalPokemonWithDO = useMemo(() => doStatsVisible.reduce((sum, d) => sum + d.count, 0), [doStatsVisible]);
+  // Ligne "DO Event" (§ nouveau, en bas du bloc) : events capturés sans Jeu - DO personnel et
+  // absents des boîtes de jeu — ni comptés dans un onglet de marque (pas "Déjà dans une boîte de
+  // jeu"), ni dans un DO personnel ci-dessus (pas "DO personnel") ; sinon invisibles du bloc DO.
+  // Respecte le filtre Marque du bloc, comme le reste de la liste.
+  const doEventOnly = useMemo(() => {
+    if (!eventsLive) return 0;
+    return eventsLive.filter((e) => {
+      if (e.boite || e.doPerso) return false;
+      if (doMarqueFilter !== null && !doMarqueFilter.has(e.marque)) return false;
+      return true;
+    }).length;
+  }, [eventsLive, doMarqueFilter]);
   // Libellé affiché pour un onglet dans le popup de répartition (§ nouveau) — les codes de jeu
   // (GAME_ORDER) s'affichent tels quels, comme partout ailleurs dans cette vue.
   const tabLabel = (tabKey) => ({ shiny: "Shiny", double: "Double", event: "Event", interjeu: "Interjeu" }[tabKey] || tabKey);
@@ -9726,6 +9730,16 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
                 >{d.count}</button>
               </div>
             ))}
+            {doEventOnly > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 12.5, borderTop: `1px solid ${LINE}`, paddingTop: 6, marginTop: 2 }}>
+                <span style={{ color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title="Events capturés sans Jeu - DO personnel, absents des boîtes de jeu">DO Event</span>
+                <button
+                  onClick={() => openEvent(null, false, undefined, false)}
+                  style={{ background: "transparent", border: "none", cursor: "pointer", color: EVENTORANGE, fontWeight: 700, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12.5, padding: 0 }}
+                  title="Ouvrir l'onglet Event filtré"
+                >{doEventOnly}</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -9840,6 +9854,7 @@ const EXCEL_SHEETS = [
   { key: "jeuxmarque", label: "Jeu par marque" },
   { key: "boitesgroupes", label: "Groupe de boîte" },
   { key: "dispo", label: "Disponibilité" },
+  { key: "go1", label: "Go 1" },
   ...GAME_ORDER.map((g) => ({ key: "game_" + g, label: g })),
 ];
 
@@ -10298,6 +10313,7 @@ async function buildExcelWorkbook(selectedKeys) {
     else if (sheetDef.key === "jeuxmarque") rows = await buildJeuxMarqueSheetRows();
     else if (sheetDef.key === "boitesgroupes") rows = await buildBoitesGroupesSheetRows();
     else if (sheetDef.key === "dispo") rows = await buildDispoSheetRows();
+    else if (sheetDef.key === "go1") rows = await buildGo1SheetRows();
     else if (sheetDef.key.startsWith("game_")) rows = await buildGameSheetRows(sheetDef.key.slice(5));
     if (!rows || !rows.length) rows = [{ Nom: "", Forme: "" }];
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -10669,6 +10685,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     else if (sheetName === "Jeu par marque") { await importJeuxMarqueSheet(rows, mode); touched++; }
     else if (sheetName === "Groupe de boîte") { await importBoitesGroupesSheet(rows, mode); touched++; }
     else if (sheetName === "Disponibilité") { await importDispoSheet(rows, mode); touched++; }
+    else if (sheetName === "Go 1") { await importGo1Sheet(rows, mode); touched++; }
   }
   return touched;
 }
@@ -10805,11 +10822,13 @@ const HELP_CONTENT = {
   go1: {
     title: "Jeu — Go 1",
     body: [
-      "Suivi des Pokémon dans les jeux vidéo (par opposition à Home) : premier jeu disponible, Go 1.",
-      "Mode Capture : reprend le fonctionnement de l'onglet Go (une case par forme).",
-      "Modes Chanceux/Parfait/Purifié/Obscur/XXS/XXL : une seule forme par espèce à cocher (le Pokédex Go ne distingue pas les formes régionales pour ces statuts).",
-      "Modes Pokédex et Shiny : consultables \"Toutes formes\" (comme Capture) ou \"Forme unique\" (une ligne par espèce).",
-      "Cliquer sur un Pokémon (hors case à cocher) ouvre sa fiche de capture complète : Pokédex, XXS, XXL, Shiny, Obscur, Purifié, Chanceux et Parfait, tous au niveau espèce.",
+      "Suivi des Pokémon dans les jeux vidéo (par opposition à Home), non relié à l'onglet %. Premier jeu disponible : Go 1.",
+      "Icône Pokédex de la barre du bas : choisir le mode — Pokédex, Shiny, Chanceux, Parfait, Purifié, Obscur, XXS, XXL.",
+      "Pokédex et Shiny se consultent \"Toutes formes\" (une case par forme) ou \"Forme unique\" (une case par espèce) — bascule dans le menu Affichage, avec Liste/Grille.",
+      "Chanceux/Parfait/Purifié/Obscur/XXS/XXL : toujours en forme unique (le Pokédex Go ne distingue pas les formes régionales pour ces statuts).",
+      "Attraper n'importe quelle forme (Pokédex ou Shiny) ou cocher n'importe lequel de ces 6 statuts marque automatiquement l'espèce comme attrapée en Pokédex forme unique.",
+      "Cliquer sur un Pokémon (hors case à cocher) ouvre sa fiche : 4 lignes de 2 cases — Pokédex/Shiny, Chanceux/Parfait, Purifié/Obscur, XXS/XXL — toutes au niveau espèce.",
+      "Vue Grille : regroupée par région et 4 par ligne par défaut, réglable dans Affichage.",
     ],
   },
   settings: {
@@ -10852,19 +10871,30 @@ function HelpModal({ tab, onClose }) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Onglet "Jeu" → Go 1 (doc §5bis) : suivi des Pokémon dans les jeux vidéo, distinct de Home.
-// Reprend les fonctions de l'onglet Go (capture par forme, via GameView + alias DATA.games,
-// voir plus haut) et ajoute des modes d'affichage "forme unique" (Chanceux/Parfait/Purifié/
-// Obscur/XXS/XXL) où capturer une forme marque toute l'espèce (numéro national), plus deux
-// modes (Pokédex, Shiny) consultables à la fois "toutes formes" (comme Capture) et "forme
-// unique". La fiche de capture (clic sur un Pokémon en vue "forme unique") permet de voir/
-// cocher chacun de ces modes secondaires pour l'espèce entière.
+// Onglet "Jeu" → Go 1 (doc §5bis) : suivi des Pokémon dans les jeux vidéo, distinct de Home et
+// du menu Home/GAME_ORDER (aucun lien avec l'onglet %). Composant entièrement dédié (ne réutilise
+// plus GameView) : pas de vue Boîte, pas de région/groupe de boîte affichés en liste, pas de
+// filtres Alpha/Jeu-DO/groupe de boîte, pas d'options "afficher Shiny/Event capturés ailleurs".
+//
+// Modes (sélecteur dans la barre flottante, icône Pokédex) : Pokédex, Shiny, Chanceux, Parfait,
+// Purifié, Obscur, XXS, XXL. Pokédex et Shiny ont chacun deux sous-vues : "Toutes formes" (une
+// ligne par forme, comme l'ancien onglet Go) et "Forme unique" (une ligne par espèce — capturer
+// n'importe quelle forme suffit ; forme non affichée dans le texte, mais le sprite reste celui
+// de la première forme rencontrée). Les 6 autres modes n'existent qu'en forme unique (le
+// Pokédex Go ne distingue pas les formes régionales pour ces statuts).
+//
+// Règle métier (§ demande explicite) : cocher n'importe quelle forme en Pokédex ou Shiny (toutes
+// formes), Shiny forme unique, ou n'importe lequel des 6 modes forme unique, marque RÉELLEMENT
+// (pas juste visuellement) l'espèce comme attrapée en Pokédex forme unique — voir
+// go1CascadeToPokedexUnique, appelé à chaque coche positive. Symétriquement, quand une espèce n'a
+// qu'une seule forme, marquer une case forme unique (Pokédex ou Shiny) marque aussi directement
+// la case "toutes formes" correspondante (une seule forme existe, les deux vues représentent
+// donc le même Pokémon) — voir go1CascadeSingleForm. La case Pokédex forme unique reste une
+// case à cocher normale (jamais grisée, jamais "(auto)"), comme si elle avait été cochée à la
+// main, et peut être décochée librement sans que rien ne la reproche.
 // ---------------------------------------------------------------------------------------------
 
-const GO1_MODES = [
-  { key: "capture", label: "Capture", color: ACCENT },
-  { key: "pokedex", label: "Pokédex", color: LIGHTBLUE },
-  { key: "shiny", label: "Shiny", color: GOLD },
+const GO1_UNIQUE_ONLY_MODES = [
   { key: "chanceux", label: "Chanceux", color: "#FFB300" },
   { key: "parfait", label: "Parfait", color: "#4CAF83" },
   { key: "purifie", label: "Purifié", color: PURPLE },
@@ -10872,113 +10902,195 @@ const GO1_MODES = [
   { key: "xxs", label: "XXS", color: OK },
   { key: "xxl", label: "XXL", color: LIGHTRED },
 ];
-// Modes secondaires présentés dans la fiche de capture (clic sur un Pokémon) — toujours au
-// niveau espèce (numéro national), quel que soit le mode d'affichage depuis lequel on l'ouvre.
-const GO1_MODAL_MODES = [
-  { key: "pokedex", label: "Pokédex (forme unique)", storageKey: "go1_pokedex_unique", color: LIGHTBLUE },
-  { key: "shiny", label: "Shiny (forme unique)", storageKey: "go1_shiny_unique", color: GOLD },
-  { key: "chanceux", label: "Chanceux", storageKey: "go1_chanceux", color: "#FFB300" },
-  { key: "parfait", label: "Parfait", storageKey: "go1_parfait", color: "#4CAF83" },
-  { key: "purifie", label: "Purifié", storageKey: "go1_purifie", color: PURPLE },
-  { key: "obscur", label: "Obscur", storageKey: "go1_obscur", color: "#5C4B8A" },
-  { key: "xxs", label: "XXS", storageKey: "go1_xxs", color: OK },
-  { key: "xxl", label: "XXL", storageKey: "go1_xxl", color: LIGHTRED },
+// Sélecteur de mode (icône Pokédex de la barre flottante) — Pokédex/Shiny en tête (ont une
+// sous-vue toutes formes/forme unique), puis les 6 modes forme unique.
+const GO1_MODES = [
+  { key: "pokedex", label: "Pokédex", color: LIGHTBLUE },
+  { key: "shiny", label: "Shiny", color: GOLD },
+  ...GO1_UNIQUE_ONLY_MODES,
 ];
+// Paires affichées dans la fiche de capture (clic sur un Pokémon), deux coches par ligne.
+const GO1_MODAL_PAIRS = [
+  [
+    { key: "pokedex", label: "Pokédex", storageKey: "go1_pokedex_unique", color: LIGHTBLUE },
+    { key: "shiny", label: "Shiny", storageKey: "go1_shiny_unique", color: GOLD },
+  ],
+  [
+    { key: "chanceux", label: "Chanceux", storageKey: "go1_chanceux", color: "#FFB300" },
+    { key: "parfait", label: "Parfait", storageKey: "go1_parfait", color: "#4CAF83" },
+  ],
+  [
+    { key: "purifie", label: "Purifié", storageKey: "go1_purifie", color: PURPLE },
+    { key: "obscur", label: "Obscur", storageKey: "go1_obscur", color: "#5C4B8A" },
+  ],
+  [
+    { key: "xxs", label: "XXS", storageKey: "go1_xxs", color: OK },
+    { key: "xxl", label: "XXL", storageKey: "go1_xxl", color: LIGHTRED },
+  ],
+];
+const GO1_UNIQUE_STORAGE_KEYS = {
+  pokedex: "go1_pokedex_unique", shiny: "go1_shiny_unique",
+  chanceux: "go1_chanceux", parfait: "go1_parfait", purifie: "go1_purifie",
+  obscur: "go1_obscur", xxs: "go1_xxs", xxl: "go1_xxl",
+};
 
-// Une seule ligne par espèce (numéro national) — attraper Goupix de Kanto en Chanceux marque
-// aussi Goupix d'Alola, inutile de suivre chaque forme séparément pour ces modes.
-function go1UniqueSpecies() {
+// Toutes les formes de Go, triées par numéro national croissant (demande explicite — l'ordre
+// "boîte"/sortie de jeu par défaut de DATA.games["Go"] n'est plus utilisé ici).
+function go1AllFormsSorted() {
   const rows = DATA.games["Go"] || [];
+  return rows
+    .map((r, i) => ({ i, nat: r[0], nom: r[1], forme: r[2], region: r[4], key: r[1] + "|" + (r[2] || "") }))
+    .sort((a, b) => Number(a.nat) - Number(b.nat));
+}
+
+// Une ligne par espèce (numéro national), triée par numéro croissant — attraper Goupix de Kanto
+// marque aussi Goupix d'Alola pour les modes forme unique, inutile de suivre chaque forme.
+function go1UniqueSpecies() {
+  const forms = go1AllFormsSorted();
   const seen = new Set();
   const out = [];
-  rows.forEach((r, i) => {
-    const natKey = String(r[0]);
+  forms.forEach((r) => {
+    const natKey = String(r.nat);
     if (seen.has(natKey)) return;
     seen.add(natKey);
-    out.push({ i, nat: natKey, nom: r[1], forme: r[2], region: r[4] });
+    out.push({ nat: natKey, nom: r.nom, forme: r.forme, region: r.region });
   });
   return out;
 }
 
-// Dictionnaire { natKey: 1 } pour un mode "forme unique" donné, stocké sous "go1_<modeKey>".
-function useGo1UniqueDict(modeKey) {
-  const storageKey = "go1_" + modeKey;
-  const [dict, setDict] = useState(null);
-  const [saveState, setSaveState] = useState("idle");
+// Clés "nom|forme" de toutes les formes d'une espèce donnée (numéro national) — utilisé pour la
+// cascade "une seule forme" (go1CascadeSingleForm) et par le filtre "Sorti" en forme unique.
+function go1SpeciesFormKeys(natKey) {
+  return (DATA.games["Go"] || [])
+    .filter((r) => String(r[0]) === natKey)
+    .map((r) => ({ key: r[1] + "|" + (r[2] || ""), nom: r[1], forme: r[2] }));
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    setDict(null);
-    (async () => {
-      try {
-        const res = await window.storage.get(storageKey, false);
-        if (!cancelled) setDict(res && res.value ? JSON.parse(res.value) : {});
-      } catch (e) {
-        if (!cancelled) setDict({});
-      }
-    })();
-    return () => { cancelled = true; };
+// Si une espèce n'a qu'une seule forme, marque aussi cette forme dans le dictionnaire "toutes
+// formes" correspondant (Pokédex ou Shiny) — les deux vues représentent alors le même Pokémon.
+async function go1CascadeSingleForm(natKey, formsStorageKey) {
+  const forms = go1SpeciesFormKeys(natKey);
+  if (forms.length !== 1) return;
+  const formKey = forms[0].key;
+  try {
+    const cur = await storageGetJSON(formsStorageKey, {});
+    if (!cur[formKey]) {
+      cur[formKey] = 1;
+      await window.storage.set(formsStorageKey, JSON.stringify(cur), false);
+    }
+  } catch (e) {}
+}
+
+// Marque réellement (écriture en stockage) une espèce comme attrapée en Pokédex forme unique —
+// appelé chaque fois qu'une coche passe à "attrapé" ailleurs (forme Pokédex/Shiny, Shiny forme
+// unique, ou l'un des 6 modes forme unique). N'écrase jamais un décochage manuel ultérieur :
+// seul un passage à "attrapé" déclenche l'écriture, jamais l'inverse.
+async function go1CascadeToPokedexUnique(natKey) {
+  if (!natKey) return;
+  try {
+    const cur = await storageGetJSON("go1_pokedex_unique", {});
+    if (!cur[natKey]) {
+      cur[natKey] = 1;
+      await window.storage.set("go1_pokedex_unique", JSON.stringify(cur), false);
+    }
+  } catch (e) {}
+  await go1CascadeSingleForm(natKey, "go1_pokedex_forms");
+}
+// Même principe côté Shiny forme unique → Shiny toutes formes.
+async function go1CascadeToShinyUnique(natKey) {
+  if (!natKey) return;
+  try {
+    const cur = await storageGetJSON("go1_shiny_unique", {});
+    if (!cur[natKey]) {
+      cur[natKey] = 1;
+      await window.storage.set("go1_shiny_unique", JSON.stringify(cur), false);
+    }
+  } catch (e) {}
+  await go1CascadeSingleForm(natKey, "go1_shiny_forms");
+}
+
+// Charge/persiste un simple dictionnaire JSON sous une clé de stockage donnée (mêmes clés = même
+// forme "nom|forme" pour Pokédex/Shiny toutes formes, ou numéro national en texte pour les modes
+// forme unique). Un seul hook générique pour tous les dictionnaires Go1.
+function useGo1Dict(storageKey) {
+  const [dict, setDict] = useState(null);
+
+  const reload = React.useCallback(async () => {
+    try {
+      const res = await window.storage.get(storageKey, false);
+      setDict(res && res.value ? JSON.parse(res.value) : {});
+    } catch (e) {
+      setDict({});
+    }
+    // eslint-disable-next-line
   }, [storageKey]);
 
-  const toggle = (natKey) => {
+  useEffect(() => { setDict(null); reload(); /* eslint-disable-next-line */ }, [storageKey]);
+
+  const set = (key, value) => {
     setDict((cur) => {
       const next = { ...(cur || {}) };
-      if (next[natKey]) delete next[natKey]; else next[natKey] = 1;
-      setSaveState("saving");
-      window.storage.set(storageKey, JSON.stringify(next), false)
-        .then(() => setSaveState("saved"))
-        .catch(() => setSaveState("error"));
+      if (value) next[key] = 1; else delete next[key];
+      window.storage.set(storageKey, JSON.stringify(next), false).catch(() => {});
       return next;
     });
   };
+  const toggle = (key) => set(key, !(dict && dict[key]));
 
-  return { dict, toggle, saveState };
+  return [dict, toggle, set, reload];
 }
 
-// Fiche de capture d'une espèce (clic sur un Pokémon, quel que soit le mode d'affichage) :
-// toggles indépendants pour tous les modes secondaires "forme unique" (Pokédex, Shiny, Chanceux,
-// Parfait, Purifié, Obscur, XXS, XXL) — chacun stocké séparément, au niveau espèce.
-function Go1SpeciesModal({ nat, nom, forme, onClose }) {
+// Fiche de capture d'une espèce (clic sur un Pokémon) : 4 lignes de 2 coches — Pokédex/Shiny,
+// Chanceux/Parfait, Purifié/Obscur, XXS/XXL — toutes au niveau espèce (numéro national). Chaque
+// case est une case normale (jamais grisée) ; cocher Shiny/Chanceux/Parfait/Purifié/Obscur/
+// XXS/XXL marque aussi Pokédex, et Shiny marque aussi Pokédex en plus de lui-même (voir
+// go1CascadeToPokedexUnique/go1CascadeToShinyUnique).
+function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged }) {
   const [dicts, setDicts] = useState(null);
+  const natKey = String(nat);
 
-  useEffect(() => {
-    let cancelled = false;
+  const reload = () => {
     (async () => {
       const out = {};
-      for (const m of GO1_MODAL_MODES) {
-        try {
-          const res = await window.storage.get(m.storageKey, false);
-          out[m.key] = res && res.value ? JSON.parse(res.value) : {};
-        } catch (e) {
-          out[m.key] = {};
+      for (const pair of GO1_MODAL_PAIRS) {
+        for (const m of pair) {
+          try {
+            const res = await window.storage.get(m.storageKey, false);
+            out[m.key] = res && res.value ? JSON.parse(res.value) : {};
+          } catch (e) { out[m.key] = {}; }
         }
       }
-      if (!cancelled) setDicts(out);
+      setDicts(out);
     })();
-    return () => { cancelled = true; };
-  }, [nat]);
+  };
 
-  const toggle = (m) => {
-    setDicts((cur) => {
-      if (!cur) return cur;
-      const natKey = String(nat);
-      const nextModeDict = { ...(cur[m.key] || {}) };
-      if (nextModeDict[natKey]) delete nextModeDict[natKey]; else nextModeDict[natKey] = 1;
-      window.storage.set(m.storageKey, JSON.stringify(nextModeDict), false).catch(() => {});
-      return { ...cur, [m.key]: nextModeDict };
-    });
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [nat]);
+
+  const toggle = async (m) => {
+    const cur = (dicts && dicts[m.key]) || {};
+    const turningOn = !cur[natKey];
+    const next = { ...cur };
+    if (turningOn) next[natKey] = 1; else delete next[natKey];
+    setDicts((d) => ({ ...d, [m.key]: next }));
+    await window.storage.set(m.storageKey, JSON.stringify(next), false);
+    if (turningOn) {
+      if (m.key === "shiny") await go1CascadeToShinyUnique(natKey);
+      await go1CascadeToPokedexUnique(natKey);
+    }
+    reload();
+    if (onChanged) onChanged();
   };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 380, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 400, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
           <Sprite nom={nom} forme={forme} size={44} />
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 15, color: TXT }}>
-              {nom}{forme ? " · " + forme : ""}
+              N°{nat} {nom}
             </div>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>N°{nat} — toutes formes de cette espèce</div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Toutes les formes de cette espèce</div>
           </div>
           <button onClick={onClose} style={{ marginLeft: "auto", background: "transparent", border: "none", color: MUTED, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>✕</button>
         </div>
@@ -10986,23 +11098,33 @@ function Go1SpeciesModal({ nat, nom, forme, onClose }) {
           <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", fontSize: 12.5 }}>Chargement…</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {GO1_MODAL_MODES.map((m) => {
-              const checked = !!(dicts[m.key] && dicts[m.key][String(nat)]);
-              return (
-                <label
-                  key={m.key}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
-                    padding: "8px 10px", borderRadius: 12,
-                    background: checked ? m.color + "26" : "transparent",
-                    border: `1px solid ${checked ? m.color : LINE}`,
-                  }}
-                >
-                  <input type="checkbox" checked={checked} onChange={() => toggle(m)} style={{ width: 18, height: 18, accentColor: m.color, flexShrink: 0 }} />
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, fontWeight: checked ? 700 : 500 }}>{m.label}</span>
-                </label>
-              );
-            })}
+            {GO1_MODAL_PAIRS.map((pair, idx) => (
+              <div key={idx} style={{ display: "flex", gap: 8 }}>
+                {pair.map((m) => {
+                  const checked = !!(dicts[m.key] && dicts[m.key][natKey]);
+                  return (
+                    <label
+                      key={m.key}
+                      style={{
+                        flex: 1, display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+                        padding: "8px 10px", borderRadius: 12,
+                        background: checked ? m.color + "26" : "transparent",
+                        border: `1px solid ${checked ? m.color : LINE}`, minWidth: 0,
+                      }}
+                    >
+                      <input
+                        type="checkbox" checked={checked}
+                        onChange={() => toggle(m)}
+                        style={{ width: 18, height: 18, accentColor: m.color, flexShrink: 0 }}
+                      />
+                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: checked ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {m.label}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -11010,43 +11132,199 @@ function Go1SpeciesModal({ nat, nom, forme, onClose }) {
   );
 }
 
-// Liste "forme unique" (une ligne par espèce) pour un mode donné (Chanceux/Parfait/Purifié/
-// Obscur/XXS/XXL, ou Pokédex/Shiny en sous-vue "forme unique"). Cocher à gauche ajoute/retire
-// directement l'espèce ; cliquer la ligne ouvre la fiche de capture complète (tous les modes).
-function Go1UniqueView({ modeKey, label, color, filterCache }) {
-  const bucketKey = "go1_unique_" + modeKey;
-  const species = useMemo(go1UniqueSpecies, []);
-  const { dict, toggle } = useGo1UniqueDict(modeKey);
-  const [search, setSearch] = useCachedState(filterCache, bucketKey, "search", "");
-  const [region, setRegion] = useCachedState(filterCache, bucketKey, "region", null);
+// Une case à cocher, sprite, numéro + nom (+ forme, sauf en forme unique — demande explicite :
+// le sprite reste celui de la première forme rencontrée, mais son nom n'est pas précisé).
+function Go1ListRow({ nat, nom, forme, showForme, checked, color, onToggle, onOpen }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 14, padding: "8px 10px" }}>
+      <input
+        type="checkbox" checked={checked}
+        onChange={onToggle}
+        style={{ width: 20, height: 20, accentColor: color, flexShrink: 0, cursor: "pointer" }}
+      />
+      <div onClick={onOpen} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
+        <Sprite nom={nom} forme={forme} size={36} />
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          N°{nat} — {nom}{showForme && forme ? " · " + forme : ""}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Grille : sprite + numéro, groupée par région (activable/désactivable), colonnes réglables
+// (4 par défaut). Cliquer une case bascule le mode courant ; un petit bouton ouvre la fiche.
+function Go1GridCell({ nat, nom, forme, checked, color, onToggle, onOpen }) {
+  return (
+    <div style={{
+      position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+      textAlign: "center", background: checked ? color + "22" : PANEL2,
+      border: `1px solid ${checked ? color : LINE}`, borderRadius: 16, padding: "6px 2px", cursor: "pointer",
+    }} onClick={onToggle}>
+      <button
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        title="Ouvrir la fiche"
+        style={{
+          position: "absolute", top: 2, right: 2, width: 16, height: 16, borderRadius: 999,
+          border: "none", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: 9, lineHeight: "16px",
+          padding: 0, cursor: "pointer",
+        }}
+      >i</button>
+      <Sprite nom={nom} forme={forme} size={32} />
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 9.5, color: MUTED }}>N°{nat}</div>
+    </div>
+  );
+}
+
+// Corps commun Liste/Grille pour un mode donné — `items` = lignes déjà filtrées/triées, chacune
+// { nat, nom, forme, region, key (forme) ou null (forme unique), checked }.
+function Go1Body({ items, color, viewMode, showForme, groupByRegion, gridCols, onToggle, onOpen }) {
+  if (viewMode === "list") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {items.map((it) => (
+          <Go1ListRow
+            key={it.key || it.nat} nat={it.nat} nom={it.nom} forme={it.forme} showForme={showForme}
+            checked={it.checked} color={color}
+            onToggle={() => onToggle(it)} onOpen={() => onOpen(it)}
+          />
+        ))}
+      </div>
+    );
+  }
+  // Grille — groupée par région par défaut (désactivable dans le menu Affichage).
+  if (!groupByRegion) {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gap: 6 }}>
+        {items.map((it) => (
+          <Go1GridCell
+            key={it.key || it.nat} nat={it.nat} nom={it.nom} forme={it.forme}
+            checked={it.checked} color={color}
+            onToggle={() => onToggle(it)} onOpen={() => onOpen(it)}
+          />
+        ))}
+      </div>
+    );
+  }
+  const groups = [];
+  const byRegion = new Map();
+  items.forEach((it) => {
+    const key = it.region || "—";
+    if (!byRegion.has(key)) { byRegion.set(key, []); groups.push(key); }
+    byRegion.get(key).push(it);
+  });
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {groups.map((region) => (
+        <div key={region}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, fontWeight: 700, color: MUTED, marginBottom: 8 }}>{region}</div>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${gridCols}, 1fr)`, gap: 6 }}>
+            {byRegion.get(region).map((it) => (
+              <Go1GridCell
+                key={it.key || it.nat} nat={it.nat} nom={it.nom} forme={it.forme}
+                checked={it.checked} color={color}
+                onToggle={() => onToggle(it)} onOpen={() => onOpen(it)}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Vue principale de l'onglet Go 1 — un seul composant pour les 8 modes (Pokédex/Shiny avec
+// sous-vue toutes formes/forme unique, + les 6 modes forme unique), barre flottante avec 4
+// menus (Pokédex = sélecteur de mode, Affichage, Filtres, +) + recherche.
+function Go1View({ filterCache }) {
+  const [mode, setMode] = useCachedState(filterCache, "go1", "mode", "pokedex");
+  const [subView, setSubView] = useCachedState(filterCache, "go1", "subView", "forms"); // "forms" | "unique" (Pokédex/Shiny)
+  const [viewMode, setViewMode] = useCachedState(filterCache, "go1", "viewMode", "list"); // "list" | "grid"
+  const [groupByRegion, setGroupByRegion] = useCachedState(filterCache, "go1", "groupByRegion", true);
+  const [gridCols, setGridCols] = useCachedState(filterCache, "go1", "gridCols", 4);
+  const [search, setSearch] = useCachedState(filterCache, "go1", "search", "");
+  const [region, setRegion] = useCachedState(filterCache, "go1", "region", null);
+  const [statusFilter, setStatusFilter] = useCachedState(filterCache, "go1", "statusFilter", "all"); // "all" | "caught" | "missing"
+  const [sortiFilter, setSortiFilter] = useCachedState(filterCache, "go1", "sortiFilter", null); // null = tous, ou Set { "oui", "non" }
   const [modalTarget, setModalTarget] = useState(null);
   const [limit, setLimit] = useState(150);
 
+  const modeDef = GO1_MODES.find((m) => m.key === mode) || GO1_MODES[0];
+  const isFormsMode = mode === "pokedex" || mode === "shiny";
+  const isFormsView = isFormsMode && subView === "forms";
+
+  const allForms = useMemo(go1AllFormsSorted, []);
+  const uniqueSpecies = useMemo(go1UniqueSpecies, []);
+
+  // Dictionnaire du mode/sous-vue actuellement affiché (celui qu'on coche directement dans la
+  // liste) — Pokédex/Shiny toutes formes utilisent une clé "nom|forme", tout le reste une clé
+  // "numéro national" (chaîne).
+  const currentStorageKey = isFormsView
+    ? (mode === "pokedex" ? "go1_pokedex_forms" : "go1_shiny_forms")
+    : GO1_UNIQUE_STORAGE_KEYS[mode];
+  const [currentDict, toggleCurrent, setCurrent, reloadCurrent] = useGo1Dict(currentStorageKey);
+
+  useEffect(() => { setLimit(150); }, [mode, subView, search, region, statusFilter, sortiFilter]);
+
   const regions = useMemo(() => {
     const s = new Set();
-    species.forEach((r) => { if (r.region) s.add(r.region); });
+    (isFormsView ? allForms : uniqueSpecies).forEach((r) => { if (r.region) s.add(r.region); });
     return Array.from(s).sort();
-  }, [species]);
+  }, [isFormsView, allForms, uniqueSpecies]);
 
-  const filtered = useMemo(() => {
+  // "Sorti" (Pokémon GO ne sort pas tous ses Pokémon d'un coup) — en forme unique, une espèce
+  // est considérée "sortie" si au moins une de ses formes l'est (jeuVideoFor/goSortiFor, même
+  // source que le filtre homonyme de l'ancien onglet Go).
+  const isSorti = (r) => {
+    if (isFormsView) return goSortiFor(r.nom, r.forme);
+    return go1SpeciesFormKeys(r.nat).some((f) => goSortiFor(f.nom, f.forme));
+  };
+
+  const items = useMemo(() => {
+    if (!currentDict) return [];
     const s = search.trim().toLowerCase();
-    return species.filter((r) => {
-      if (s && !(String(r.nom).toLowerCase().includes(s) || String(r.nat).toLowerCase().includes(s))) return false;
-      if (!matchesMulti(region, r.region)) return false;
-      return true;
-    });
-  }, [species, search, region]);
+    const source = isFormsView ? allForms : uniqueSpecies;
+    return source
+      .filter((r) => {
+        if (s && !(String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.nat).toLowerCase().includes(s))) return false;
+        if (!matchesMulti(region, r.region)) return false;
+        if (!matchesMulti(sortiFilter, isSorti(r) ? "oui" : "non")) return false;
+        return true;
+      })
+      .map((r) => (
+        isFormsView
+          ? { ...r, checked: !!currentDict[r.key] }
+          : { ...r, key: null, checked: !!currentDict[r.nat] }
+      ))
+      .filter((r) => {
+        if (statusFilter === "caught") return r.checked;
+        if (statusFilter === "missing") return !r.checked;
+        return true;
+      });
+    // eslint-disable-next-line
+  }, [currentDict, isFormsView, allForms, uniqueSpecies, search, region, sortiFilter, statusFilter]);
 
-  useEffect(() => { setLimit(150); }, [search, region, modeKey]);
-  useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
+  const totalCount = (isFormsView ? allForms : uniqueSpecies).length;
+  const caughtCount = currentDict ? Object.keys(currentDict).length : 0;
+  const shownCaught = items.filter((it) => it.checked).length;
 
-  if (!dict) {
+  useInfiniteScroll(items.length > limit, () => setLimit((l) => l + 200));
+
+  const handleToggle = async (it) => {
+    const natKey = String(it.nat);
+    const turningOn = isFormsView ? !currentDict[it.key] : !currentDict[it.nat];
+    toggleCurrent(isFormsView ? it.key : it.nat);
+    if (!turningOn) return;
+    if (mode === "shiny") await go1CascadeToShinyUnique(natKey);
+    await go1CascadeToPokedexUnique(natKey);
+  };
+
+  const anyFilterActive = region !== null || sortiFilter !== null || statusFilter !== "all";
+  const resetFilters = () => { setRegion(null); setSortiFilter(null); setStatusFilter("all"); };
+
+  if (!currentDict) {
     return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
   }
-
-  const caughtTotal = Object.keys(dict).length;
-  const shown = filtered.slice(0, limit);
-  const shownCaught = filtered.filter((r) => dict[r.nat]).length;
 
   return (
     <div style={{ paddingBottom: 100 }}>
@@ -11055,48 +11333,109 @@ function Go1UniqueView({ modeKey, label, color, filterCache }) {
         marginBottom: 12, paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
       }}>
         <ProgressStatsTable
-          left={{ label, rings: [{ pct: pct(caughtTotal, species.length), size: 46, stroke: 5, color, caption: `${caughtTotal}/${species.length}` }] }}
-          right={{ label: "Affiché", rings: [{ pct: pct(shownCaught, filtered.length), size: 46, stroke: 5, color: OK, caption: `${shownCaught}/${filtered.length}` }] }}
+          left={{ label: modeDef.label + (isFormsMode ? (subView === "forms" ? " (toutes formes)" : " (forme unique)") : ""), rings: [{ pct: pct(caughtCount, totalCount), size: 46, stroke: 5, color: modeDef.color, caption: `${caughtCount}/${totalCount}` }] }}
+          right={{ label: "Affiché", rings: [{ pct: pct(shownCaught, items.length), size: 46, stroke: 5, color: OK, caption: `${shownCaught}/${items.length}` }] }}
         />
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {shown.map((r) => {
-          const checked = !!dict[r.nat];
-          return (
-            <div key={r.nat} style={{ display: "flex", alignItems: "center", gap: 10, background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 14, padding: "8px 10px" }}>
-              <input type="checkbox" checked={checked} onChange={() => toggle(r.nat)} style={{ width: 20, height: 20, accentColor: color, flexShrink: 0, cursor: "pointer" }} />
-              <div onClick={() => setModalTarget(r)} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
-                <Sprite nom={r.nom} forme={r.forme} size={36} />
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nom}</div>
-                  <div style={{ fontSize: 11, color: MUTED }}>N°{r.nat} — {r.region}</div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        {filtered.length === 0 && (
-          <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
-        )}
-      </div>
-      {filtered.length > limit && (
+
+      <Go1Body
+        items={items.slice(0, limit)} color={modeDef.color} viewMode={viewMode} showForme={isFormsView}
+        groupByRegion={viewMode === "grid" && groupByRegion} gridCols={gridCols}
+        onToggle={handleToggle} onOpen={(it) => setModalTarget(it)}
+      />
+      {items.length === 0 && (
+        <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
+      )}
+      {items.length > limit && (
         <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
+          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({items.length - limit} restants)</button>
         </div>
       )}
+
       {modalTarget && (
-        <Go1SpeciesModal nat={modalTarget.nat} nom={modalTarget.nom} forme={modalTarget.forme} onClose={() => setModalTarget(null)} />
+        <Go1SpeciesModal
+          nat={modalTarget.nat} nom={modalTarget.nom} forme={modalTarget.forme}
+          onClose={() => setModalTarget(null)}
+          onChanged={reloadCurrent}
+        />
       )}
+
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
+        searchPlaceholder="Rechercher…"
+        add={{
+          title: "Rechercher un Pokémon à marquer capturé",
+          placeholder: "Rechercher un Pokémon…",
+          getSuggestions: (q) => {
+            const s = q.trim().toLowerCase();
+            if (!s) return [];
+            const source = isFormsView ? allForms : uniqueSpecies;
+            return source
+              .filter((r) => String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.nat).toLowerCase().includes(s))
+              .slice(0, 8)
+              .map((r) => ({ ...r, key: isFormsView ? r.key : null }));
+          },
+          onSelect: (f) => {
+            const already = isFormsView ? !!currentDict[f.key] : !!currentDict[f.nat];
+            if (!already) handleToggle(f);
+            setModalTarget(f);
+          },
+        }}
         menus={[
           {
-            key: "filter", title: "Filtres", icon: BarIcon.filter, active: region !== null,
+            key: "mode", title: "Pokédex", icon: BarIcon.dex,
+            render: (close) => (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {GO1_MODES.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => { setMode(m.key); close(); }}
+                    style={{
+                      ...btnGhost, padding: "7px 12px",
+                      background: mode === m.key ? m.color : "transparent",
+                      color: mode === m.key ? "#fff" : MUTED,
+                      border: `1px solid ${mode === m.key ? m.color : LINE}`,
+                      fontWeight: mode === m.key ? 800 : 500,
+                    }}
+                  >{m.label}</button>
+                ))}
+              </div>
+            ),
+          },
+          {
+            key: "view", title: "Affichage", icon: BarIcon.view,
+            render: (close) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={[["list", "Liste"], ["grid", "Grille"]]} />
+                {isFormsMode && (
+                  <ViewToggle mode={subView} setMode={setSubView} options={[["forms", "Toutes formes"], ["unique", "Forme unique"]]} />
+                )}
+                {viewMode === "grid" && (
+                  <React.Fragment>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                      <input type="checkbox" checked={groupByRegion} onChange={(e) => setGroupByRegion(e.target.checked)} />
+                      Séparer par région
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
+                      Par ligne :
+                      <button onClick={() => setGridCols(Math.max(2, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
+                      <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{gridCols}</span>
+                      <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
+                    </div>
+                  </React.Fragment>
+                )}
+              </div>
+            ),
+          },
+          {
+            key: "filter", title: "Filtres", icon: BarIcon.filter, active: anyFilterActive,
             render: () => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <StatusFilterPills value={statusFilter} onChange={setStatusFilter} />
                 <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} />
-                <button onClick={() => setRegion(null)} style={{ ...btnGhost, width: "100%" }}>Réinitialiser</button>
+                <MultiSelectFilter label="Sorti" options={[["oui", "Oui"], ["non", "Non"]]} selected={sortiFilter} onChange={setSortiFilter} />
+                <button onClick={resetFilters} style={{ ...btnGhost, width: "100%" }}>Réinitialiser</button>
               </div>
             ),
           },
@@ -11106,75 +11445,97 @@ function Go1UniqueView({ modeKey, label, color, filterCache }) {
   );
 }
 
-// Vue principale de l'onglet Go 1 : sélecteur de mode d'affichage en haut, puis délègue soit à
-// GameView (Capture, et Pokédex/Shiny en sous-vue "toutes formes" — via les alias DATA.games),
-// soit à Go1UniqueView (modes "forme unique").
-function Go1View({ filterCache, onSaveStateChange }) {
-  const [mode, setMode] = useCachedState(filterCache, "go1", "mode", "capture");
-  const [subView, setSubView] = useCachedState(filterCache, "go1", "subView", "forms"); // "forms" | "unique" (Pokédex/Shiny)
-  const zeroBaseline = useMemo(() => (DATA.games["Go"] || []).map(() => 0), []);
-  const hasFormsToggle = mode === "pokedex" || mode === "shiny";
+// ---- Export/Import Excel (§14 demande explicite) — une feuille "Go 1" : une ligne par forme
+// (Nom, Forme, Numero, Pokedex, Shiny toutes formes) + les colonnes forme unique répétées à
+// l'identique sur chaque forme de la même espèce. PokedexUnique/ShinyUnique reflètent l'état
+// réellement stocké (déjà mis à jour par les cascades automatiques) — pas de distinction
+// manuel/auto à l'export ni à l'import.
+async function buildGo1SheetRows() {
+  const [pokedexForms, shinyForms, pokedexUnique, shinyUnique, chanceux, parfait, purifie, obscur, xxs, xxl] = await Promise.all([
+    storageGetJSON("go1_pokedex_forms", {}), storageGetJSON("go1_shiny_forms", {}),
+    storageGetJSON("go1_pokedex_unique", {}), storageGetJSON("go1_shiny_unique", {}),
+    storageGetJSON("go1_chanceux", {}), storageGetJSON("go1_parfait", {}), storageGetJSON("go1_purifie", {}),
+    storageGetJSON("go1_obscur", {}), storageGetJSON("go1_xxs", {}), storageGetJSON("go1_xxl", {}),
+  ]);
+  return go1AllFormsSorted().map((r) => {
+    const natKey = String(r.nat);
+    return {
+      Nom: r.nom, Forme: excelForme(r.forme), Numero: r.nat,
+      Pokedex: pokedexForms[r.key] ? 1 : 0, Shiny: shinyForms[r.key] ? 1 : 0,
+      PokedexUnique: pokedexUnique[natKey] ? 1 : 0, ShinyUnique: shinyUnique[natKey] ? 1 : 0,
+      Chanceux: chanceux[natKey] ? 1 : 0, Parfait: parfait[natKey] ? 1 : 0,
+      Purifie: purifie[natKey] ? 1 : 0, Obscur: obscur[natKey] ? 1 : 0,
+      XXS: xxs[natKey] ? 1 : 0, XXL: xxl[natKey] ? 1 : 0,
+    };
+  });
+}
 
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 14, paddingBottom: 4 }}>
-        {GO1_MODES.map((m) => (
-          <button key={m.key} onClick={() => setMode(m.key)} style={pillStyle(mode === m.key, m.color)}>{m.label}</button>
-        ))}
-      </div>
-      {hasFormsToggle && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          <button onClick={() => setSubView("forms")} style={subView === "forms" ? tabActive : tabInactive}>Toutes formes</button>
-          <button onClick={() => setSubView("unique")} style={subView === "unique" ? tabActive : tabInactive}>Forme unique</button>
-        </div>
-      )}
-
-      {mode === "capture" && (
-        <GameView
-          key="Go1" gameKey="Go1" rows={DATA.games["Go1"]} baseline={zeroBaseline}
-          onSaveStateChange={onSaveStateChange} filterCache={filterCache}
-        />
-      )}
-
-      {mode === "pokedex" && subView === "forms" && (
-        <GameView
-          key="Go1Pokedex" gameKey="Go1Pokedex" rows={DATA.games["Go1Pokedex"]} baseline={zeroBaseline}
-          onSaveStateChange={onSaveStateChange} filterCache={filterCache}
-        />
-      )}
-      {mode === "pokedex" && subView === "unique" && (
-        <Go1UniqueView modeKey="pokedex_unique" label="Pokédex (forme unique)" color={LIGHTBLUE} filterCache={filterCache} />
-      )}
-
-      {mode === "shiny" && subView === "forms" && (
-        <GameView
-          key="Go1Shiny" gameKey="Go1Shiny" rows={DATA.games["Go1Shiny"]} baseline={zeroBaseline}
-          onSaveStateChange={onSaveStateChange} filterCache={filterCache}
-        />
-      )}
-      {mode === "shiny" && subView === "unique" && (
-        <Go1UniqueView modeKey="shiny_unique" label="Shiny (forme unique)" color={GOLD} filterCache={filterCache} />
-      )}
-
-      {["chanceux", "parfait", "purifie", "obscur", "xxs", "xxl"].includes(mode) && (
-        <Go1UniqueView
-          modeKey={mode}
-          label={GO1_MODES.find((m) => m.key === mode).label}
-          color={GO1_MODES.find((m) => m.key === mode).color}
-          filterCache={filterCache}
-        />
-      )}
-    </div>
-  );
+async function importGo1Sheet(rows, mode) {
+  const readCur = async (key) => (mode === "replace" ? {} : await storageGetJSON(key, {}));
+  const [pokedexForms, shinyForms, pokedexUnique, shinyUnique, chanceux, parfait, purifie, obscur, xxs, xxl] = await Promise.all([
+    readCur("go1_pokedex_forms"), readCur("go1_shiny_forms"), readCur("go1_pokedex_unique"), readCur("go1_shiny_unique"),
+    readCur("go1_chanceux"), readCur("go1_parfait"), readCur("go1_purifie"), readCur("go1_obscur"), readCur("go1_xxs"), readCur("go1_xxl"),
+  ]);
+  const has = (row, col) => Object.prototype.hasOwnProperty.call(row, col);
+  const setBool = (dict, key, val) => { if (Number(val)) dict[key] = 1; else delete dict[key]; };
+  // Une seule forme par espèce présente dans le fichier importé (import fait en une passe, pas
+  // d'appel de stockage intermédiaire) — même règle que go1SpeciesFormKeys mais synchrone.
+  const formKeysBySpecies = {};
+  go1AllFormsSorted().forEach((r) => {
+    const nk = String(r.nat);
+    (formKeysBySpecies[nk] || (formKeysBySpecies[nk] = [])).push(r.key);
+  });
+  const markPokedexUnique = (natKey) => {
+    if (!natKey) return;
+    pokedexUnique[natKey] = 1;
+    const forms = formKeysBySpecies[natKey] || [];
+    if (forms.length === 1) pokedexForms[forms[0]] = 1;
+  };
+  const markShinyUnique = (natKey) => {
+    if (!natKey) return;
+    shinyUnique[natKey] = 1;
+    const forms = formKeysBySpecies[natKey] || [];
+    if (forms.length === 1) shinyForms[forms[0]] = 1;
+  };
+  rows.forEach((row) => {
+    const nom = String(row.Nom || "").trim();
+    if (!nom) return;
+    const forme = excelParseForme(row.Forme);
+    const key = nom + "|" + forme;
+    const natKey = String(row.Numero != null ? row.Numero : "").trim();
+    if (has(row, "Pokedex")) { setBool(pokedexForms, key, row.Pokedex); if (Number(row.Pokedex)) markPokedexUnique(natKey); }
+    if (has(row, "Shiny")) { setBool(shinyForms, key, row.Shiny); if (Number(row.Shiny)) { markShinyUnique(natKey); markPokedexUnique(natKey); } }
+    if (!natKey) return;
+    if (has(row, "PokedexUnique") && Number(row.PokedexUnique)) markPokedexUnique(natKey);
+    if (has(row, "ShinyUnique") && Number(row.ShinyUnique)) { markShinyUnique(natKey); markPokedexUnique(natKey); }
+    else if (has(row, "ShinyUnique")) setBool(shinyUnique, natKey, row.ShinyUnique);
+    if (has(row, "Chanceux")) { setBool(chanceux, natKey, row.Chanceux); if (Number(row.Chanceux)) markPokedexUnique(natKey); }
+    if (has(row, "Parfait")) { setBool(parfait, natKey, row.Parfait); if (Number(row.Parfait)) markPokedexUnique(natKey); }
+    if (has(row, "Purifie")) { setBool(purifie, natKey, row.Purifie); if (Number(row.Purifie)) markPokedexUnique(natKey); }
+    if (has(row, "Obscur")) { setBool(obscur, natKey, row.Obscur); if (Number(row.Obscur)) markPokedexUnique(natKey); }
+    if (has(row, "XXS")) { setBool(xxs, natKey, row.XXS); if (Number(row.XXS)) markPokedexUnique(natKey); }
+    if (has(row, "XXL")) { setBool(xxl, natKey, row.XXL); if (Number(row.XXL)) markPokedexUnique(natKey); }
+  });
+  await Promise.all([
+    window.storage.set("go1_pokedex_forms", JSON.stringify(pokedexForms), false),
+    window.storage.set("go1_shiny_forms", JSON.stringify(shinyForms), false),
+    window.storage.set("go1_pokedex_unique", JSON.stringify(pokedexUnique), false),
+    window.storage.set("go1_shiny_unique", JSON.stringify(shinyUnique), false),
+    window.storage.set("go1_chanceux", JSON.stringify(chanceux), false),
+    window.storage.set("go1_parfait", JSON.stringify(parfait), false),
+    window.storage.set("go1_purifie", JSON.stringify(purifie), false),
+    window.storage.set("go1_obscur", JSON.stringify(obscur), false),
+    window.storage.set("go1_xxs", JSON.stringify(xxs), false),
+    window.storage.set("go1_xxl", JSON.stringify(xxl), false),
+  ]);
 }
 
 // Délègue au bon composant selon le jeu choisi dans l'onglet "Jeu" (JEU_ORDER) — pour l'instant
 // uniquement Go 1, structure prête pour d'autres jeux plus tard sans autre changement.
-function JeuGameView({ jeuKey, filterCache, onSaveStateChange }) {
-  if (jeuKey === "go1") return <Go1View filterCache={filterCache} onSaveStateChange={onSaveStateChange} />;
+function JeuGameView({ jeuKey, filterCache }) {
+  if (jeuKey === "go1") return <Go1View filterCache={filterCache} />;
   return null;
 }
-
 function App() {
   const [tab, setTab] = useState("overview");
   const [ioMsg, setIoMsg] = useState("");
@@ -11372,9 +11733,10 @@ function App() {
 
   // Ouvre l'onglet Event avec un filtre marque/Jeu-DO (et, pour la ligne "Doublon (event)", "Dans
   // boîte") prérempli — depuis la section récap de l'onglet Progression (National) ou le popup
-  // de répartition du bloc Jeu - DO.
-  const openEvent = (marque, boite, jeu) => {
-    setPendingEventFilter({ marque, boite, jeu });
+  // de répartition du bloc Jeu - DO. `doPerso` (optionnel) permet d'ouvrir directement sur les
+  // events sans DO personnel (ligne "DO Event" du bloc Jeu - DO).
+  const openEvent = (marque, boite, jeu, doPerso) => {
+    setPendingEventFilter({ marque, boite, jeu, doPerso });
     setTab("event");
   };
 
@@ -11419,12 +11781,10 @@ function App() {
 
   const ALL_KEYS = [
     ...GAME_ORDER.map((g) => "caught_" + g),
-    // Onglet "Jeu" → Go 1 (doc §5bis) : capture de base + Pokédex/Shiny "toutes formes"
-    // (mêmes clés que caught_<jeu>, via useCollection) et modes "forme unique" (une entrée
-    // par espèce, numéro national).
-    "caught_Go1",
-    "caught_Go1Pokedex",
-    "caught_Go1Shiny",
+    // Onglet "Jeu" → Go 1 (doc §5bis) : Pokédex/Shiny toutes formes (clé "nom|forme") + modes
+    // forme unique (clé = numéro national), voir Go1View/buildGo1SheetRows.
+    "go1_pokedex_forms",
+    "go1_shiny_forms",
     "go1_pokedex_unique",
     "go1_shiny_unique",
     "go1_chanceux",
