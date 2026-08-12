@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.12.0.28";
+const APP_VERSION = "2026.8.12.1.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -204,6 +204,18 @@ const NAT_LOOKUP = (() => {
 })();
 function natInfoFor(nom, forme) {
   return NAT_LOOKUP[nom + "|" + (forme || "")] || { n: 999999, region: "", lien: "", famille: null, avail: [] };
+}
+// "Jeu vidéo" (§ nouveau, bloc distinct de "Marques possibles" dans la fiche catalogue) : pour
+// l'instant seul "Go" y vit — Pokémon GO ne sort pas tous ses Pokémon en même temps, contrairement
+// aux jeux Switch/3DS déjà sortis en entier. Conçu pour accueillir plus tard d'autres jeux précis
+// au sein d'une marque (ex. distinguer Écarlate/Violet, tous deux marque Paldea), d'où le champ
+// `gen` — la fiche catalogue range ce bloc par génération de jeux.
+const JEU_VIDEO_DEFS = [
+  { key: "go", label: "Sorti dans Pokémon GO", gen: "Autres" },
+];
+function goSortiFor(nom, forme) {
+  const v = DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")];
+  return !!(v && v.go);
 }
 // Un Pokémon est envoyable vers un jeu Switch donné (voir INTERJEU_TRANSFER_GAMES) s'il est
 // disponible dans le Pokédex de ce jeu (colonne "avail" de DATA.nat) — calculé dynamiquement
@@ -1964,7 +1976,7 @@ function useGameJeuOverrides(gameKey) {
   return { overrides, setJeu };
 }
 
-function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, onCancel, onSave }) {
+function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, onCancel, onSave }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   return (
@@ -1972,12 +1984,13 @@ function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptio
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <Sprite nom={nom} forme={forme} size={40} />
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
               {nom}{forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {forme}</span> : null}
             </div>
             <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>Fiche de capture</div>
           </div>
+          {showCatalogEdit && <CatalogQuickEditButton nom={nom} forme={forme} />}
         </div>
         <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block", marginBottom: 10 }}>
           Jeu - DO
@@ -2107,7 +2120,11 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [showJeu, setShowJeu] = useState(false); // options d'affichage : Jeu - DO sous le nom
   const [boxGroupFilter, setBoxGroupFilter] = useState(null); // null = tous, ou Set de groupes cochés
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, gameKey, "jeuFilter", null); // null = tous, ou Set de valeurs Jeu - DO cochées
-  const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || boxGroupFilter !== null || jeuFilter !== null;
+  // "Sorti" (§ nouveau, onglet Go uniquement) : Pokémon GO ne sort pas tous ses Pokémon d'un coup,
+  // contrairement aux jeux Switch/3DS. Renseigné depuis la fiche catalogue (bloc "Jeu vidéo").
+  const isGoGame = gameKey === "Go";
+  const [sortiFilter, setSortiFilter] = useCachedState(filterCache, gameKey, "sortiFilter", null); // null = tous, ou Set { "oui", "non" }
+  const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || boxGroupFilter !== null || jeuFilter !== null || sortiFilter !== null;
 
   const toggleAlpha = async (i) => {
     const r = rows[i];
@@ -2214,6 +2231,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     setAlphaFilter(null);
     setBoxGroupFilter(null);
     setJeuFilter(null);
+    setSortiFilter(null);
   };
 
   const filtered = useMemo(() => {
@@ -2231,6 +2249,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         if (!matchesMulti(region, r.region)) return false;
         if (!matchesMulti(boxGroupFilter, boxInfo[r.i] && boxInfo[r.i].groupe)) return false;
         if (!matchesMulti(jeuFilter, jeuOverrides && jeuOverrides[boxGroupKeyFor(r.nom, r.forme)])) return false;
+        if (isGoGame && !matchesMulti(sortiFilter, goSortiFor(r.nom, r.forme) ? "oui" : "non")) return false;
         if (isAlphaGame && alphaFilter !== null) {
           if (!canBeAlpha(r.nom, r.forme)) return false;
           const isAlpha = !!alphaMap[alphaKeyFor(r.nom, r.forme)];
@@ -2238,7 +2257,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         }
         return true;
       });
-  }, [rows, sortOrder, search, filter, region, alphaFilter, alphaMap, effective, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides]);
+  }, [rows, sortOrder, search, filter, region, alphaFilter, alphaMap, effective, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides, isGoGame, sortiFilter]);
 
   // Filtrage des entrées Shiny/Event additionnelles : mêmes critères recherche/région que la liste
   // normale ; le groupe de boîte et la taille Alpha n'ont pas de sens pour elles (exclues si actifs) ;
@@ -2246,6 +2265,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const matchesExtraRow = (it) => {
     if (boxGroupFilter !== null) return false;
     if (jeuFilter !== null) return false;
+    if (isGoGame && sortiFilter !== null) return false;
     if (isAlphaGame && alphaFilter !== null) return false;
     if (!matchesMulti(region, it.region)) return false;
     return true;
@@ -2258,7 +2278,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (!matchesExtraRow(it)) return false;
       return true;
     });
-  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, alphaFilter, isAlphaGame]);
+  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, alphaFilter, isAlphaGame, isGoGame, sortiFilter]);
 
   useInfiniteScroll(viewMode !== "box" && (filtered.length + extraFiltered.length) > limit, () => setLimit((l) => l + 200));
 
@@ -2283,6 +2303,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (!matchesMulti(region, r[4])) return;
       if (!matchesMulti(boxGroupFilter, boxInfo[i] && boxInfo[i].groupe)) return;
       if (!matchesMulti(jeuFilter, jeuOverrides && jeuOverrides[boxGroupKeyFor(r[1], r[2])])) return;
+      if (isGoGame && !matchesMulti(sortiFilter, goSortiFor(r[1], r[2]) ? "oui" : "non")) return;
       if (isAlphaGame && alphaFilter !== null) {
         if (!canBeAlpha(r[1], r[2])) return;
         const isAlpha = !!alphaMap[alphaKeyFor(r[1], r[2])];
@@ -2293,7 +2314,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (filter === "missing") { if (!c) matchedCount++; } else { if (c) matchedCount++; }
     });
     return { matchedTotal, matchedCount };
-  }, [rows, search, region, alphaFilter, alphaMap, effective, filter, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides]);
+  }, [rows, search, region, alphaFilter, alphaMap, effective, filter, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides, isGoGame, sortiFilter]);
   // Les extras Shiny/Event ne comptent jamais dans les 2 premiers cercles (total/caught, basés sur
   // rows/effective, inchangés ci-dessus) — seulement ajoutés au 3e cercle (compte filtré).
   const combinedStats = {
@@ -2357,6 +2378,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           options={boxGroupOptions}
           currentJeu={(jeuOverrides && jeuOverrides[boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2])]) || ""}
           jeuOptions={jeuOptionsForGame}
+          showCatalogEdit={isGoGame}
           onCancel={() => setGroupEditTarget(null)}
           onSave={(v, jeuVal) => {
             const k = boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2]);
@@ -2664,6 +2686,15 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                 <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} width="100%" />
                 <MultiSelectFilter label="Groupe de boîte" options={boxGroupsAvailable} selected={boxGroupFilter} onChange={setBoxGroupFilter} width="100%" />
                 <MultiSelectFilter label="Jeu - DO" options={jeuValuesAvailable} selected={jeuFilter} onChange={setJeuFilter} width="100%" />
+                {isGoGame && (
+                  <MultiSelectFilter
+                    label="Sorti"
+                    options={[["oui", "Sorti"], ["non", "Pas encore sorti"]]}
+                    selected={sortiFilter}
+                    onChange={setSortiFilter}
+                    width="100%"
+                  />
+                )}
                 {isAlphaGame && (
                   <MultiSelectFilter
                     label="Taille"
@@ -6157,6 +6188,7 @@ async function applyCatalogCustomizations() {
     DATA.nat.push(newRow);
     DATA.evolutionMode[key] = add.evolution || "-";
     DATA.alphaCapable[key] = { LA: add.alphaLA ? 1 : 0, LZA: add.alphaLZA ? 1 : 0 };
+    if (add.jeuVideo) { if (!DATA.jeuVideo) DATA.jeuVideo = {}; DATA.jeuVideo[key] = { ...(DATA.jeuVideo[key] || {}), ...add.jeuVideo }; }
     if (add.inHomeDex) { if (!DATA.homeDex) DATA.homeDex = {}; DATA.homeDex[key] = 1; }
     (add.games || []).forEach((g) => {
       if (!DATA.games[g] || !DATA.gameIndex[g]) return;
@@ -6215,6 +6247,12 @@ async function applyCatalogCustomizations() {
         LA: ov.alphaLA !== undefined ? (ov.alphaLA ? 1 : 0) : prevA.LA,
         LZA: ov.alphaLZA !== undefined ? (ov.alphaLZA ? 1 : 0) : prevA.LZA,
       };
+    }
+    // "Jeu vidéo" (§ nouveau) — bloc distinct de "Marques possibles" : pour l'instant seul "go"
+    // (Pokémon GO), conçu pour accueillir plus tard d'autres jeux précis par génération.
+    if (ov.jeuVideo) {
+      if (!DATA.jeuVideo) DATA.jeuVideo = {};
+      DATA.jeuVideo[key] = { ...(DATA.jeuVideo[key] || {}), ...ov.jeuVideo };
     }
     if (ov.inHomeDex !== undefined) {
       if (!DATA.homeDex) DATA.homeDex = {};
@@ -6331,6 +6369,10 @@ function computeNatSortOrder(additionIdxById) {
 // Formulaire d'édition/ajout, utilisé en modale par CatalogEditor.
 function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Regroupement/dégroupement (§ demande explicite) des sections "Numéro spécifique par jeu" et
+  // "Jeu vidéo", qui peuvent devenir longues (un jeu par marque cochée, un item par génération).
+  const [gameNumbersOpen, setGameNumbersOpen] = useState(true);
+  const [jeuVideoOpen, setJeuVideoOpen] = useState(true);
   const toggleGame = (g) => {
     const games = draft.games || [];
     const gameNumbers = { ...(draft.gameNumbers || {}) };
@@ -6357,27 +6399,29 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
             Forme (laisser vide pour la forme normale)
             <input value={draft.forme} onChange={(e) => setDraft({ ...draft, forme: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
           </label>
+          <div style={{ display: "flex", gap: 10 }}>
+            <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+              Numéro national
+              <input value={draft.nat} onChange={(e) => setDraft({ ...draft, nat: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
+            </label>
+            <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+              Région
+              <Picker
+                value={draft.region}
+                onChange={(v) => setDraft({ ...draft, region: v })}
+                options={REGION_ORDER}
+                placeholder="— choisir —"
+                buttonStyle={{ ...selectStyle, width: "100%", marginTop: 4, display: "block", textAlign: "left", boxSizing: "border-box" }}
+                panelWidth={200}
+              />
+            </label>
+          </div>
           <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Numéro national
-            <input value={draft.nat} onChange={(e) => setDraft({ ...draft, nat: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
-          </label>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Région
-            <Picker
-              value={draft.region}
-              onChange={(v) => setDraft({ ...draft, region: v })}
-              options={REGION_ORDER}
-              placeholder="— choisir —"
-              buttonStyle={{ ...selectStyle, width: "100%", marginTop: 4, display: "block", textAlign: "left", boxSizing: "border-box" }}
-              panelWidth={200}
-            />
-          </label>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Évolution (ex. "-", "N.16", "Combat-XXX", "Pierre XXX", "Échange", "Bébé", "Plaque XXX")
+            Méthode d'évolution
             <input value={draft.evolution} onChange={(e) => setDraft({ ...draft, evolution: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
           </label>
           <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Famille (numéro de ligne d'évolution, colonne "Famille" de l'onglet Nat — laisser vide si inconnue)
+            Famille (numéro de ligne d'évolution)
             <input value={draft.famille || ""} onChange={(e) => setDraft({ ...draft, famille: e.target.value.replace(/[^0-9]/g, "") })} placeholder="ex. 1" style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
           </label>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
@@ -6413,24 +6457,66 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
           </div>
           {(draft.games || []).length > 0 && (
             <div>
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>
+              <button
+                type="button"
+                onClick={() => setGameNumbersOpen((o) => !o)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
+                  background: "transparent", border: "none", cursor: "pointer", padding: 0, marginBottom: 6,
+                  fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED,
+                }}
+              >
+                <span style={{ fontSize: 10, transform: gameNumbersOpen ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform 0.15s" }}>▶</span>
                 Numéro spécifique par jeu (si différent du numéro national — laisser vide sinon)
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {(draft.games || []).map((g) => (
-                  <div key={g} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 60, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{g}</span>
-                    <input
-                      value={(draft.gameNumbers || {})[g] || ""}
-                      onChange={(e) => setGameNumber(g, e.target.value)}
-                      placeholder={String(draft.nat || "")}
-                      style={{ ...miniInput, flex: 1, boxSizing: "border-box" }}
-                    />
-                  </div>
-                ))}
-              </div>
+              </button>
+              {gameNumbersOpen && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {(draft.games || []).map((g) => (
+                    <div key={g} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 60, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{g}</span>
+                      <input
+                        value={(draft.gameNumbers || {})[g] || ""}
+                        onChange={(e) => setGameNumber(g, e.target.value)}
+                        placeholder={String(draft.nat || "")}
+                        style={{ ...miniInput, flex: 1, boxSizing: "border-box" }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
+          <div>
+            <button
+              type="button"
+              onClick={() => setJeuVideoOpen((o) => !o)}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
+                background: "transparent", border: "none", cursor: "pointer", padding: 0, marginBottom: 6,
+                fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED,
+              }}
+            >
+              <span style={{ fontSize: 10, transform: jeuVideoOpen ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform 0.15s" }}>▶</span>
+              Jeu vidéo <span style={{ fontWeight: 400 }}>(distinct de la marque — précise dans quel jeu précis ce Pokémon est disponible)</span>
+            </button>
+            {jeuVideoOpen && Array.from(new Set(JEU_VIDEO_DEFS.map((jv) => jv.gen))).map((gen) => (
+              <div key={gen} style={{ marginBottom: 6 }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>{gen}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                  {JEU_VIDEO_DEFS.filter((jv) => jv.gen === gen).map((jv) => (
+                    <label key={jv.key} style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!(draft.jeuVideo || {})[jv.key]}
+                        onChange={(e) => setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jv.key]: e.target.checked } })}
+                      />
+                      {jv.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
           {!isNew && onDelete ? (
@@ -6540,6 +6626,7 @@ async function persistCatalogEdit(idx, d) {
     evolution: d.evolution, alphaLA: !!d.alphaLA, alphaLZA: !!d.alphaLZA,
     famille: d.famille !== undefined && String(d.famille).trim() !== "" ? Number(d.famille) : null,
     inHomeDex: !!d.inHomeDex, games: d.games || [], gameNumbers: d.gameNumbers || {},
+    jeuVideo: d.jeuVideo || {},
   };
   if (row.__additionId) {
     const arr = await readJSON("catalog_additions", []);
@@ -6596,6 +6683,11 @@ function catalogDraftForRow(idx) {
     famille: row[14] != null ? String(row[14]) : "",
     inHomeDex: !!(DATA.homeDex && DATA.homeDex[key]),
     games, gameNumbers,
+    // "Jeu vidéo" (§ nouveau, bloc distinct de "Marques possibles" dans la fiche catalogue) : pour
+    // l'instant seul "go" y vit (Pokémon GO ne sort pas tous ses Pokémon en même temps) ; voir
+    // JEU_VIDEO_DEFS — conçu pour accueillir plus tard d'autres jeux précis (ex. distinguer
+    // Écarlate/Violet au sein de la marque Paldea), rangés par génération.
+    jeuVideo: (DATA.jeuVideo && DATA.jeuVideo[key]) ? { ...DATA.jeuVideo[key] } : {},
   };
 }
 
@@ -6738,6 +6830,7 @@ function CatalogEditor({ onSaveStateChange }) {
         famille: row[14] != null ? String(row[14]) : "",
         inHomeDex: !!(DATA.homeDex && DATA.homeDex[key]),
         games, gameNumbers,
+        jeuVideo: (DATA.jeuVideo && DATA.jeuVideo[key]) ? { ...DATA.jeuVideo[key] } : {},
       },
     };
   };
@@ -6758,7 +6851,7 @@ function CatalogEditor({ onSaveStateChange }) {
   const openAdd = async () => {
     setEditing({
       idx: null, isNew: true, addId: null,
-      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {} },
+      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {}, jeuVideo: {} },
     });
   };
 
@@ -6790,6 +6883,7 @@ function CatalogEditor({ onSaveStateChange }) {
         evolution: d.evolution || "-", alphaLA: !!d.alphaLA, alphaLZA: !!d.alphaLZA,
         famille: d.famille !== undefined && String(d.famille).trim() !== "" ? Number(d.famille) : null,
         inHomeDex: !!d.inHomeDex, games: d.games || [], gameNumbers: d.gameNumbers || {},
+        jeuVideo: d.jeuVideo || {},
       });
       await writeJSON("catalog_additions", arr);
     } else {
@@ -7846,9 +7940,10 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [tailleFilter, setTailleFilter] = useCachedState(filterCache, "national", "tailleFilter", null); // null = tous, ou Set { "alpha", "nonAlpha" }
   const [dynamaxFilter, setDynamaxFilter] = useCachedState(filterCache, "national", "dynamaxFilter", null); // null = tous, ou Set { "gmax", "nonGmax" }
   const [homeDexFilter, setHomeDexFilter] = useCachedState(filterCache, "national", "homeDexFilter", null); // null = tous, ou Set { "home", "nonHome" }
+  const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "national", "shinyFilter", null); // null = tous, ou Set { "oui", "non" }
   const [filtersOpen, setFiltersOpen] = useState(false);
   const anyFilterActive = filter !== "all" || region !== null || jeuFilter !== null
-    || tailleFilter !== null || dynamaxFilter !== null || homeDexFilter !== null;
+    || tailleFilter !== null || dynamaxFilter !== null || homeDexFilter !== null || shinyFilter !== null;
 
   // Filtre reçu depuis l'onglet Progression (clic sur une cellule région/marque) — appliqué à
   // chaque nouvel envoi, pour fonctionner même si cet onglet reste monté en arrière-plan.
@@ -8064,6 +8159,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     return matchesMulti(homeDexFilter, inHome ? "home" : "nonHome");
   };
 
+  // "Shiny" (§ nouveau) : cette forme a-t-elle au moins un exemplaire shiny enregistré (onglet
+  // Shiny) ? Distinct du statut "Attrapé" normal (National).
+  const matchesShinyRow = (r) => {
+    if (shinyFilter === null) return true;
+    return matchesMulti(shinyFilter, shinyCountFor(r[1], r[2]) > 0 ? "oui" : "non");
+  };
+
   const filteredForms = useMemo(() => {
     const s = search.trim().toLowerCase();
     return rows.filter((r) => {
@@ -8076,9 +8178,10 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       if (!matchesTailleRow(r)) return false;
       if (!matchesDynamaxRow(r)) return false;
       if (!matchesHomeDexRow(r)) return false;
+      if (!matchesShinyRow(r)) return false;
       return true;
     });
-  }, [rows, search, filter, region, jeuFilter, singleMarqueIdx, tailleFilter, dynamaxFilter, homeDexFilter]);
+  }, [rows, search, filter, region, jeuFilter, singleMarqueIdx, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter]);
 
   const filteredSpecies = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -8105,9 +8208,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         const forms = bySpecies.get(sp.nom) || [];
         if (!forms.some(matchesHomeDexRow)) return false;
       }
+      if (shinyFilter !== null) {
+        const forms = bySpecies.get(sp.nom) || [];
+        if (!forms.some(matchesShinyRow)) return false;
+      }
       return true;
     });
-  }, [speciesList, search, filter, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, bySpecies]);
+  }, [speciesList, search, filter, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, bySpecies]);
   useInfiniteScroll((mode === "forms" ? filteredForms.length : filteredSpecies.length) > limit, () => setLimit((l) => l + 200));
 
   // Stats "après filtre" : ignore le bouton de statut Tous/Attrapés/Manquants pour le total
@@ -8125,6 +8232,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         if (!matchesTailleRow(r)) return;
         if (!matchesDynamaxRow(r)) return;
         if (!matchesHomeDexRow(r)) return;
+        if (!matchesShinyRow(r)) return;
         matchedTotal++;
         const isCaught = singleMarqueIdx >= 0 ? !!(r[8] && r[8][singleMarqueIdx]) : r[5];
         if (filter === "missing") { if (!isCaught) matchedCount++; } else { if (isCaught) matchedCount++; }
@@ -8151,12 +8259,16 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           const forms = bySpecies.get(sp.nom) || [];
           if (!forms.some(matchesHomeDexRow)) return;
         }
+        if (shinyFilter !== null) {
+          const forms = bySpecies.get(sp.nom) || [];
+          if (!forms.some(matchesShinyRow)) return;
+        }
         matchedTotal++;
         if (filter === "missing") { if (sp.owned !== sp.total) matchedCount++; } else { if (sp.owned > 0) matchedCount++; }
       });
     }
     return { matchedTotal, matchedCount };
-  }, [rows, speciesList, search, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, filter, mode, bySpecies, singleMarqueIdx]);
+  }, [rows, speciesList, search, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, filter, mode, bySpecies, singleMarqueIdx]);
 
   const resetFilters = () => {
     setSearch("");
@@ -8166,6 +8278,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     setTailleFilter(null);
     setDynamaxFilter(null);
     setHomeDexFilter(null);
+    setShinyFilter(null);
   };
 
   const totalForms = rows.length;
@@ -8610,6 +8723,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                   options={[["home", "Dans Home"], ["nonHome", "Absent de Home"]]}
                   selected={homeDexFilter}
                   onChange={setHomeDexFilter}
+                  width="100%"
+                />
+                <MultiSelectFilter
+                  label="Shiny"
+                  options={[["oui", "Shiny capturé"], ["non", "Pas encore de shiny"]]}
+                  selected={shinyFilter}
+                  onChange={setShinyFilter}
                   width="100%"
                 />
               </div>
@@ -9783,6 +9903,10 @@ async function buildNationalSheetRows() {
     row["Forme(manuel)"] = manual["Forme|" + key] ? 1 : 0;
     row["AlphaLA"] = alpha.LA ? 1 : 0;
     row["AlphaLZA"] = alpha.LZA ? 1 : 0;
+    // "Jeu vidéo" (§ nouveau, bloc catalogue distinct de la marque) : pour l'instant seul "Go"
+    // (Pokémon GO ne sort pas tous ses Pokémon d'un coup) — gérable en écriture depuis cette
+    // colonne, contrairement à AlphaLA/AlphaLZA ci-dessus qui restent purement informatives.
+    row["GoSorti"] = goSortiFor(nom, forme) ? 1 : 0;
     return row;
   });
 }
@@ -10208,6 +10332,13 @@ async function importGameSheet(g, rows, mode) {
 // silencieusement un statut Attrapé/Alpha déjà à jour ailleurs.
 async function importNationalSheet(rows, mode) {
   let manual = mode === "replace" ? {} : await storageGetJSON("manual_caught", {});
+  // "Jeu vidéo" / GoSorti (§ nouveau) — contrairement à AlphaLA/AlphaLZA (informatives), cette
+  // colonne est éditable depuis l'Excel : écrite dans catalog_overrides (fiches structurelles,
+  // clé stable __baseKey) ou catalog_additions (Pokémon ajoutés, clé __additionId), jamais par
+  // position — même mécanique que persistCatalogEdit.
+  const overrides = await storageGetJSON("catalog_overrides", {});
+  const additions = await storageGetJSON("catalog_additions", []);
+  let overridesChanged = false, additionsChanged = false;
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
@@ -10216,8 +10347,26 @@ async function importNationalSheet(rows, mode) {
     if (row["Forme(manuel)"] !== "" && row["Forme(manuel)"] !== undefined) {
       if (Number(row["Forme(manuel)"])) manual["Forme|" + key] = 1; else delete manual["Forme|" + key];
     }
+    if (row["GoSorti"] !== "" && row["GoSorti"] !== undefined) {
+      const wantGo = !!Number(row["GoSorti"]);
+      const idx = findNatIdx(nom, forme);
+      const natRow = idx >= 0 ? DATA.nat[idx] : null;
+      if (natRow && natRow.__additionId) {
+        const i2 = additions.findIndex((a) => a.id === natRow.__additionId);
+        if (i2 >= 0) {
+          additions[i2] = { ...additions[i2], jeuVideo: { ...(additions[i2].jeuVideo || {}), go: wantGo } };
+          additionsChanged = true;
+        }
+      } else if (natRow && natRow.__baseKey) {
+        const bk = natRow.__baseKey;
+        overrides[bk] = { ...(overrides[bk] || {}), jeuVideo: { ...((overrides[bk] || {}).jeuVideo || {}), go: wantGo } };
+        overridesChanged = true;
+      }
+    }
   });
   await window.storage.set("manual_caught", JSON.stringify(manual), false);
+  if (overridesChanged) await window.storage.set("catalog_overrides", JSON.stringify(overrides), false);
+  if (additionsChanged) await window.storage.set("catalog_additions", JSON.stringify(additions), false);
 }
 
 async function importEventSheet(rows, mode) {
