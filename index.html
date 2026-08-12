@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.12.1.10";
+const APP_VERSION = "2026.8.12.1.29";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -205,17 +205,52 @@ const NAT_LOOKUP = (() => {
 function natInfoFor(nom, forme) {
   return NAT_LOOKUP[nom + "|" + (forme || "")] || { n: 999999, region: "", lien: "", famille: null, avail: [] };
 }
-// "Jeu vidéo" (§ nouveau, bloc distinct de "Marques possibles" dans la fiche catalogue) : pour
-// l'instant seul "Go" y vit — Pokémon GO ne sort pas tous ses Pokémon en même temps, contrairement
-// aux jeux Switch/3DS déjà sortis en entier. Conçu pour accueillir plus tard d'autres jeux précis
-// au sein d'une marque (ex. distinguer Écarlate/Violet, tous deux marque Paldea), d'où le champ
-// `gen` — la fiche catalogue range ce bloc par génération de jeux.
+// "Jeu vidéo" (§ demande explicite) — bloc distinct de "Marques possibles" dans la fiche
+// catalogue : précise dans quel(s) jeu(x) précis (au sein d'une marque, ex. Écarlate/Violet tous
+// deux marque Paldea) un Pokémon est disponible. Rangé par génération dans l'éditeur de
+// catalogue. `key` = identifiant de stockage stable (DATA.jeuVideo, catalog_overrides, colonnes
+// Excel "JV_<key>") ; `go` reprend la clé de l'ancien "Go déjà sorti" pour ne pas perdre les
+// données déjà saisies.
 const JEU_VIDEO_DEFS = [
-  { key: "go", label: "Sorti dans Pokémon GO", gen: "Autres" },
+  { key: "rouge", label: "Rouge", gen: "1G-2G" },
+  { key: "bleu", label: "Bleu", gen: "1G-2G" },
+  { key: "jaune", label: "Jaune", gen: "1G-2G" },
+  { key: "or", label: "Or", gen: "1G-2G" },
+  { key: "argent", label: "Argent", gen: "1G-2G" },
+  { key: "cristal", label: "Cristal", gen: "1G-2G" },
+  { key: "rubis", label: "Rubis", gen: "3G" },
+  { key: "saphir", label: "Saphir", gen: "3G" },
+  { key: "emeraude", label: "Émeraude", gen: "3G" },
+  { key: "rougefeu", label: "Rouge Feu", gen: "3G" },
+  { key: "vertfeuille", label: "Vert Feuille", gen: "3G" },
+  { key: "diamant", label: "Diamant", gen: "4G" },
+  { key: "perle", label: "Perle", gen: "4G" },
+  { key: "platine", label: "Platine", gen: "4G" },
+  { key: "noir", label: "Noir", gen: "5G" },
+  { key: "blanc", label: "Blanc", gen: "5G" },
+  { key: "noir2", label: "Noir 2", gen: "5G" },
+  { key: "blanc2", label: "Blanc 2", gen: "5G" },
+  { key: "x", label: "X", gen: "6G" },
+  { key: "y", label: "Y", gen: "6G" },
+  { key: "saphiralpha", label: "Saphir Alpha", gen: "6G" },
+  { key: "rubisomega", label: "Rubis Oméga", gen: "6G" },
+  { key: "soleil", label: "Soleil", gen: "7G" },
+  { key: "lune", label: "Lune", gen: "7G" },
+  { key: "ultrasoleil", label: "Ultra-Soleil", gen: "7G" },
+  { key: "ultralune", label: "Ultra-Lune", gen: "7G" },
+  { key: "bouclier", label: "Bouclier", gen: "8G" },
+  { key: "epee", label: "Épée", gen: "8G" },
+  { key: "arceus", label: "Arceus", gen: "Legends" },
+  { key: "za", label: "Z-A", gen: "Legends" },
+  { key: "ecarlate", label: "Écarlate", gen: "9G" },
+  { key: "violet", label: "Violet", gen: "9G" },
+  { key: "go", label: "Go", gen: "Autre" },
 ];
+function jeuVideoFor(nom, forme) {
+  return (DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")]) || {};
+}
 function goSortiFor(nom, forme) {
-  const v = DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")];
-  return !!(v && v.go);
+  return !!jeuVideoFor(nom, forme).go;
 }
 // Un Pokémon est envoyable vers un jeu Switch donné (voir INTERJEU_TRANSFER_GAMES) s'il est
 // disponible dans le Pokédex de ce jeu (colonne "avail" de DATA.nat) — calculé dynamiquement
@@ -6370,9 +6405,10 @@ function computeNatSortOrder(additionIdxById) {
 function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Regroupement/dégroupement (§ demande explicite) des sections "Numéro spécifique par jeu" et
-  // "Jeu vidéo", qui peuvent devenir longues (un jeu par marque cochée, un item par génération).
-  const [gameNumbersOpen, setGameNumbersOpen] = useState(true);
-  const [jeuVideoOpen, setJeuVideoOpen] = useState(true);
+  // "Jeu vidéo", qui peuvent devenir longues (un jeu par marque cochée, un item par génération) —
+  // repliées par défaut à l'ouverture de la fiche.
+  const [gameNumbersOpen, setGameNumbersOpen] = useState(false);
+  const [jeuVideoOpen, setJeuVideoOpen] = useState(false);
   const toggleGame = (g) => {
     const games = draft.games || [];
     const gameNumbers = { ...(draft.gameNumbers || {}) };
@@ -8369,12 +8405,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
           <div style={{ maxWidth: 720, margin: "0 auto" }}>
             <FloatingBackButton onClick={closeSpecies} />
-            <CatalogQuickEditButton
-              nom={selectedForms[0][1]}
-              forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
-              allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
-              corner
-            />
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <Sprite nom={selectedNom} size={56} />
@@ -8400,14 +8430,22 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 );
               })()}
             </div>
-            {onlyFormKey && allSelectedForms && allSelectedForms.length > 1 && (
-              <button
-                onClick={() => setOnlyFormKey(null)}
-                style={{ ...btnGhost, marginBottom: 14, display: "block" }}
-              >
-                Voir toutes les formes ({allSelectedForms.length})
-              </button>
-            )}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14 }}>
+              {onlyFormKey && allSelectedForms && allSelectedForms.length > 1 ? (
+                <button
+                  onClick={() => setOnlyFormKey(null)}
+                  style={btnGhost}
+                >
+                  Voir toutes les formes ({allSelectedForms.length})
+                </button>
+              ) : <span />}
+              <CatalogQuickEditButton
+                nom={selectedForms[0][1]}
+                forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
+                allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
+                label
+              />
+            </div>
             <div>
             {(() => {
               cardTotalRef.current = selectedForms.length;
@@ -9903,10 +9941,11 @@ async function buildNationalSheetRows() {
     row["Forme(manuel)"] = manual["Forme|" + key] ? 1 : 0;
     row["AlphaLA"] = alpha.LA ? 1 : 0;
     row["AlphaLZA"] = alpha.LZA ? 1 : 0;
-    // "Jeu vidéo" (§ nouveau, bloc catalogue distinct de la marque) : pour l'instant seul "Go"
-    // (Pokémon GO ne sort pas tous ses Pokémon d'un coup) — gérable en écriture depuis cette
-    // colonne, contrairement à AlphaLA/AlphaLZA ci-dessus qui restent purement informatives.
-    row["GoSorti"] = goSortiFor(nom, forme) ? 1 : 0;
+    // "Jeu vidéo" (§ demande explicite, bloc catalogue distinct de la marque) — une colonne par
+    // jeu précis (JEU_VIDEO_DEFS), gérable en écriture depuis ces colonnes, contrairement à
+    // AlphaLA/AlphaLZA ci-dessus qui restent purement informatives.
+    const jv = jeuVideoFor(nom, forme);
+    JEU_VIDEO_DEFS.forEach((def) => { row["JV_" + def.key] = jv[def.key] ? 1 : 0; });
     return row;
   });
 }
@@ -10332,10 +10371,11 @@ async function importGameSheet(g, rows, mode) {
 // silencieusement un statut Attrapé/Alpha déjà à jour ailleurs.
 async function importNationalSheet(rows, mode) {
   let manual = mode === "replace" ? {} : await storageGetJSON("manual_caught", {});
-  // "Jeu vidéo" / GoSorti (§ nouveau) — contrairement à AlphaLA/AlphaLZA (informatives), cette
-  // colonne est éditable depuis l'Excel : écrite dans catalog_overrides (fiches structurelles,
-  // clé stable __baseKey) ou catalog_additions (Pokémon ajoutés, clé __additionId), jamais par
-  // position — même mécanique que persistCatalogEdit.
+  // "Jeu vidéo" (§ demande explicite) — contrairement à AlphaLA/AlphaLZA (informatives), ces
+  // colonnes JV_<key> sont éditables depuis l'Excel : écrites dans catalog_overrides (fiches
+  // structurelles, clé stable __baseKey) ou catalog_additions (Pokémon ajoutés, clé
+  // __additionId), jamais par position — même mécanique que persistCatalogEdit. "JV_go" reprend
+  // l'ancienne colonne "GoSorti" (compatibilité avec un export généré avant ce changement).
   const overrides = await storageGetJSON("catalog_overrides", {});
   const additions = await storageGetJSON("catalog_additions", []);
   let overridesChanged = false, additionsChanged = false;
@@ -10347,19 +10387,27 @@ async function importNationalSheet(rows, mode) {
     if (row["Forme(manuel)"] !== "" && row["Forme(manuel)"] !== undefined) {
       if (Number(row["Forme(manuel)"])) manual["Forme|" + key] = 1; else delete manual["Forme|" + key];
     }
-    if (row["GoSorti"] !== "" && row["GoSorti"] !== undefined) {
-      const wantGo = !!Number(row["GoSorti"]);
+    const jvPatch = {};
+    let hasJvPatch = false;
+    JEU_VIDEO_DEFS.forEach((def) => {
+      const col = "JV_" + def.key;
+      const legacyCol = def.key === "go" ? "GoSorti" : null;
+      const cell = row[col] !== "" && row[col] !== undefined ? row[col]
+        : (legacyCol && row[legacyCol] !== "" && row[legacyCol] !== undefined ? row[legacyCol] : undefined);
+      if (cell !== undefined) { jvPatch[def.key] = !!Number(cell); hasJvPatch = true; }
+    });
+    if (hasJvPatch) {
       const idx = findNatIdx(nom, forme);
       const natRow = idx >= 0 ? DATA.nat[idx] : null;
       if (natRow && natRow.__additionId) {
         const i2 = additions.findIndex((a) => a.id === natRow.__additionId);
         if (i2 >= 0) {
-          additions[i2] = { ...additions[i2], jeuVideo: { ...(additions[i2].jeuVideo || {}), go: wantGo } };
+          additions[i2] = { ...additions[i2], jeuVideo: { ...(additions[i2].jeuVideo || {}), ...jvPatch } };
           additionsChanged = true;
         }
       } else if (natRow && natRow.__baseKey) {
         const bk = natRow.__baseKey;
-        overrides[bk] = { ...(overrides[bk] || {}), jeuVideo: { ...((overrides[bk] || {}).jeuVideo || {}), go: wantGo } };
+        overrides[bk] = { ...(overrides[bk] || {}), jeuVideo: { ...((overrides[bk] || {}).jeuVideo || {}), ...jvPatch } };
         overridesChanged = true;
       }
     }
