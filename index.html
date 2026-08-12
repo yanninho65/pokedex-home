@@ -148,7 +148,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.11.23.51";
+const APP_VERSION = "2026.8.12.0.28";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -11055,6 +11055,10 @@ function App() {
             }}>
               <div style={{ width: 11, height: 11, borderRadius: "50%", background: "#4A9DE0", border: "2px solid #fff" }} />
             </div>
+            <span
+              title={modCount > 0 ? `${modCount} modification${modCount > 1 ? "s" : ""} non exportée${modCount > 1 ? "s" : ""}` : "Aucune modification depuis le dernier export"}
+              style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: modCount > 0 ? "#FFA726" : OK }}
+            />
             <div style={{ fontFamily: "'Onest', 'SamsungOne', sans-serif", fontWeight: 800, fontSize: 17, color: ACCENT }}>
               Pokédex
             </div>
@@ -11069,6 +11073,7 @@ function App() {
             <GistSyncBadge
               configured={!!gistId}
               state={gistSyncState}
+              modCount={gistModCount}
               onClick={() => {
                 if (gistSyncState === "syncing") return;
                 if (gistConflict) { return; } // la modale de conflit est déjà ouverte, rien à relancer
