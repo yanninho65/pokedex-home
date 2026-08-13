@@ -159,7 +159,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.13.1.51";
+const APP_VERSION = "2026.8.13.15.29";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -9622,6 +9622,17 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     return sum;
   }, [interjeuLive]);
   const homeGrandTotal = normalCaughtTotal + shinyMarqueFormsTotal + doubleTotal + eventCapturedValidTotal + interjeuHomeValidTotal - eventBoiteValidTotal;
+  // Bloc "Toutes marques + Shiny" (§ nouveau, juste avant la grille des marques) : nombre total
+  // de Pokémon actuellement attrapés, toutes marques (captures normales des onglets jeu)
+  // + Shiny (formes distinctes) confondus.
+  const allMarquesAndShinyCaught = normalCaughtTotal + shinyCaught;
+  // "Total max" : idée du stockage nécessaire pour tout avoir — somme du nombre de Pokémon
+  // possibles par marque (toutes marques, structurel) + nombre de formes Shiny possibles
+  // + mes autres captures déjà faites qui s'ajoutent en plus (Interjeu Home, Event capturés,
+  // Doublons, et doublons Shiny au-delà d'une capture par forme).
+  const marqueTotalPossible = cards.reduce((sum, c) => sum + c.total, 0);
+  const shinyDoublonsTotal = Math.max(0, shinyHomeCaptures - shinyCaught);
+  const storageMaxTotal = marqueTotalPossible + shinyTotal + interjeuHomeTotal + eventTotal + doubleTotal + shinyDoublonsTotal;
 
   if (showNationalDetail) {
     return (
@@ -9677,7 +9688,13 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
           </button>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8, marginTop: 10 }}>
+        <div style={{ ...overviewGridCell, cursor: "default" }} title="Toutes marques + Shiny confondus — le total max donne une idée du stockage nécessaire pour tout avoir">
+          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>Total</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{allMarquesAndShinyCaught}/{marqueTotalPossible + shinyTotal}</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{pct(allMarquesAndShinyCaught, marqueTotalPossible + shinyTotal)}%</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT }}>Total : {storageMaxTotal}</div>
+        </div>
         {cards.map((c) => (
           <button key={c.key} onClick={() => setSelectedGame(c.key)} style={overviewGridCell}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>{c.key}</div>
@@ -11322,74 +11339,12 @@ function Go1View({ filterCache }) {
   const anyFilterActive = region !== null || sortiFilter !== null || statusFilter !== "all";
   const resetFilters = () => { setRegion(null); setSortiFilter(null); setStatusFilter("all"); };
 
-  // Bouton "Recherche Go" (mode Parfait uniquement) : chaîne de recherche Pokémon GO — numéros
-  // nationaux de chaque espèce marquée Parfait + tous les membres de sa famille d'évolution
-  // (familyMembersOf), triés, séparés par une virgule, terminée par "&Go2".
-  const [copyState, setCopyState] = useState("idle"); // "idle" | "copied" | "error"
-  const [lastGoSearchString, setLastGoSearchString] = useState("");
-  // Numéro national d'une espèce à partir de son seul nom (pour la famille d'évolution d'un
-  // Parfait — familyMembersOf ne renvoie que des noms). natInfoFor(nom, null) échoue si cette
-  // espèce n'a jamais de forme "vide" dans le catalogue (Floette et consorts, où toutes les
-  // lignes ont une forme précisée) : dans ce cas, on retombe sur n'importe quelle forme connue
-  // de ce nom via NAT_ALL_FORMS — même repli que familyMembersOf pour la famille.
-  const natNumberForNom = (nom) => {
-    const direct = natInfoFor(nom, null);
-    if (direct.n !== 999999) return direct.n;
-    const any = NAT_ALL_FORMS.find((f) => f.nom === nom);
-    return any ? any.n : null;
-  };
-  const buildGoSearchString = () => {
-    const nats = new Set();
-    uniqueSpecies.forEach((r) => {
-      if (!currentDict || !currentDict[r.nat]) return;
-      nats.add(Number(r.nat));
-      familyMembersOf(r.nom).forEach((famNom) => {
-        const n = natNumberForNom(famNom);
-        if (n != null) nats.add(Number(n));
-      });
-    });
-    return Array.from(nats).sort((a, b) => a - b).join(",") + "&Go2";
-  };
-  const copyGoSearch = async () => {
-    const str = buildGoSearchString();
-    const ok = await copyToClipboard(str);
-    if (ok) {
-      setCopyState("copied");
-      setLastGoSearchString("");
-      setTimeout(() => setCopyState("idle"), 2000);
-    } else {
-      setLastGoSearchString(str);
-      setCopyState("error");
-    }
-  };
-
   if (!currentDict) {
     return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
   }
 
   return (
     <div style={{ paddingBottom: 100 }}>
-      {mode === "parfait" && (
-        <div style={{ marginBottom: 12 }}>
-          <button
-            onClick={copyGoSearch}
-            style={{
-              ...tabActive, display: "block", width: "100%",
-              background: copyState === "copied" ? OK : copyState === "error" ? LIGHTRED : GO1_MODES.find((m) => m.key === "parfait").color,
-            }}
-            title="Copie une chaîne de recherche Pokémon GO : numéros de tes Parfaits + toute leur famille d'évolution, terminée par &Go2"
-          >
-            {copyState === "copied" ? "✓ Copié !" : copyState === "error" ? "Échec de la copie automatique — copie ci-dessous" : "📋 Recherche Go"}
-          </button>
-          {copyState === "error" && lastGoSearchString && (
-            <input
-              type="text" readOnly value={lastGoSearchString}
-              onFocus={(e) => e.target.select()}
-              style={{ ...inputStyle, width: "100%", marginTop: 6, fontFamily: "monospace", fontSize: 11.5 }}
-            />
-          )}
-        </div>
-      )}
       <div style={{
         position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
         marginBottom: 12, paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
@@ -12433,36 +12388,6 @@ function JeuNavSelect({ tab, setTab }) {
       )}
     </>
   );
-}
-
-// Copie robuste vers le presse-papier : navigator.clipboard.writeText échoue silencieusement (ou
-// est absente) dans certains contextes mobiles (webview Samsung Internet non sécurisé/sans focus,
-// permissions clipboard refusées) — repli sur un <textarea> hors écran + document.execCommand,
-// qui fonctionne dans bien plus de contextes malgré son ancienneté.
-async function copyToClipboard(str) {
-  if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(str);
-      return true;
-    } catch (e) { /* repli ci-dessous */ }
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = str;
-    ta.style.position = "fixed";
-    ta.style.top = "-9999px";
-    ta.style.left = "-9999px";
-    ta.setAttribute("readonly", "");
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, str.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return !!ok;
-  } catch (e) {
-    return false;
-  }
 }
 
 function pillStyle(active, color) {
