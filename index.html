@@ -89,6 +89,13 @@ const JEU_LABELS = { go1: "Go 1" };
 const MARQUE_JEU_PAIRS = {
   VI: [
     {
+      key: "x_y", label: "X",
+      games: [
+        { key: "x", label: "X" },
+        { key: "y", label: "Y" },
+      ],
+    },
+    {
       key: "sa_ro", label: "Saphir Alpha",
       games: [
         { key: "saphiralpha", label: "Saphir Alpha" },
@@ -180,7 +187,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.14.12.20";
+const APP_VERSION = "2026.8.14.13.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2195,45 +2202,106 @@ function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptio
 // une paire de MARQUE_JEU_PAIRS. Liste indépendante (§ demande explicite : les listes Home/paire
 // peuvent différer), coche = présence d'AU MOINS UN des jeux de la paire (jamais Home — cette vue
 // ne coche/n'affiche jamais le flag Home, contrairement à la vue "Home + jeu").
-function PairModeBlock({ pair, pairRows, jeuOverrides, setJeu, jeuOptionsForGame, boxOverrides, setBoxGroup, boxGroupOptions, gameSourcesDict, setSource, setAllSources, modeMenuItem }) {
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all"); // "all" | "caught" | "missing"
-  const [limit, setLimit] = useState(150);
+// Vue "jeu précis" d'une marque (ex. Saphir Alpha, X), affichée par GameView quand `viMode`
+// désigne une paire de MARQUE_JEU_PAIRS. Reprend les mêmes filtres/boutons que la vue Home
+// (Statut, Région, Groupe de boîte, Jeu - DO, vues Liste/Boîte/Grille, réglages de boîte,
+// affichage groupe/nom de boîte/Jeu-DO, recherche+ajout) — à l'exception des coches "Afficher
+// les Shiny/Event" (§ demande explicite, non pertinentes ici). Liste indépendante de Home (§
+// demande explicite : les listes Home/paire peuvent différer), coche = présence d'AU MOINS UN
+// des jeux de la paire (jamais Home — cette vue ne coche/n'affiche jamais le flag Home).
+function PairModeBlock({
+  gameKey, pair, pairRows, filterCache,
+  jeuOverrides, setJeu, jeuOptionsForGame,
+  boxOverrides, setBoxGroup, boxGroupOptions, boxGroupRank,
+  boxSize, boxPrefix, saveBoxSettings,
+  gameSourcesDict, setSource, setAllSources, modeMenuItem,
+}) {
+  const bucketKey = gameKey + "_" + pair.key;
+  const [viewMode, setViewMode] = useCachedState(filterCache, bucketKey, "viewMode", "list");
+  const [search, setSearch] = useCachedState(filterCache, bucketKey, "search", "");
+  const [filter, setFilter] = useCachedState(filterCache, bucketKey, "filter", "all");
+  const [region, setRegion] = useCachedState(filterCache, bucketKey, "region", null);
+  const [boxGroupFilter, setBoxGroupFilter] = useState(null);
+  const [jeuFilter, setJeuFilter] = useCachedState(filterCache, bucketKey, "jeuFilter", null);
+  const [gridCols, setGridCols] = useCachedState(filterCache, bucketKey, "gridCols", 6);
+  const [grilleSortMode, setGrilleSortMode] = useCachedState(filterCache, bucketKey, "grilleSortMode", "boite");
+  const [showBoxGroup, setShowBoxGroup] = useState(false);
+  const [showBoxName, setShowBoxName] = useState(false);
+  const [showJeu, setShowJeu] = useState(false);
+  const [boxSettingsOpen, setBoxSettingsOpen] = useState(false);
   const [multiDetailKey, setMultiDetailKey] = useState(null);
+  const [limit, setLimit] = useState(150);
+  const windowWidth = useWindowWidth();
+  const effCols = effectiveGridCols(gridCols, windowWidth);
+
   const pairGameKeys = pair.games.map((g) => g.key);
   const sources = gameSourcesDict || {};
+  const isInPairKey = (key) => pairGameKeys.some((k) => (sources[key] || []).includes(k));
+  const isInPairIdx = (i) => isInPairKey(boxGroupKeyFor(pairRows[i][1], pairRows[i][2]));
 
-  const mapped = useMemo(
-    () => pairRows.map((r) => ({ n: r[0], nat: DATA.sprites[r[1]] || r[0], nom: r[1], forme: r[2], region: r[4] })),
-    [pairRows]
+  const sortOrder = useMemo(
+    () => computeGameSortOrder(gameKey, pairRows, boxOverrides || {}, boxGroupRank),
+    [gameKey, pairRows, boxOverrides, boxGroupRank]
   );
-  const isInPair = (key) => pairGameKeys.some((k) => (sources[key] || []).includes(k));
+  const boxInfo = useMemo(
+    () => computeGameBoxes(gameKey, pairRows, boxOverrides || {}, boxSize, boxPrefix, sortOrder),
+    [gameKey, pairRows, boxOverrides, boxSize, boxPrefix, sortOrder]
+  );
+
+  const regions = useMemo(() => {
+    const s = new Set();
+    pairRows.forEach((r) => { if (r[4]) s.add(r[4]); });
+    return Array.from(s).sort();
+  }, [pairRows]);
+  const boxGroupsAvailable = useMemo(() => {
+    const s = new Set();
+    boxInfo.forEach((b) => { if (b && b.groupe) s.add(b.groupe); });
+    return Array.from(s).sort();
+  }, [boxInfo]);
+  const jeuValuesAvailable = useMemo(() => {
+    const s = new Set(jeuOptionsForGame);
+    if (jeuOverrides) Object.values(jeuOverrides).forEach((v) => { if (v) s.add(v); });
+    return Array.from(s).sort();
+  }, [jeuOptionsForGame, jeuOverrides]);
+
+  const anyFilterActive = filter !== "all" || region !== null || boxGroupFilter !== null || jeuFilter !== null;
+  const resetFilters = () => {
+    setSearch(""); setFilter("all"); setRegion(null); setBoxGroupFilter(null); setJeuFilter(null);
+  };
+
+  useEffect(() => { setLimit(150); }, [search, filter, region, boxGroupFilter, jeuFilter, pair.key]);
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    return mapped.filter((r) => {
-      if (s && !(String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.n).toLowerCase().includes(s))) return false;
-      const inPair = isInPair(boxGroupKeyFor(r.nom, r.forme));
-      if (filter === "caught" && !inPair) return false;
-      if (filter === "missing" && inPair) return false;
-      return true;
-    });
+    return sortOrder
+      .map((i) => {
+        const r = pairRows[i];
+        return { n: r[0], nat: DATA.sprites[r[1]] || r[0], nom: r[1], forme: r[2], region: r[4], i };
+      })
+      .filter((r) => {
+        if (s && !(String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.n).toLowerCase().includes(s))) return false;
+        const c = isInPairIdx(r.i);
+        if (filter === "caught" && !c) return false;
+        if (filter === "missing" && c) return false;
+        if (!matchesMulti(region, r.region)) return false;
+        if (!matchesMulti(boxGroupFilter, boxInfo[r.i] && boxInfo[r.i].groupe)) return false;
+        if (!matchesMulti(jeuFilter, (jeuOverrides && jeuOverrides[boxGroupKeyFor(r.nom, r.forme)]) || "__none__")) return false;
+        return true;
+      });
     // eslint-disable-next-line
-  }, [mapped, search, filter, sources]);
+  }, [pairRows, sortOrder, search, filter, region, boxGroupFilter, jeuFilter, jeuOverrides, boxInfo, sources]);
 
-  useEffect(() => { setLimit(150); }, [search, filter, pair.key]);
-  useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
+  const gridItems = grilleSortMode === "numero" ? [...filtered].sort((a, b) => (a.n ?? 999999) - (b.n ?? 999999)) : filtered;
+  useInfiniteScroll(viewMode !== "box" && (viewMode === "grid" ? gridItems.length : filtered.length) > limit, () => setLimit((l) => l + 200));
 
-  const total = mapped.length;
+  const total = pairRows.length;
   const caughtHere = useMemo(
-    () => mapped.reduce((a, r) => a + (isInPair(boxGroupKeyFor(r.nom, r.forme)) ? 1 : 0), 0),
-    [mapped, sources]
+    () => pairRows.reduce((a, r) => a + (isInPairKey(boxGroupKeyFor(r[1], r[2])) ? 1 : 0), 0),
+    [pairRows, sources]
   );
 
   const toggleQuick = (key) => {
-    if (isInPair(key)) {
-      // Décoche pour de bon : retire tous les jeux DE CETTE PAIRE, préserve ceux des autres
-      // paires éventuelles pour ce même Pokémon (§ demande explicite : listes indépendantes).
+    if (isInPairKey(key)) {
       const kept = (sources[key] || []).filter((k) => !pairGameKeys.includes(k));
       setAllSources(key, kept);
     } else {
@@ -2245,73 +2313,32 @@ function PairModeBlock({ pair, pairRows, jeuOverrides, setJeu, jeuOptionsForGame
     <div style={{ paddingBottom: 100 }}>
       <div style={{
         position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
-        marginBottom: 12, paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
+        display: "flex", alignItems: "flex-start", gap: 20, marginBottom: 12, flexWrap: "wrap",
+        paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
       }}>
         <ProgressStatsTable
           left={{ label: pair.label, rings: [{ pct: pct(caughtHere, total), size: 46, stroke: 5, color: PURPLE, caption: `${caughtHere}/${total}` }] }}
-          right={{ label: "Affiché", rings: [{ pct: pct(filtered.filter((r) => isInPair(boxGroupKeyFor(r.nom, r.forme))).length, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }] }}
+          right={{ label: "Affiché", rings: [{ pct: pct(filtered.filter((r) => isInPairIdx(r.i)).length, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }] }}
         />
-        <div style={{ marginTop: 10 }}>
-          <StatusFilterPills value={filter} onChange={setFilter} />
-        </div>
+        <button
+          onClick={() => setBoxSettingsOpen(true)}
+          title="Réglages des boîtes (nombre par boîte, préfixe)"
+          style={{
+            marginLeft: "auto", background: "transparent", border: `1px solid ${LINE}`,
+            borderRadius: 10, width: 32, height: 32, display: "flex", alignItems: "center",
+            justifyContent: "center", cursor: "pointer", color: MUTED, fontSize: 15, flexShrink: 0,
+          }}
+        >⚙️</button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 8 }}>
-        {filtered.slice(0, limit).map((r) => {
-          const key = boxGroupKeyFor(r.nom, r.forme);
-          const isCaught = isInPair(key);
-          const doValue = (jeuOverrides && jeuOverrides[key]) || "";
-          const initials = initialsOfDO(doValue);
-          return (
-            <div
-              key={key}
-              style={{
-                display: "flex", alignItems: "center", gap: 8, textAlign: "left",
-                background: isCaught ? "rgba(179,157,219,0.20)" : PANEL2,
-                border: `1px solid ${isCaught ? PURPLE : LINE}`,
-                borderRadius: 18, padding: "7px 12px",
-                transition: "border-color 0.15s, background 0.15s",
-              }}
-            >
-              <button
-                onClick={() => toggleQuick(key)}
-                title={isCaught ? `Retirer de ${pair.label}` : `Marquer capturé dans ${pair.label}`}
-                style={{
-                  width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
-                  border: `2px solid ${isCaught ? PURPLE : MUTED}`,
-                  background: isCaught ? PURPLE : "transparent",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
-                }}
-              >{isCaught ? "✓" : ""}</button>
-              <Sprite nom={r.nom} forme={r.forme} size={32} />
-              <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{r.n ?? "—"}</span>
-              <span
-                onClick={(e) => { e.stopPropagation(); setMultiDetailKey(key); }}
-                title="Ouvrir la fiche de capture (jeux de la paire, Jeu - DO, groupe de boîte)"
-                style={{ overflow: "hidden", flex: 1, cursor: "pointer" }}
-              >
-                <span style={{ display: "block", fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.nom}{r.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.forme}</span> : null}
-                </span>
-              </span>
-              {initials && (
-                <span title={doValue} style={{
-                  flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 10, fontWeight: 800,
-                  color: PURPLE, border: `1px solid ${PURPLE}66`, borderRadius: 6, padding: "2px 6px",
-                }}>{initials}</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {filtered.length === 0 && (
-        <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
-      )}
-      {filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
+      {boxSettingsOpen && (
+        <BoxSettingsModal
+          gameKey={gameKey}
+          size={boxSize}
+          prefix={boxPrefix}
+          onCancel={() => setBoxSettingsOpen(false)}
+          onSave={(newSize, newPrefix) => { saveBoxSettings(newSize, newPrefix); setBoxSettingsOpen(false); }}
+        />
       )}
 
       {multiDetailKey !== null && (() => {
@@ -2341,12 +2368,187 @@ function PairModeBlock({ pair, pairRows, jeuOverrides, setJeu, jeuOptionsForGame
         );
       })()}
 
+      {viewMode === "box" && (
+        <BoxGrid
+          items={filtered.map((r) => {
+            const b = boxInfo[r.i] || {};
+            return { nom: r.nom, forme: r.forme, i: r.i, nboite: b.nboite, boite: b.boite, l: b.l, c: b.c, groupe: b.groupe };
+          })}
+          fixedRows={5}
+          fixedCols={6}
+          renderCell={(it) => (
+            <BoxCell
+              nom={it.nom} forme={it.forme} caught={isInPairIdx(it.i)} color={PURPLE}
+              onClick={() => toggleQuick(boxGroupKeyFor(it.nom, it.forme))}
+              onLongPress={() => setMultiDetailKey(boxGroupKeyFor(it.nom, it.forme))}
+            />
+          )}
+        />
+      )}
+
+      {viewMode === "list" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 8 }}>
+          {filtered.slice(0, limit).map((r) => {
+            const key = boxGroupKeyFor(r.nom, r.forme);
+            const isCaught = isInPairIdx(r.i);
+            const doValue = (jeuOverrides && jeuOverrides[key]) || "";
+            const initials = initialsOfDO(doValue);
+            return (
+              <div
+                key={r.i}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, textAlign: "left",
+                  background: isCaught ? "rgba(179,157,219,0.20)" : PANEL2,
+                  border: `1px solid ${isCaught ? PURPLE : LINE}`,
+                  borderRadius: 18, padding: "7px 12px",
+                  transition: "border-color 0.15s, background 0.15s",
+                }}
+              >
+                <button
+                  onClick={() => toggleQuick(key)}
+                  title={isCaught ? `Retirer de ${pair.label}` : `Marquer capturé dans ${pair.label}`}
+                  style={{
+                    width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
+                    border: `2px solid ${isCaught ? PURPLE : MUTED}`,
+                    background: isCaught ? PURPLE : "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
+                  }}
+                >{isCaught ? "✓" : ""}</button>
+                <Sprite nom={r.nom} forme={r.forme} size={32} />
+                <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{r.n ?? "—"}</span>
+                <span
+                  onClick={(e) => { e.stopPropagation(); setMultiDetailKey(key); }}
+                  title="Ouvrir la fiche de capture (jeux de la paire, Jeu - DO, groupe de boîte)"
+                  style={{ overflow: "hidden", flex: 1, cursor: "pointer" }}
+                >
+                  <span style={{ display: "block", fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.nom}{r.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.forme}</span> : null}
+                  </span>
+                  {showBoxGroup && (
+                    <span style={{ display: "block", fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {(boxInfo[r.i] && boxInfo[r.i].groupe) || "—"}
+                    </span>
+                  )}
+                  {showBoxName && (
+                    <span style={{ display: "block", fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {(boxInfo[r.i] && boxInfo[r.i].boite) || "—"}
+                    </span>
+                  )}
+                  {showJeu && (
+                    <span style={{ display: "block", fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {doValue || "—"}
+                    </span>
+                  )}
+                </span>
+                {initials && (
+                  <span title={doValue} style={{
+                    flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 10, fontWeight: 800,
+                    color: PURPLE, border: `1px solid ${PURPLE}66`, borderRadius: 6, padding: "2px 6px",
+                  }}>{initials}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {viewMode === "grid" && (
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${effCols}, 1fr)`, gap: 6 }}>
+          {gridItems.slice(0, limit).map((r) => {
+            const isCaught = isInPairIdx(r.i);
+            return (
+              <button key={r.i} onClick={() => toggleQuick(boxGroupKeyFor(r.nom, r.forme))} style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
+                background: isCaught ? "rgba(179,157,219,0.18)" : PANEL2,
+                border: `1px solid ${isCaught ? PURPLE : LINE}`,
+                borderRadius: 18, padding: "3px 2px", cursor: "pointer",
+              }}>
+                <Sprite nom={r.nom} forme={r.forme} size={32} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {viewMode !== "box" && filtered.length === 0 && (
+        <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
+      )}
+      {viewMode !== "box" && (grilleSortMode === "numero" && viewMode === "grid" ? gridItems.length : filtered.length) > limit && (
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>
+            Afficher plus ({(grilleSortMode === "numero" && viewMode === "grid" ? gridItems.length : filtered.length) - limit} restants)
+          </button>
+        </div>
+      )}
+
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
         searchPlaceholder={`Rechercher dans ${pair.label}…`}
-        add={null}
-        menus={modeMenuItem ? [modeMenuItem] : []}
+        menus={[
+          ...(modeMenuItem ? [modeMenuItem] : []),
+          {
+            key: "view", title: "Vue", icon: BarIcon.view,
+            render: (close) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={GAME_VIEW_OPTIONS} />
+                {viewMode === "grid" && (
+                  <React.Fragment>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
+                      Par ligne :
+                      <button onClick={() => setGridCols(Math.max(3, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
+                      <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
+                      <button onClick={() => setGridCols(Math.min(7, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
+                    </div>
+                    <ViewToggle mode={grilleSortMode} setMode={setGrilleSortMode} options={[["boite", "Boîte"], ["numero", "Numéro"]]} />
+                  </React.Fragment>
+                )}
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                  <input type="checkbox" checked={showBoxGroup} onChange={(e) => setShowBoxGroup(e.target.checked)} />
+                  Afficher le groupe de boîte
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                  <input type="checkbox" checked={showBoxName} onChange={(e) => setShowBoxName(e.target.checked)} />
+                  Afficher le nom de boîte
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                  <input type="checkbox" checked={showJeu} onChange={(e) => setShowJeu(e.target.checked)} />
+                  Afficher le Jeu - DO
+                </label>
+              </div>
+            ),
+          },
+          {
+            key: "filters", title: "Filtres", icon: BarIcon.filter, active: anyFilterActive,
+            render: () => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <StatusFilterPills value={filter} onChange={setFilter} />
+                  {anyFilterActive && (
+                    <button onClick={resetFilters} style={tabInactive} title="Réinitialiser tous les filtres">↺</button>
+                  )}
+                </div>
+                <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} width="100%" />
+                <MultiSelectFilter label="Groupe de boîte" options={boxGroupsAvailable} selected={boxGroupFilter} onChange={setBoxGroupFilter} width="100%" />
+                <MultiSelectFilter label="Jeu - DO" options={[["__none__", "Jeu non indiqué"], ...jeuValuesAvailable.map((j) => [j, j])]} selected={jeuFilter} onChange={setJeuFilter} width="100%" />
+              </div>
+            ),
+          },
+        ]}
+        add={{
+          title: "Rechercher un Pokémon à marquer capturé",
+          placeholder: "Rechercher un Pokémon…",
+          getSuggestions: (q) => {
+            const s = q.trim().toLowerCase();
+            if (!s) return [];
+            return pairRows
+              .map((r, i) => ({ nom: r[1], forme: r[2], i, key: r[1] + "|" + (r[2] || "") }))
+              .filter((f) => String(f.nom).toLowerCase().includes(s) || (f.forme && String(f.forme).toLowerCase().includes(s)))
+              .slice(0, 8);
+          },
+          onSelect: (f) => { if (!isInPairIdx(f.i)) toggleQuick(f.key); setMultiDetailKey(f.key); },
+        }}
       />
     </div>
   );
@@ -2749,14 +2951,20 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   if (currentPair) {
     return (
       <PairModeBlock
+        gameKey={gameKey}
         pair={currentPair}
         pairRows={pairRows}
+        filterCache={filterCache}
         jeuOverrides={jeuOverrides}
         setJeu={setJeu}
         jeuOptionsForGame={jeuOptionsForGame}
         boxOverrides={boxOverrides}
         setBoxGroup={setBoxGroup}
         boxGroupOptions={boxGroupOptions}
+        boxGroupRank={boxGroupRank}
+        boxSize={boxSize}
+        boxPrefix={boxPrefix}
+        saveBoxSettings={saveBoxSettings}
         gameSourcesDict={gameSourcesDict}
         setSource={setSource}
         setAllSources={setAllSources}
