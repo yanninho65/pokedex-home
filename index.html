@@ -76,6 +76,27 @@ const GAME_ORDER = ["IàV", "VI", "Alola", "GB", "LG", "Go", "DEPS", "Galar", "L
 // Un seul jeu pour l'instant (Go 1), extensible plus tard sans autre changement de structure.
 const JEU_ORDER = ["go1"];
 const JEU_LABELS = { go1: "Go 1" };
+// Jeux précis groupés par PAIRE, pour chaque marque disposant d'un suivi "en jeu" (§ fermeture
+// Banque Pokémon / transfert 3DS→Switch) — pas d'onglet séparé : un sélecteur de vue flottant
+// (comme Go 1) au sein même de l'onglet Home de la marque (voir GameView, `viMode`). Une paire
+// (ex. Saphir Alpha/Rubis Oméga) partage le même Pokédex mais deux jeux distincts peuvent être
+// cochés indépendamment ; compte pour 1 seul "attrapé" dans la paire, jamais 2 (voir
+// `pairStatsFor` dans GameView). `games[].key` = clé JEU_VIDEO_DEFS correspondante (filtrage de
+// la liste affichée en vue jeu précis — permissif tant que `DATA.jeuVideo` n'est pas renseigné
+// pour un Pokémon donné, voir `rowsForPair`). Pilote : VI/Saphir Alpha uniquement pour l'instant ;
+// une future paire "X/Y" pourra s'ajouter ici sans autre changement (`marquePairs` dans GameView
+// gère déjà un nombre quelconque de paires par marque).
+const MARQUE_JEU_PAIRS = {
+  VI: [
+    {
+      key: "sa_ro", label: "Saphir Alpha",
+      games: [
+        { key: "saphiralpha", label: "Saphir Alpha" },
+        { key: "rubisomega", label: "Rubis Oméga" },
+      ],
+    },
+  ],
+};
 
 // Vérifie si une forme donnée (nom + forme) est normalement disponible dans un jeu (marque) donné,
 // d'après les données structurelles du Pokédex de ce jeu (DATA.games[marque]).
@@ -159,7 +180,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.13.15.29";
+const APP_VERSION = "2026.8.14.12.20";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2030,6 +2051,91 @@ function useGameJeuOverrides(gameKey) {
   return { overrides, setJeu };
 }
 
+// Suivi "en jeu" (cartouche) par marque — indépendant du flag Home (`caught_<marque>`), combiné
+// à lui pour l'affichage uniquement dans la vue "Home + jeu" de GameView (`displayEffective`).
+// Stockage `game_tab_sources` = { [marque]: { "nom|forme": [jeuKey, ...] } }, valeurs = clés de
+// jeu précis (JEU_VIDEO_DEFS, ex. "saphiralpha"/"rubisomega") — plusieurs jeux d'une même paire
+// peuvent être cochés en parallèle pour un même Pokémon (§ demande explicite, cas rare mais
+// possible), sans que cela compte double dans la paire (voir `pairStatsFor`, GameView).
+function useGameTabSources(marque) {
+  const [dict, setDict] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setDict(null);
+    (async () => {
+      let forMarque = {};
+      try {
+        const res = await window.storage.get("game_tab_sources", false);
+        const all = res && res.value ? JSON.parse(res.value) : {};
+        forMarque = all[marque] || {};
+      } catch (e) {}
+      if (!cancelled) setDict(forMarque);
+    })();
+    return () => { cancelled = true; };
+  }, [marque]);
+  const setSource = async (key, jeuKey, on) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("game_tab_sources", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const forMarque = { ...(all[marque] || {}) };
+    const list = new Set(forMarque[key] || []);
+    if (on) list.add(jeuKey); else list.delete(jeuKey);
+    if (list.size === 0) delete forMarque[key]; else forMarque[key] = Array.from(list);
+    all = { ...all, [marque]: forMarque };
+    try { await window.storage.set("game_tab_sources", JSON.stringify(all), false); } catch (e) {}
+    setDict(forMarque);
+  };
+  // Remplace en un seul appel l'ensemble des jeux cochés pour une clé — utilisé par la fiche
+  // détail (§ vue "Home + jeu" / vue jeu précis), qui connaît l'état final souhaité de toutes
+  // les cases d'un coup plutôt que d'appeler `setSource` case par case.
+  const setAllSources = async (key, jeuKeys) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("game_tab_sources", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const forMarque = { ...(all[marque] || {}) };
+    if (!jeuKeys || jeuKeys.length === 0) delete forMarque[key];
+    else forMarque[key] = Array.from(new Set(jeuKeys));
+    all = { ...all, [marque]: forMarque };
+    try { await window.storage.set("game_tab_sources", JSON.stringify(all), false); } catch (e) {}
+    setDict(forMarque);
+  };
+  const clearAll = async (key) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("game_tab_sources", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const forMarque = { ...(all[marque] || {}) };
+    if (!forMarque[key]) return;
+    delete forMarque[key];
+    all = { ...all, [marque]: forMarque };
+    try { await window.storage.set("game_tab_sources", JSON.stringify(all), false); } catch (e) {}
+    setDict(forMarque);
+  };
+  return { dict, setSource, setAllSources, clearAll };
+}
+
+// Variante "toutes marques" de useGameTabSources, pour l'onglet % (Overview) — même patron que
+// useAllGameJeuOverrides.
+function useAllGameTabSources() {
+  const [all, setAll] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("game_tab_sources", false);
+        setAll(res && res.value ? JSON.parse(res.value) : {});
+      } catch (e) {
+        setAll({});
+      }
+    })();
+  }, []);
+  return all;
+}
+
 function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, onCancel, onSave }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
@@ -2085,6 +2191,167 @@ function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptio
   );
 }
 
+// Vue "jeu précis" d'une marque (ex. Saphir Alpha), affichée par GameView quand `viMode` désigne
+// une paire de MARQUE_JEU_PAIRS. Liste indépendante (§ demande explicite : les listes Home/paire
+// peuvent différer), coche = présence d'AU MOINS UN des jeux de la paire (jamais Home — cette vue
+// ne coche/n'affiche jamais le flag Home, contrairement à la vue "Home + jeu").
+function PairModeBlock({ pair, pairRows, jeuOverrides, setJeu, jeuOptionsForGame, boxOverrides, setBoxGroup, boxGroupOptions, gameSourcesDict, setSource, setAllSources, modeMenuItem }) {
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all"); // "all" | "caught" | "missing"
+  const [limit, setLimit] = useState(150);
+  const [multiDetailKey, setMultiDetailKey] = useState(null);
+  const pairGameKeys = pair.games.map((g) => g.key);
+  const sources = gameSourcesDict || {};
+
+  const mapped = useMemo(
+    () => pairRows.map((r) => ({ n: r[0], nat: DATA.sprites[r[1]] || r[0], nom: r[1], forme: r[2], region: r[4] })),
+    [pairRows]
+  );
+  const isInPair = (key) => pairGameKeys.some((k) => (sources[key] || []).includes(k));
+
+  const filtered = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return mapped.filter((r) => {
+      if (s && !(String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.n).toLowerCase().includes(s))) return false;
+      const inPair = isInPair(boxGroupKeyFor(r.nom, r.forme));
+      if (filter === "caught" && !inPair) return false;
+      if (filter === "missing" && inPair) return false;
+      return true;
+    });
+    // eslint-disable-next-line
+  }, [mapped, search, filter, sources]);
+
+  useEffect(() => { setLimit(150); }, [search, filter, pair.key]);
+  useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
+
+  const total = mapped.length;
+  const caughtHere = useMemo(
+    () => mapped.reduce((a, r) => a + (isInPair(boxGroupKeyFor(r.nom, r.forme)) ? 1 : 0), 0),
+    [mapped, sources]
+  );
+
+  const toggleQuick = (key) => {
+    if (isInPair(key)) {
+      // Décoche pour de bon : retire tous les jeux DE CETTE PAIRE, préserve ceux des autres
+      // paires éventuelles pour ce même Pokémon (§ demande explicite : listes indépendantes).
+      const kept = (sources[key] || []).filter((k) => !pairGameKeys.includes(k));
+      setAllSources(key, kept);
+    } else {
+      setSource(key, pairGameKeys[0], true);
+    }
+  };
+
+  return (
+    <div style={{ paddingBottom: 100 }}>
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
+        marginBottom: 12, paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
+      }}>
+        <ProgressStatsTable
+          left={{ label: pair.label, rings: [{ pct: pct(caughtHere, total), size: 46, stroke: 5, color: PURPLE, caption: `${caughtHere}/${total}` }] }}
+          right={{ label: "Affiché", rings: [{ pct: pct(filtered.filter((r) => isInPair(boxGroupKeyFor(r.nom, r.forme))).length, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }] }}
+        />
+        <div style={{ marginTop: 10 }}>
+          <StatusFilterPills value={filter} onChange={setFilter} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 8 }}>
+        {filtered.slice(0, limit).map((r) => {
+          const key = boxGroupKeyFor(r.nom, r.forme);
+          const isCaught = isInPair(key);
+          const doValue = (jeuOverrides && jeuOverrides[key]) || "";
+          const initials = initialsOfDO(doValue);
+          return (
+            <div
+              key={key}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, textAlign: "left",
+                background: isCaught ? "rgba(179,157,219,0.20)" : PANEL2,
+                border: `1px solid ${isCaught ? PURPLE : LINE}`,
+                borderRadius: 18, padding: "7px 12px",
+                transition: "border-color 0.15s, background 0.15s",
+              }}
+            >
+              <button
+                onClick={() => toggleQuick(key)}
+                title={isCaught ? `Retirer de ${pair.label}` : `Marquer capturé dans ${pair.label}`}
+                style={{
+                  width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
+                  border: `2px solid ${isCaught ? PURPLE : MUTED}`,
+                  background: isCaught ? PURPLE : "transparent",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
+                }}
+              >{isCaught ? "✓" : ""}</button>
+              <Sprite nom={r.nom} forme={r.forme} size={32} />
+              <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{r.n ?? "—"}</span>
+              <span
+                onClick={(e) => { e.stopPropagation(); setMultiDetailKey(key); }}
+                title="Ouvrir la fiche de capture (jeux de la paire, Jeu - DO, groupe de boîte)"
+                style={{ overflow: "hidden", flex: 1, cursor: "pointer" }}
+              >
+                <span style={{ display: "block", fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.nom}{r.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.forme}</span> : null}
+                </span>
+              </span>
+              {initials && (
+                <span title={doValue} style={{
+                  flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 10, fontWeight: 800,
+                  color: PURPLE, border: `1px solid ${PURPLE}66`, borderRadius: 6, padding: "2px 6px",
+                }}>{initials}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {filtered.length === 0 && (
+        <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
+      )}
+      {filtered.length > limit && (
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
+        </div>
+      )}
+
+      {multiDetailKey !== null && (() => {
+        const sep = multiDetailKey.indexOf("|");
+        const nom = sep === -1 ? multiDetailKey : multiDetailKey.slice(0, sep);
+        const forme = sep === -1 ? null : (multiDetailKey.slice(sep + 1) || null);
+        return (
+          <JeuMultiSourceModal
+            nom={nom}
+            forme={forme}
+            currentGroup={(boxOverrides && boxOverrides[multiDetailKey]) || ""}
+            options={boxGroupOptions}
+            currentJeu={(jeuOverrides && jeuOverrides[multiDetailKey]) || ""}
+            jeuOptions={jeuOptionsForGame}
+            showHome={false}
+            games={pair.games}
+            checkedGames={(sources[multiDetailKey] || []).filter((k) => pairGameKeys.includes(k))}
+            onCancel={() => setMultiDetailKey(null)}
+            onSave={({ group, jeu, gameKeys }) => {
+              setBoxGroup(multiDetailKey, group);
+              setJeu(multiDetailKey, jeu);
+              const others = (sources[multiDetailKey] || []).filter((k) => !pairGameKeys.includes(k));
+              setAllSources(multiDetailKey, [...others, ...gameKeys]);
+              setMultiDetailKey(null);
+            }}
+          />
+        );
+      })()}
+
+      <FloatingActionBar
+        search={search}
+        setSearch={setSearch}
+        searchPlaceholder={`Rechercher dans ${pair.label}…`}
+        add={null}
+        menus={modeMenuItem ? [modeMenuItem] : []}
+      />
+    </div>
+  );
+}
+
 function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
   const { flags, setFlags, ready, persist, saveState } = useCollection(gameKey, rows.length);
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
@@ -2124,6 +2391,88 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [alphaMap, setAlphaMap] = useState({});
   const effective = flags || baseline;
   const isAlphaGame = gameKey === "LA" || gameKey === "LZA";
+  // Suivi "en jeu" par marque (§ fermeture Banque Pokémon) — vide pour toute marque sans paire
+  // configurée (MARQUE_JEU_PAIRS), donc sans effet ailleurs que VI pour l'instant.
+  const marquePairs = MARQUE_JEU_PAIRS[gameKey] || [];
+  const hasJeuPairs = marquePairs.length > 0;
+  // Vue active : "home_jeu" (par défaut si la marque a des paires) | "home" | clé d'une paire
+  // précise (ex. "sa_ro"). Pour une marque sans paire, reste "home" en pratique (menu absent).
+  const [viMode, setViMode] = useCachedState(filterCache, gameKey, "viMode", hasJeuPairs ? "home_jeu" : "home");
+  const currentPair = marquePairs.find((p) => p.key === viMode) || null;
+  // Vue "Home + jeu" uniquement : combine Home et "en jeu" pour l'affichage/les filtres/les stats.
+  // La vue "Home" reste une lecture pure du flag Home, sans jamais lire/écrire `game_tab_sources`
+  // (§ demande explicite : les deux vues ne doivent pas se mélanger).
+  const showJeuMerge = hasJeuPairs && viMode === "home_jeu";
+  const { dict: gameSourcesDict, setSource, setAllSources, clearAll: clearGameSources } = useGameTabSources(gameKey);
+  const [multiDetailKey, setMultiDetailKey] = useState(null); // "nom|forme", vue Home + jeu ou vue paire
+  // Vue combinée Home + "en jeu" (vue "Home + jeu" seulement — voir `showJeuMerge`), utilisée pour
+  // l'affichage/les filtres/les stats — jamais pour `toggle` ci-dessous, qui continue d'agir
+  // uniquement sur le flag Home réel (`effective`).
+  const displayEffective = useMemo(() => {
+    if (!effective) return effective;
+    if (!showJeuMerge) return effective;
+    if (!gameSourcesDict || Object.keys(gameSourcesDict).length === 0) return effective;
+    return rows.map((r, i) => (effective[i] ? 1 : ((gameSourcesDict[boxGroupKeyFor(r[1], r[2])] || []).length > 0 ? 1 : 0)));
+  }, [effective, gameSourcesDict, rows, showJeuMerge]);
+  const isSourcedOnly = (i) => !effective[i] && !!(displayEffective && displayEffective[i]);
+  // Compte "x/max" par paire (vue "Home + jeu" uniquement, § demande explicite) : max = nombre de
+  // paires où ce Pokémon est disponible (permissif tant que DATA.jeuVideo n'est pas renseigné —
+  // voir rowsForPair), count = nombre de ces paires où au moins un des jeux est coché. Une paire
+  // dont les DEUX jeux sont cochés en parallèle ne compte qu'une fois (jamais 2/1).
+  const pairStatsFor = (nom, forme) => {
+    if (!marquePairs.length) return null;
+    const jv = jeuVideoFor(nom, forme);
+    const key = boxGroupKeyFor(nom, forme);
+    const sources = (gameSourcesDict && gameSourcesDict[key]) || [];
+    let max = 0, count = 0;
+    marquePairs.forEach((pair) => {
+      const gk = pair.games.map((g) => g.key);
+      const anySet = gk.some((k) => jv[k] !== undefined);
+      const applicable = !anySet || gk.some((k) => jv[k]);
+      if (!applicable) return;
+      max++;
+      if (gk.some((k) => sources.includes(k))) count++;
+    });
+    return { count, max };
+  };
+  // Lignes disponibles pour une paire précise (vue jeu précis) : inclusion par défaut tant que
+  // DATA.jeuVideo n'est pas renseigné pour un Pokémon donné, exclu seulement si TOUS les jeux de
+  // la paire sont explicitement à false (§ demande explicite : les listes Home/paire peuvent
+  // différer, ne jamais supposer qu'elles sont identiques).
+  const rowsForPair = (pair) => {
+    if (!pair) return [];
+    const gk = pair.games.map((g) => g.key);
+    return rows.filter((r) => {
+      const jv = jeuVideoFor(r[1], r[2]);
+      const anySet = gk.some((k) => jv[k] !== undefined);
+      if (!anySet) return true;
+      return gk.some((k) => jv[k]);
+    });
+  };
+  const pairRows = useMemo(() => rowsForPair(currentPair), [currentPair, rows]);
+  const viModeOptions = hasJeuPairs
+    ? [{ key: "home_jeu", label: "Home + jeu" }, { key: "home", label: "Home" }, ...marquePairs.map((p) => ({ key: p.key, label: p.label }))]
+    : [];
+  const modeMenuItem = hasJeuPairs ? {
+    key: "vimode", title: "Mode", icon: BarIcon.dex, active: viMode !== "home_jeu",
+    render: (close) => (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {viModeOptions.map((m) => (
+          <button
+            key={m.key}
+            onClick={() => { setViMode(m.key); close(); }}
+            style={{
+              ...btnGhost, padding: "7px 12px",
+              background: viMode === m.key ? PURPLE : "transparent",
+              color: viMode === m.key ? "#fff" : MUTED,
+              border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
+              fontWeight: viMode === m.key ? 800 : 500,
+            }}
+          >{m.label}</button>
+        ))}
+      </div>
+    ),
+  } : null;
 
   useEffect(() => {
     if (!isAlphaGame) return;
@@ -2276,7 +2625,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   }, [ready]);
 
   const total = rows.length;
-  const caught = effective ? effective.reduce((a, b) => a + b, 0) : 0;
+  const caught = displayEffective ? displayEffective.reduce((a, b) => a + b, 0) : 0;
 
   const resetFilters = () => {
     setSearch("");
@@ -2297,7 +2646,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       })
       .filter((r) => {
         if (s && !(String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.n).toLowerCase().includes(s))) return false;
-        const c = effective ? effective[r.i] : 0;
+        const c = displayEffective ? displayEffective[r.i] : 0;
         if (filter === "caught" && !c) return false;
         if (filter === "missing" && c) return false;
         if (!matchesMulti(region, r.region)) return false;
@@ -2311,7 +2660,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         }
         return true;
       });
-  }, [rows, sortOrder, search, filter, region, alphaFilter, alphaMap, effective, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides, isGoGame, sortiFilter]);
+  }, [rows, sortOrder, search, filter, region, alphaFilter, alphaMap, displayEffective, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides, isGoGame, sortiFilter]);
 
   // Filtrage des entrées Shiny/Event additionnelles : mêmes critères recherche/région que la liste
   // normale ; le groupe de boîte et la taille Alpha n'ont pas de sens pour elles (exclues si actifs) ;
@@ -2364,11 +2713,11 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         if (!matchesMulti(alphaFilter, isAlpha ? "alpha" : "nonAlpha")) return;
       }
       matchedTotal++;
-      const c = !!(effective && effective[i]);
+      const c = !!(displayEffective && displayEffective[i]);
       if (filter === "missing") { if (!c) matchedCount++; } else { if (c) matchedCount++; }
     });
     return { matchedTotal, matchedCount };
-  }, [rows, search, region, alphaFilter, alphaMap, effective, filter, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides, isGoGame, sortiFilter]);
+  }, [rows, search, region, alphaFilter, alphaMap, displayEffective, filter, isAlphaGame, boxGroupFilter, boxInfo, jeuFilter, jeuOverrides, isGoGame, sortiFilter]);
   // Les extras Shiny/Event ne comptent jamais dans les 2 premiers cercles (total/caught, basés sur
   // rows/effective, inchangés ci-dessus) — seulement ajoutés au 3e cercle (compte filtré).
   const combinedStats = {
@@ -2377,14 +2726,43 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   };
 
   const toggle = (i) => {
+    const willUncheck = !!(displayEffective && displayEffective[i]);
     const next = effective.slice();
-    next[i] = next[i] ? 0 : 1;
+    next[i] = willUncheck ? 0 : 1;
     setFlags(next);
     persist(next);
+    // Décocher une ligne affichée cochée (§ fermeture Banque Pokémon) doit décocher pour de bon,
+    // même si elle ne l'était que via un onglet Jeu (game_tab_sources) — sinon la case resterait
+    // visuellement cochée juste après le clic. Contrôle fin (garder "en jeu" sans Home, ou
+    // l'inverse) : passer par la fiche détail plutôt que par cette coche rapide.
+    if (showJeuMerge && willUncheck && gameSourcesDict && clearGameSources) {
+      const r = rows[i];
+      const key = boxGroupKeyFor(r[1], r[2]);
+      if (gameSourcesDict[key] && gameSourcesDict[key].length > 0) clearGameSources(key);
+    }
   };
 
   if (!ready || !effective) {
     return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
+  }
+
+  if (currentPair) {
+    return (
+      <PairModeBlock
+        pair={currentPair}
+        pairRows={pairRows}
+        jeuOverrides={jeuOverrides}
+        setJeu={setJeu}
+        jeuOptionsForGame={jeuOptionsForGame}
+        boxOverrides={boxOverrides}
+        setBoxGroup={setBoxGroup}
+        boxGroupOptions={boxGroupOptions}
+        gameSourcesDict={gameSourcesDict}
+        setSource={setSource}
+        setAllSources={setAllSources}
+        modeMenuItem={modeMenuItem}
+      />
+    );
   }
 
   return (
@@ -2443,6 +2821,44 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         />
       )}
 
+      {multiDetailKey !== null && (() => {
+        const sep = multiDetailKey.indexOf("|");
+        const nom = sep === -1 ? multiDetailKey : multiDetailKey.slice(0, sep);
+        const forme = sep === -1 ? null : (multiDetailKey.slice(sep + 1) || null);
+        const allGames = marquePairs.flatMap((p) => p.games);
+        return (
+          <JeuMultiSourceModal
+            nom={nom}
+            forme={forme}
+            currentGroup={(boxOverrides && boxOverrides[multiDetailKey]) || ""}
+            options={boxGroupOptions}
+            currentJeu={(jeuOverrides && jeuOverrides[multiDetailKey]) || ""}
+            jeuOptions={jeuOptionsForGame}
+            showHome={true}
+            homeChecked={(() => {
+              const idx = rows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
+              return idx !== -1 && !!effective[idx];
+            })()}
+            games={allGames}
+            checkedGames={(gameSourcesDict && gameSourcesDict[multiDetailKey]) || []}
+            onCancel={() => setMultiDetailKey(null)}
+            onSave={({ group, jeu, home, gameKeys }) => {
+              const idx = rows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
+              if (idx !== -1) {
+                const next = effective.slice();
+                next[idx] = home ? 1 : 0;
+                setFlags(next);
+                persist(next);
+              }
+              setBoxGroup(multiDetailKey, group);
+              setJeu(multiDetailKey, jeu);
+              setAllSources(multiDetailKey, gameKeys);
+              setMultiDetailKey(null);
+            }}
+          />
+        );
+      })()}
+
       {viewMode === "box" && (
         <BoxGrid
           items={filtered.map((r) => {
@@ -2453,7 +2869,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           fixedCols={6}
           renderCell={(it) => (
             <BoxCell
-              nom={it.nom} forme={it.forme} caught={!!effective[it.i]}
+              nom={it.nom} forme={it.forme} caught={!!displayEffective[it.i]}
               alpha={isAlphaGame && canBeAlpha(it.nom, it.forme) && !!alphaMap[alphaKeyFor(it.nom, it.forme)]}
               showAlphaToggle={isAlphaGame && canBeAlpha(it.nom, it.forme)}
               onToggleAlpha={() => toggleAlpha(it.i)}
@@ -2489,7 +2905,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                   </div>
                 );
               }
-              const isCaught = !!effective[r.i];
+              const isCaught = !!displayEffective[r.i];
               const showAlpha = isAlphaGame && canBeAlpha(r.nom, r.forme);
               const isAlpha = showAlpha && !!alphaMap[alphaKeyFor(r.nom, r.forme)];
               return (
@@ -2518,7 +2934,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           ) : (
             <React.Fragment>
               {filtered.slice(0, limit).map((r) => {
-                const isCaught = !!effective[r.i];
+                const isCaught = !!displayEffective[r.i];
                 const showAlpha = isAlphaGame && canBeAlpha(r.nom, r.forme);
                 const isAlpha = showAlpha && !!alphaMap[alphaKeyFor(r.nom, r.forme)];
                 return (
@@ -2570,28 +2986,31 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           gap: 8,
         }}>
           {filtered.slice(0, limit).map((r) => {
-            const isCaught = !!effective[r.i];
+            const isCaught = !!displayEffective[r.i];
+            const sourcedOnly = isSourcedOnly(r.i);
+            const markColor = sourcedOnly ? PURPLE : OK;
             const aKey = alphaKeyFor(r.nom, r.forme);
             const showAlpha = isAlphaGame && canBeAlpha(r.nom, r.forme);
             const isAlpha = showAlpha && !!alphaMap[aKey];
             return (
               <div
                 key={r.i}
+                title={sourcedOnly ? "Attrapé en jeu (pas encore sur Home)" : undefined}
                 style={{
                   display: "flex", alignItems: "center", gap: 8, textAlign: "left",
-                  background: isCaught ? "rgba(76,175,131,0.25)" : PANEL2,
-                  border: `1px solid ${isCaught ? OK : LINE}`,
+                  background: isCaught ? (sourcedOnly ? "rgba(179,157,219,0.20)" : "rgba(76,175,131,0.25)") : PANEL2,
+                  border: `1px solid ${isCaught ? markColor : LINE}`,
                   borderRadius: 18, padding: "7px 12px",
                   transition: "border-color 0.15s, background 0.15s",
                 }}
               >
                 <button
                   onClick={() => toggle(r.i)}
-                  title={isCaught ? "Marquer comme non capturé" : "Marquer comme capturé"}
+                  title={isCaught ? "Marquer comme non capturé (Home)" : "Marquer comme capturé (Home)"}
                   style={{
                     width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
-                    border: `2px solid ${isCaught ? OK : MUTED}`,
-                    background: isCaught ? OK : "transparent",
+                    border: `2px solid ${isCaught ? markColor : MUTED}`,
+                    background: isCaught ? markColor : "transparent",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
                   }}
@@ -2599,8 +3018,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                 <Sprite nom={r.nom} forme={r.forme} size={32} />
                 <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{r.n ?? "—"}</span>
                 <span
-                  onClick={(e) => { e.stopPropagation(); setGroupEditTarget(r.i); }}
-                  title="Ouvrir la fiche de capture (Jeu, groupe de boîte)"
+                  onClick={(e) => { e.stopPropagation(); if (showJeuMerge) setMultiDetailKey(boxGroupKeyFor(r.nom, r.forme)); else setGroupEditTarget(r.i); }}
+                  title={showJeuMerge ? "Ouvrir la fiche de capture (Home, jeux, Jeu - DO, groupe de boîte)" : "Ouvrir la fiche de capture (Jeu, groupe de boîte)"}
                   style={{ overflow: "hidden", flex: 1, cursor: "pointer" }}
                 >
                   <span style={{ display: "block", fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -2634,6 +3053,17 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     }}
                   >α</button>
                 )}
+                {showJeuMerge && (() => {
+                  const stats = pairStatsFor(r.nom, r.forme);
+                  if (!stats || stats.max === 0) return null;
+                  return (
+                    <span title="Attrapé dans X jeu(x)/paire(s) sur le nombre total de paires où ce Pokémon est disponible" style={{
+                      flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 800,
+                      color: stats.count > 0 ? PURPLE : MUTED, border: `1px solid ${stats.count > 0 ? PURPLE : LINE}`,
+                      borderRadius: 6, padding: "2px 6px",
+                    }}>{stats.count}/{stats.max}</span>
+                  );
+                })()}
               </div>
             );
           })}
@@ -2686,6 +3116,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         search={search}
         setSearch={setSearch}
         menus={[
+          ...(modeMenuItem ? [modeMenuItem] : []),
           {
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
@@ -9385,6 +9816,11 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
   const { alpha: alphaCaughtLive } = useAlphaCaughtLive();
   const { customJeux } = useCustomLists();
   const gameJeuOverridesAll = useAllGameJeuOverrides();
+  const gameTabSourcesAll = useAllGameTabSources();
+  // Switch Home / Home + jeux (§ fermeture Banque Pokémon) — n'a d'effet visible que pour les
+  // marques ayant des paires configurées (MARQUE_JEU_PAIRS, VI pour l'instant) ; sans effet
+  // ailleurs (game_tab_sources y reste vide). Non persisté (choix de consultation ponctuel).
+  const [progressionMode, setProgressionMode] = useState("home"); // "home" | "home+jeux"
 
   // Les compteurs de progression doivent refléter le stockage réel (localStorage), pas DATA
   // directement : DATA ne contient plus aucune capture depuis le passage au tout-JSON (§7bis).
@@ -9402,7 +9838,16 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
   const cards = GAME_ORDER.map((g) => {
     const rows = DATA.games[g];
     const liveFlags = liveGameFlags ? liveGameFlags[g] : null;
-    const caught = liveFlags ? Object.values(liveFlags).filter(Boolean).length : rows.filter((r) => r[3]).length;
+    let caught = liveFlags ? Object.values(liveFlags).filter(Boolean).length : rows.filter((r) => r[3]).length;
+    // Mode "Home + jeux" (§ fermeture Banque Pokémon) : ajoute les Pokémon attrapés uniquement
+    // via un onglet Jeu (game_tab_sources) mais pas encore cochés Home — sans effet pour une
+    // marque sans onglet Jeu associé (dict absent/vide).
+    if (progressionMode === "home+jeux" && liveFlags && gameTabSourcesAll && gameTabSourcesAll[g]) {
+      Object.keys(gameTabSourcesAll[g]).forEach((key) => {
+        const sources = gameTabSourcesAll[g][key];
+        if (sources && sources.length > 0 && !liveFlags[key]) caught++;
+      });
+    }
     // Total de Pokémon possédés pour cette marque : captures normales du jeu + captures Shiny
     // marquées sur cette marque + events capturés marqués sur cette marque, en retirant les
     // events déjà "dans une boîte de jeu" (champ boite) puisque ceux-là sont déjà comptés dans
@@ -9622,17 +10067,6 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     return sum;
   }, [interjeuLive]);
   const homeGrandTotal = normalCaughtTotal + shinyMarqueFormsTotal + doubleTotal + eventCapturedValidTotal + interjeuHomeValidTotal - eventBoiteValidTotal;
-  // Bloc "Toutes marques + Shiny" (§ nouveau, juste avant la grille des marques) : nombre total
-  // de Pokémon actuellement attrapés, toutes marques (captures normales des onglets jeu)
-  // + Shiny (formes distinctes) confondus.
-  const allMarquesAndShinyCaught = normalCaughtTotal + shinyCaught;
-  // "Total max" : idée du stockage nécessaire pour tout avoir — somme du nombre de Pokémon
-  // possibles par marque (toutes marques, structurel) + nombre de formes Shiny possibles
-  // + mes autres captures déjà faites qui s'ajoutent en plus (Interjeu Home, Event capturés,
-  // Doublons, et doublons Shiny au-delà d'une capture par forme).
-  const marqueTotalPossible = cards.reduce((sum, c) => sum + c.total, 0);
-  const shinyDoublonsTotal = Math.max(0, shinyHomeCaptures - shinyCaught);
-  const storageMaxTotal = marqueTotalPossible + shinyTotal + interjeuHomeTotal + eventTotal + doubleTotal + shinyDoublonsTotal;
 
   if (showNationalDetail) {
     return (
@@ -9688,13 +10122,26 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
           </button>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8, marginTop: 10 }}>
-        <div style={{ ...overviewGridCell, cursor: "default" }} title="Toutes marques + Shiny confondus — le total max donne une idée du stockage nécessaire pour tout avoir">
-          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>Total</div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{allMarquesAndShinyCaught}/{marqueTotalPossible + shinyTotal}</div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{pct(allMarquesAndShinyCaught, marqueTotalPossible + shinyTotal)}%</div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT }}>Total : {storageMaxTotal}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, margin: "10px 2px" }}>
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>Progression :</span>
+        <div style={{ display: "flex", gap: 4, background: PANEL2, borderRadius: 8, padding: 3, border: `1px solid ${LINE}` }}>
+          <button
+            onClick={() => setProgressionMode("home")}
+            style={{
+              background: progressionMode === "home" ? OK : "transparent", color: progressionMode === "home" ? "#fff" : MUTED,
+              border: "none", borderRadius: 6, padding: "6px 10px", fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, cursor: "pointer",
+            }}
+          >Home</button>
+          <button
+            onClick={() => setProgressionMode("home+jeux")}
+            style={{
+              background: progressionMode === "home+jeux" ? PURPLE : "transparent", color: progressionMode === "home+jeux" ? "#fff" : MUTED,
+              border: "none", borderRadius: 6, padding: "6px 10px", fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, cursor: "pointer",
+            }}
+          >Home + jeux</button>
         </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8 }}>
         {cards.map((c) => (
           <button key={c.key} onClick={() => setSelectedGame(c.key)} style={overviewGridCell}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>{c.key}</div>
@@ -9950,6 +10397,19 @@ async function buildGameSheetRows(g) {
   } catch (e) {}
   const isAlphaGame = g === "LA" || g === "LZA";
   const alpha = isAlphaGame ? await storageGetJSON("alpha_caught", {}) : null;
+  // Suivi "en jeu" par jeu précis (§ fermeture Banque Pokémon, MARQUE_JEU_PAIRS) — une colonne
+  // booléenne "EnJeu_<clé>" par jeu de chaque paire configurée pour cette marque (ex. pour VI :
+  // EnJeu_saphiralpha, EnJeu_rubisomega). Marques sans paire configurée : aucune colonne ajoutée.
+  const marquePairs = MARQUE_JEU_PAIRS[g] || [];
+  const allGameDefs = marquePairs.flatMap((p) => p.games);
+  let sourcesForGame = {};
+  if (allGameDefs.length > 0) {
+    try {
+      const res = await window.storage.get("game_tab_sources", false);
+      const all = res && res.value ? JSON.parse(res.value) : {};
+      sourcesForGame = all[g] || {};
+    } catch (e) {}
+  }
   return base.map((r, i) => {
     const key = r[1] + "|" + (r[2] || "");
     const row = {
@@ -9957,6 +10417,7 @@ async function buildGameSheetRows(g) {
       Groupe: effectiveBoxGroup(g, i, r, boxGroupOverridesForGame),
     };
     if (isAlphaGame) row.Alpha = alpha[g + "|" + key] ? 1 : 0;
+    allGameDefs.forEach((gd) => { row["EnJeu_" + gd.key] = (sourcesForGame[key] || []).includes(gd.key) ? 1 : 0; });
     return row;
   });
 }
@@ -10359,6 +10820,11 @@ async function importGameSheet(g, rows, mode) {
   const hasGroupeColumn = rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Groupe");
   const isAlphaGame = g === "LA" || g === "LZA";
   const hasAlphaColumn = isAlphaGame && rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Alpha");
+  // Suivi "en jeu" (§ fermeture Banque Pokémon, MARQUE_JEU_PAIRS) — colonnes "EnJeu_<clé>",
+  // une par jeu précis configuré pour cette marque ; absentes du fichier = non touchées.
+  const marquePairs = MARQUE_JEU_PAIRS[g] || [];
+  const allGameDefs = marquePairs.flatMap((p) => p.games);
+  const enJeuColumns = allGameDefs.filter((gd) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "EnJeu_" + gd.key));
   let jeuForGame = {};
   if (hasJeuColumn) {
     try {
@@ -10377,6 +10843,15 @@ async function importGameSheet(g, rows, mode) {
   const boxGroupForGame = hasGroupeColumn ? { ...(boxGroupOverridesAll[g] || {}) } : {};
   let alpha = {};
   if (hasAlphaColumn) alpha = await storageGetJSON("alpha_caught", {});
+  let sourcesAll = {};
+  let sourcesForGame = {};
+  if (enJeuColumns.length > 0) {
+    try {
+      const res = await window.storage.get("game_tab_sources", false);
+      sourcesAll = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    sourcesForGame = { ...(sourcesAll[g] || {}) };
+  }
   let matched = 0;
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
@@ -10398,6 +10873,15 @@ async function importGameSheet(g, rows, mode) {
         const aKey = g + "|" + key;
         if (Number(row.Alpha)) { alpha[aKey] = 1; dict[key] = 1; } // un Alpha est forcément capturé
         else delete alpha[aKey];
+      }
+      if (enJeuColumns.length > 0) {
+        // Ne remplace que les jeux couverts par des colonnes présentes dans le fichier — préserve
+        // les autres jeux/paires déjà enregistrés pour ce Pokémon (§ demande explicite : listes
+        // indépendantes, ne jamais écraser silencieusement une paire non couverte par l'import).
+        const untouched = (sourcesForGame[key] || []).filter((k) => !enJeuColumns.some((gd) => gd.key === k));
+        const checked = enJeuColumns.filter((gd) => Number(row["EnJeu_" + gd.key])).map((gd) => gd.key);
+        const next = [...untouched, ...checked];
+        if (next.length > 0) sourcesForGame[key] = next; else delete sourcesForGame[key];
       }
       matched++;
     }
@@ -10421,6 +10905,14 @@ async function importGameSheet(g, rows, mode) {
   }
   if (hasAlphaColumn) {
     try { await window.storage.set("alpha_caught", JSON.stringify(alpha), false); } catch (e) {}
+  }
+  if (enJeuColumns.length > 0) {
+    try {
+      const res = await window.storage.get("game_tab_sources", false);
+      const all = res && res.value ? JSON.parse(res.value) : {};
+      all[g] = sourcesForGame;
+      await window.storage.set("game_tab_sources", JSON.stringify(all), false);
+    } catch (e) {}
   }
   return matched;
 }
@@ -11547,8 +12039,105 @@ async function importGo1Sheet(rows, mode) {
   ]);
 }
 
+// Fiche détail multi-jeux — utilisée en vue "Home + jeu" (showHome=true, tous les jeux de la
+// marque toutes paires confondues) et en vue jeu précis (showHome=false, uniquement les jeux de
+// la paire affichée). C'est le seul endroit où Home peut être coché — jamais depuis une vue jeu
+// précis (§ demande explicite : ne pas mélanger les deux).
+function JeuMultiSourceModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, showHome, homeChecked, games, checkedGames, onCancel, onSave }) {
+  const [group, setGroup] = useState(currentGroup || "");
+  const [jeu, setJeuValue] = useState(currentJeu || "");
+  const [home, setHome] = useState(!!homeChecked);
+  const [checked, setChecked] = useState(() => new Set(checkedGames || []));
+  const toggleGame = (k) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  };
+  const checkRow = (label, isChecked, onToggle, color) => (
+    <button
+      key={label}
+      type="button"
+      onClick={onToggle}
+      style={{
+        display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
+        background: isChecked ? `${color}22` : "transparent", border: `1px solid ${isChecked ? color : LINE}`,
+        borderRadius: 10, padding: "8px 10px", cursor: "pointer", marginBottom: 6,
+      }}
+    >
+      <span style={{
+        width: 18, height: 18, borderRadius: 5, flexShrink: 0, border: `2px solid ${isChecked ? color : MUTED}`,
+        background: isChecked ? color : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+        color: BG, fontSize: 11, fontWeight: 900,
+      }}>{isChecked ? "✓" : ""}</span>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, fontWeight: 600 }}>{label}</span>
+    </button>
+  );
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <Sprite nom={nom} forme={forme} size={40} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
+              {nom}{forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {forme}</span> : null}
+            </div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>Fiche de capture</div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          {showHome && checkRow("Home", home, () => setHome((h) => !h), OK)}
+          {games.map((g) => checkRow(g.label, checked.has(g.key), () => toggleGame(g.key), PURPLE))}
+        </div>
+
+        <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block", marginBottom: 10 }}>
+          Jeu - DO
+          <AddableSelect value={jeu} onChange={setJeuValue} options={jeuOptions || []} hideAdd placeholder="-" />
+        </label>
+        <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+          Groupe de boîte
+          <Picker
+            value={group}
+            onChange={setGroup}
+            options={options || []}
+            placeholder="— choisir —"
+            buttonStyle={{ ...selectStyle, width: "100%", marginTop: 4, display: "block", textAlign: "left", boxSizing: "border-box" }}
+            panelWidth={220}
+          />
+        </label>
+        {(() => {
+          const lien = natInfoFor(nom, forme).lien;
+          if (!lien) return null;
+          return (
+            <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 10, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+              Voir sur Poképédia ↗
+            </a>
+          );
+        })()}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+          <button onClick={onCancel} style={btnGhost}>Annuler</button>
+          <button onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked) })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Initiales calculées à partir d'une valeur "Jeu - DO" (ex. "Saphir Alpha - 39656" → "SA"), en
+// attendant les vrais logos de jeux (PokeAPI n'en fournit pas — voir discussion projet). Ignore
+// tout ce qui suit un " - " (numéro de dresseur, "Event"…), garde les initiales des mots restants.
+function initialsOfDO(v) {
+  if (!v) return "";
+  const base = String(v).split(" - ")[0].trim();
+  if (!base) return "";
+  return base.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 3);
+}
+
 // Délègue au bon composant selon le jeu choisi dans l'onglet "Jeu" (JEU_ORDER) — pour l'instant
-// uniquement Go 1, structure prête pour d'autres jeux plus tard sans autre changement.
+// uniquement Go 1 ; le suivi "en jeu" par marque (Saphir Alpha, etc.) vit maintenant DANS
+// l'onglet Home de la marque concernée (GameView, sélecteur de vue flottant), pas ici.
 function JeuGameView({ jeuKey, filterCache }) {
   if (jeuKey === "go1") return <Go1View filterCache={filterCache} />;
   return null;
@@ -11830,6 +12419,7 @@ function App() {
     "box_group_overrides",
     "custom_box_groups",
     "game_jeu_overrides",
+    "game_tab_sources",
   ];
 
   const buildExportOut = async () => {
