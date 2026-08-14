@@ -187,7 +187,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.14.13.42";
+const APP_VERSION = "2026.8.14.14.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -12232,24 +12232,51 @@ async function importGo1Sheet(rows, mode) {
     const forms = formKeysBySpecies[natKey] || [];
     if (forms.length === 1) shinyForms[forms[0]] = 1;
   };
+  // Chanceux/Parfait/Purifié/Obscur/XXS/XXL/ShinyUnique sont des attributs PAR ESPÈCE (numéro
+  // national), pas par forme — mais le fichier importé liste une ligne par forme (Kanto, Alola,
+  // Gmax…) partageant le même numéro. Traiter ligne par ligne comme avant écrasait la coche d'une
+  // forme dès qu'une autre forme de la même espèce, listée après dans le fichier, valait 0 (ex. :
+  // Rattata Kanto Purifié=1 écrasé par Rattata Alola Purifié=0 juste en dessous). Ces colonnes
+  // sont donc accumulées en OR sur 2 passes : une espèce est cochée dès qu'AU MOINS UNE de ses
+  // formes présentes dans le fichier l'indique, jamais décochée par une autre forme à 0.
+  const speciesCols = [
+    ["Chanceux", chanceux], ["Parfait", parfait], ["Purifie", purifie],
+    ["Obscur", obscur], ["XXS", xxs], ["XXL", xxl], ["ShinyUnique", shinyUnique],
+  ];
+  const speciesSeen = {}; // colName -> Set(natKey présents dans le fichier)
+  const speciesTrue = {}; // colName -> Set(natKey à 1 dans au moins une ligne)
+  speciesCols.forEach(([col]) => { speciesSeen[col] = new Set(); speciesTrue[col] = new Set(); });
+
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
     const forme = excelParseForme(row.Forme);
     const key = nom + "|" + forme;
     const natKey = String(row.Numero != null ? row.Numero : "").trim();
+    // Pokedex/Shiny : clés par FORME (pas par espèce) — aucun risque de collision entre formes,
+    // traitement ligne par ligne inchangé.
     if (has(row, "Pokedex")) { setBool(pokedexForms, key, row.Pokedex); if (Number(row.Pokedex)) markPokedexUnique(natKey); }
     if (has(row, "Shiny")) { setBool(shinyForms, key, row.Shiny); if (Number(row.Shiny)) { markShinyUnique(natKey); markPokedexUnique(natKey); } }
     if (!natKey) return;
     if (has(row, "PokedexUnique") && Number(row.PokedexUnique)) markPokedexUnique(natKey);
-    if (has(row, "ShinyUnique") && Number(row.ShinyUnique)) { markShinyUnique(natKey); markPokedexUnique(natKey); }
-    else if (has(row, "ShinyUnique")) setBool(shinyUnique, natKey, row.ShinyUnique);
-    if (has(row, "Chanceux")) { setBool(chanceux, natKey, row.Chanceux); if (Number(row.Chanceux)) markPokedexUnique(natKey); }
-    if (has(row, "Parfait")) { setBool(parfait, natKey, row.Parfait); if (Number(row.Parfait)) markPokedexUnique(natKey); }
-    if (has(row, "Purifie")) { setBool(purifie, natKey, row.Purifie); if (Number(row.Purifie)) markPokedexUnique(natKey); }
-    if (has(row, "Obscur")) { setBool(obscur, natKey, row.Obscur); if (Number(row.Obscur)) markPokedexUnique(natKey); }
-    if (has(row, "XXS")) { setBool(xxs, natKey, row.XXS); if (Number(row.XXS)) markPokedexUnique(natKey); }
-    if (has(row, "XXL")) { setBool(xxl, natKey, row.XXL); if (Number(row.XXL)) markPokedexUnique(natKey); }
+    speciesCols.forEach(([col]) => {
+      if (!has(row, col)) return;
+      speciesSeen[col].add(natKey);
+      if (Number(row[col])) speciesTrue[col].add(natKey);
+    });
+  });
+  // Application : une espèce vue dans le fichier pour une colonne donnée est cochée si au moins
+  // une de ses lignes l'indiquait, sinon décochée (une espèce absente du fichier n'est pas touchée).
+  speciesCols.forEach(([col, dict]) => {
+    speciesSeen[col].forEach((natKey) => {
+      if (speciesTrue[col].has(natKey)) {
+        dict[natKey] = 1;
+        if (col === "ShinyUnique") markShinyUnique(natKey);
+        else markPokedexUnique(natKey);
+      } else {
+        delete dict[natKey];
+      }
+    });
   });
   await Promise.all([
     window.storage.set("go1_pokedex_forms", JSON.stringify(pokedexForms), false),
