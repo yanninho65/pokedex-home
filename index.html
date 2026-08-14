@@ -187,7 +187,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.14.13.05";
+const APP_VERSION = "2026.8.14.13.42";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -10275,6 +10275,18 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     return sum;
   }, [interjeuLive]);
   const homeGrandTotal = normalCaughtTotal + shinyMarqueFormsTotal + doubleTotal + eventCapturedValidTotal + interjeuHomeValidTotal - eventBoiteValidTotal;
+  // Bloc "Toutes marques + Shiny" (juste avant la grille des marques) : nombre total de Pokémon
+  // actuellement attrapés, toutes marques (captures normales des onglets jeu, § tient compte du
+  // switch Home/Home + jeux via `cards`/`normalCaughtTotal` ci-dessus) + Shiny (formes distinctes)
+  // confondus.
+  const allMarquesAndShinyCaught = normalCaughtTotal + shinyCaught;
+  // "Total max" : idée du stockage nécessaire pour tout avoir — somme du nombre de Pokémon
+  // possibles par marque (toutes marques, structurel) + nombre de formes Shiny possibles
+  // + mes autres captures déjà faites qui s'ajoutent en plus (Interjeu Home, Event capturés,
+  // Doublons, et doublons Shiny au-delà d'une capture par forme).
+  const marqueTotalPossible = cards.reduce((sum, c) => sum + c.total, 0);
+  const shinyDoublonsTotal = Math.max(0, shinyHomeCaptures - shinyCaught);
+  const storageMaxTotal = marqueTotalPossible + shinyTotal + interjeuHomeTotal + eventTotal + doubleTotal + shinyDoublonsTotal;
 
   if (showNationalDetail) {
     return (
@@ -10350,6 +10362,12 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8 }}>
+        <div style={{ ...overviewGridCell, cursor: "default" }} title="Toutes marques + Shiny confondus — le total max donne une idée du stockage nécessaire pour tout avoir">
+          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>Total</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{allMarquesAndShinyCaught}/{marqueTotalPossible + shinyTotal}</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{pct(allMarquesAndShinyCaught, marqueTotalPossible + shinyTotal)}%</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT }}>Total : {storageMaxTotal}</div>
+        </div>
         {cards.map((c) => (
           <button key={c.key} onClick={() => setSelectedGame(c.key)} style={overviewGridCell}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>{c.key}</div>
