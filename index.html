@@ -76,32 +76,22 @@ const GAME_ORDER = ["IàV", "VI", "Alola", "GB", "LG", "Go", "DEPS", "Galar", "L
 // Un seul jeu pour l'instant (Go 1), extensible plus tard sans autre changement de structure.
 const JEU_ORDER = ["go1"];
 const JEU_LABELS = { go1: "Go 1" };
-// Jeux précis groupés par PAIRE, pour chaque marque disposant d'un suivi "en jeu" (§ fermeture
-// Banque Pokémon / transfert 3DS→Switch) — pas d'onglet séparé : un sélecteur de vue flottant
-// (comme Go 1) au sein même de l'onglet Home de la marque (voir GameView, `viMode`). Une paire
-// (ex. Saphir Alpha/Rubis Oméga) partage le même Pokédex mais deux jeux distincts peuvent être
-// cochés indépendamment ; compte pour 1 seul "attrapé" dans la paire, jamais 2 (voir
-// `pairStatsFor` dans GameView). `games[].key` = clé JEU_VIDEO_DEFS correspondante (filtrage de
-// la liste affichée en vue jeu précis — permissif tant que `DATA.jeuVideo` n'est pas renseigné
-// pour un Pokémon donné, voir `rowsForPair`). Pilote : VI/Saphir Alpha uniquement pour l'instant ;
-// une future paire "X/Y" pourra s'ajouter ici sans autre changement (`marquePairs` dans GameView
-// gère déjà un nombre quelconque de paires par marque).
-const MARQUE_JEU_PAIRS = {
+// Vues "jeu précis" par marque (§ fermeture Banque Pokémon / transfert 3DS→Switch) — pas d'onglet
+// séparé : un sélecteur de vue flottant (comme Go 1) au sein même de l'onglet Home de la marque
+// (voir GameView, `viMode`). Entièrement modulable : la liste réellement utilisée par l'app vit
+// dans le stockage `custom_jeu_views` (voir useJeuViews), éditable depuis le menu "Mode" de
+// chaque onglet Home (bouton "+ Ajouter une vue"). Ceci n'est qu'une graine de migration one-shot
+// pour VI, injectée dans custom_jeu_views au premier chargement si absente — après quoi ce const
+// n'est plus jamais relu, seul custom_jeu_views fait foi. `jeuKeys` = clés JEU_VIDEO_DEFS (une
+// vue = 1 jeu, ou plusieurs jeux d'une même paire partageant le même Pokédex, ex. Saphir
+// Alpha+Rubis Oméga) — sert à filtrer la liste affichée (permissif tant que `DATA.jeuVideo` n'est
+// pas renseigné pour un Pokémon donné, voir `rowsForPair`). La distinction fine entre les jeux
+// d'une même vue (ex. Saphir Alpha vs Rubis Oméga) se fait via le Jeu - DO existant, propre à la
+// marque (VI) — jamais par des cases séparées dans cette vue.
+const DEFAULT_JEU_VIEWS = {
   VI: [
-    {
-      key: "x_y", label: "X",
-      games: [
-        { key: "x", label: "X" },
-        { key: "y", label: "Y" },
-      ],
-    },
-    {
-      key: "sa_ro", label: "Saphir Alpha",
-      games: [
-        { key: "saphiralpha", label: "Saphir Alpha" },
-        { key: "rubisomega", label: "Rubis Oméga" },
-      ],
-    },
+    { key: "x_y", label: "X", jeuKeys: ["x", "y"] },
+    { key: "sa_ro", label: "Saphir Alpha", jeuKeys: ["saphiralpha", "rubisomega"] },
   ],
 };
 
@@ -187,7 +177,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.14.14.05";
+const APP_VERSION = "2026.8.14.14.55";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2143,6 +2133,60 @@ function useAllGameTabSources() {
   return all;
 }
 
+// Vues "jeu précis" par marque — entièrement éditables par l'utilisateur (§ demande explicite :
+// "modulable", ajout d'une vue par un bouton). Stockage `custom_jeu_views` = { [marque]: [{key,
+// label, jeuKeys}, ...] }. Migration one-shot au premier accès pour une marque : si absente du
+// stockage, seedée depuis DEFAULT_JEU_VIEWS[marque] (ou [] si aucune graine) — après quoi seul le
+// stockage fait foi, DEFAULT_JEU_VIEWS n'est plus jamais relu pour cette marque.
+function useJeuViews(marque) {
+  const [views, setViews] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setViews(null);
+    (async () => {
+      let all = {};
+      try {
+        const res = await window.storage.get("custom_jeu_views", false);
+        all = res && res.value ? JSON.parse(res.value) : {};
+      } catch (e) {}
+      if (!Object.prototype.hasOwnProperty.call(all, marque)) {
+        all = { ...all, [marque]: DEFAULT_JEU_VIEWS[marque] || [] };
+        try { await window.storage.set("custom_jeu_views", JSON.stringify(all), false); } catch (e) {}
+      }
+      if (!cancelled) setViews(all[marque] || []);
+    })();
+    return () => { cancelled = true; };
+  }, [marque]);
+
+  const addView = async (label, jeuKeys) => {
+    const key = "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    let all = {};
+    try {
+      const res = await window.storage.get("custom_jeu_views", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const list = [...(all[marque] || []), { key, label, jeuKeys }];
+    all = { ...all, [marque]: list };
+    try { await window.storage.set("custom_jeu_views", JSON.stringify(all), false); } catch (e) {}
+    setViews(list);
+    return key;
+  };
+
+  const removeView = async (viewKey) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("custom_jeu_views", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const list = (all[marque] || []).filter((v) => v.key !== viewKey);
+    all = { ...all, [marque]: list };
+    try { await window.storage.set("custom_jeu_views", JSON.stringify(all), false); } catch (e) {}
+    setViews(list);
+  };
+
+  return { views, addView, removeView };
+}
+
 function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, onCancel, onSave }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
@@ -2199,11 +2243,11 @@ function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptio
 }
 
 // Vue "jeu précis" d'une marque (ex. Saphir Alpha), affichée par GameView quand `viMode` désigne
-// une paire de MARQUE_JEU_PAIRS. Liste indépendante (§ demande explicite : les listes Home/paire
+// une vue configurée (custom_jeu_views, modulable). Liste indépendante (§ demande explicite : les listes Home/vue
 // peuvent différer), coche = présence d'AU MOINS UN des jeux de la paire (jamais Home — cette vue
 // ne coche/n'affiche jamais le flag Home, contrairement à la vue "Home + jeu").
 // Vue "jeu précis" d'une marque (ex. Saphir Alpha, X), affichée par GameView quand `viMode`
-// désigne une paire de MARQUE_JEU_PAIRS. Reprend les mêmes filtres/boutons que la vue Home
+// désigne une vue configurée (custom_jeu_views, modulable). Reprend les mêmes filtres/boutons que la vue Home
 // (Statut, Région, Groupe de boîte, Jeu - DO, vues Liste/Boîte/Grille, réglages de boîte,
 // affichage groupe/nom de boîte/Jeu-DO, recherche+ajout) — à l'exception des coches "Afficher
 // les Shiny/Event" (§ demande explicite, non pertinentes ici). Liste indépendante de Home (§
@@ -2234,9 +2278,8 @@ function PairModeBlock({
   const windowWidth = useWindowWidth();
   const effCols = effectiveGridCols(gridCols, windowWidth);
 
-  const pairGameKeys = pair.games.map((g) => g.key);
   const sources = gameSourcesDict || {};
-  const isInPairKey = (key) => pairGameKeys.some((k) => (sources[key] || []).includes(k));
+  const isInPairKey = (key) => (sources[key] || []).includes(pair.key);
   const isInPairIdx = (i) => isInPairKey(boxGroupKeyFor(pairRows[i][1], pairRows[i][2]));
 
   const sortOrder = useMemo(
@@ -2301,12 +2344,7 @@ function PairModeBlock({
   );
 
   const toggleQuick = (key) => {
-    if (isInPairKey(key)) {
-      const kept = (sources[key] || []).filter((k) => !pairGameKeys.includes(k));
-      setAllSources(key, kept);
-    } else {
-      setSource(key, pairGameKeys[0], true);
-    }
+    setSource(key, pair.key, !isInPairKey(key));
   };
 
   return (
@@ -2346,22 +2384,17 @@ function PairModeBlock({
         const nom = sep === -1 ? multiDetailKey : multiDetailKey.slice(0, sep);
         const forme = sep === -1 ? null : (multiDetailKey.slice(sep + 1) || null);
         return (
-          <JeuMultiSourceModal
+          <BoxGroupModal
             nom={nom}
             forme={forme}
             currentGroup={(boxOverrides && boxOverrides[multiDetailKey]) || ""}
             options={boxGroupOptions}
             currentJeu={(jeuOverrides && jeuOverrides[multiDetailKey]) || ""}
             jeuOptions={jeuOptionsForGame}
-            showHome={false}
-            games={pair.games}
-            checkedGames={(sources[multiDetailKey] || []).filter((k) => pairGameKeys.includes(k))}
             onCancel={() => setMultiDetailKey(null)}
-            onSave={({ group, jeu, gameKeys }) => {
+            onSave={(group, jeu) => {
               setBoxGroup(multiDetailKey, group);
               setJeu(multiDetailKey, jeu);
-              const others = (sources[multiDetailKey] || []).filter((k) => !pairGameKeys.includes(k));
-              setAllSources(multiDetailKey, [...others, ...gameKeys]);
               setMultiDetailKey(null);
             }}
           />
@@ -2593,20 +2626,22 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [alphaMap, setAlphaMap] = useState({});
   const effective = flags || baseline;
   const isAlphaGame = gameKey === "LA" || gameKey === "LZA";
-  // Suivi "en jeu" par marque (§ fermeture Banque Pokémon) — vide pour toute marque sans paire
-  // configurée (MARQUE_JEU_PAIRS), donc sans effet ailleurs que VI pour l'instant.
-  const marquePairs = MARQUE_JEU_PAIRS[gameKey] || [];
+  // Suivi "en jeu" par marque (§ fermeture Banque Pokémon) — entièrement modulable, voir
+  // useJeuViews. Vide pour toute marque sans vue configurée, donc sans effet ailleurs que là où
+  // l'utilisateur en a créé.
+  const { views: jeuViews, addView: addJeuView, removeView: removeJeuView } = useJeuViews(gameKey);
+  const marquePairs = jeuViews || [];
   const hasJeuPairs = marquePairs.length > 0;
-  // Vue active : "home_jeu" (par défaut si la marque a des paires) | "home" | clé d'une paire
-  // précise (ex. "sa_ro"). Pour une marque sans paire, reste "home" en pratique (menu absent).
-  const [viMode, setViMode] = useCachedState(filterCache, gameKey, "viMode", hasJeuPairs ? "home_jeu" : "home");
+  // Vue active : "home_jeu" | "home" | clé d'une vue précise (ex. "sa_ro"). Sans effet pour une
+  // marque sans vue configurée (currentPair reste alors toujours null).
+  const [viMode, setViMode] = useCachedState(filterCache, gameKey, "viMode", "home_jeu");
   const currentPair = marquePairs.find((p) => p.key === viMode) || null;
   // Vue "Home + jeu" uniquement : combine Home et "en jeu" pour l'affichage/les filtres/les stats.
   // La vue "Home" reste une lecture pure du flag Home, sans jamais lire/écrire `game_tab_sources`
   // (§ demande explicite : les deux vues ne doivent pas se mélanger).
   const showJeuMerge = hasJeuPairs && viMode === "home_jeu";
   const { dict: gameSourcesDict, setSource, setAllSources, clearAll: clearGameSources } = useGameTabSources(gameKey);
-  const [multiDetailKey, setMultiDetailKey] = useState(null); // "nom|forme", vue Home + jeu ou vue paire
+  const [multiDetailKey, setMultiDetailKey] = useState(null); // "nom|forme", vue Home + jeu uniquement
   // Vue combinée Home + "en jeu" (vue "Home + jeu" seulement — voir `showJeuMerge`), utilisée pour
   // l'affichage/les filtres/les stats — jamais pour `toggle` ci-dessous, qui continue d'agir
   // uniquement sur le flag Home réel (`effective`).
@@ -2617,10 +2652,12 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     return rows.map((r, i) => (effective[i] ? 1 : ((gameSourcesDict[boxGroupKeyFor(r[1], r[2])] || []).length > 0 ? 1 : 0)));
   }, [effective, gameSourcesDict, rows, showJeuMerge]);
   const isSourcedOnly = (i) => !effective[i] && !!(displayEffective && displayEffective[i]);
-  // Compte "x/max" par paire (vue "Home + jeu" uniquement, § demande explicite) : max = nombre de
-  // paires où ce Pokémon est disponible (permissif tant que DATA.jeuVideo n'est pas renseigné —
-  // voir rowsForPair), count = nombre de ces paires où au moins un des jeux est coché. Une paire
-  // dont les DEUX jeux sont cochés en parallèle ne compte qu'une fois (jamais 2/1).
+  // Compte "x/max" par vue jeu (vue "Home + jeu" uniquement, § demande explicite) : max = nombre
+  // de vues où ce Pokémon est disponible (permissif tant que DATA.jeuVideo n'est pas renseigné —
+  // voir rowsForPair), count = nombre de ces vues cochées. `game_tab_sources` stocke directement
+  // la clé de la vue (pas un jeu précis à l'intérieur) — la distinction fine (ex. Saphir Alpha vs
+  // Rubis Oméga) se fait via le Jeu - DO existant, propre à la marque, jamais par des cases
+  // séparées ici (§ demande explicite).
   const pairStatsFor = (nom, forme) => {
     if (!marquePairs.length) return null;
     const jv = jeuVideoFor(nom, forme);
@@ -2628,22 +2665,22 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     const sources = (gameSourcesDict && gameSourcesDict[key]) || [];
     let max = 0, count = 0;
     marquePairs.forEach((pair) => {
-      const gk = pair.games.map((g) => g.key);
+      const gk = pair.jeuKeys || [];
       const anySet = gk.some((k) => jv[k] !== undefined);
       const applicable = !anySet || gk.some((k) => jv[k]);
       if (!applicable) return;
       max++;
-      if (gk.some((k) => sources.includes(k))) count++;
+      if (sources.includes(pair.key)) count++;
     });
     return { count, max };
   };
-  // Lignes disponibles pour une paire précise (vue jeu précis) : inclusion par défaut tant que
-  // DATA.jeuVideo n'est pas renseigné pour un Pokémon donné, exclu seulement si TOUS les jeux de
-  // la paire sont explicitement à false (§ demande explicite : les listes Home/paire peuvent
-  // différer, ne jamais supposer qu'elles sont identiques).
+  // Lignes disponibles pour une vue précise : inclusion par défaut tant que DATA.jeuVideo n'est
+  // pas renseigné pour un Pokémon donné, exclu seulement si TOUS les jeux de la vue sont
+  // explicitement à false (§ demande explicite : les listes Home/vue peuvent différer, ne jamais
+  // supposer qu'elles sont identiques).
   const rowsForPair = (pair) => {
     if (!pair) return [];
-    const gk = pair.games.map((g) => g.key);
+    const gk = pair.jeuKeys || [];
     return rows.filter((r) => {
       const jv = jeuVideoFor(r[1], r[2]);
       const anySet = gk.some((k) => jv[k] !== undefined);
@@ -2654,27 +2691,104 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const pairRows = useMemo(() => rowsForPair(currentPair), [currentPair, rows]);
   const viModeOptions = hasJeuPairs
     ? [{ key: "home_jeu", label: "Home + jeu" }, { key: "home", label: "Home" }, ...marquePairs.map((p) => ({ key: p.key, label: p.label }))]
-    : [];
-  const modeMenuItem = hasJeuPairs ? {
-    key: "vimode", title: "Mode", icon: BarIcon.dex, active: viMode !== "home_jeu",
+    : [{ key: "home", label: "Home" }];
+  // Formulaire d'ajout de vue (§ demande explicite : "modulable", ajout par un bouton) — choix
+  // d'1 ou plusieurs jeux parmi JEU_VIDEO_DEFS (liste globale des jeux vidéo, groupée par
+  // génération pour rester lisible), avec un libellé éditable pré-rempli depuis la sélection.
+  const [addViewOpen, setAddViewOpen] = useState(false);
+  const [newViewLabel, setNewViewLabel] = useState("");
+  const [newViewKeys, setNewViewKeys] = useState([]);
+  const jeuVideoByGen = useMemo(() => {
+    const byGen = {};
+    JEU_VIDEO_DEFS.forEach((d) => { (byGen[d.gen] || (byGen[d.gen] = [])).push(d); });
+    return byGen;
+  }, []);
+  const toggleNewViewKey = (k) => {
+    setNewViewKeys((prev) => {
+      const has = prev.includes(k);
+      const next = has ? prev.filter((x) => x !== k) : [...prev, k];
+      if (!newViewLabel || prev.map((x) => JEU_VIDEO_DEFS.find((d) => d.key === x)?.label).filter(Boolean).join("/") === newViewLabel) {
+        setNewViewLabel(next.map((x) => JEU_VIDEO_DEFS.find((d) => d.key === x)?.label).filter(Boolean).join("/"));
+      }
+      return next;
+    });
+  };
+  const modeMenuItem = {
+    key: "vimode", title: "Mode", icon: BarIcon.dex, active: hasJeuPairs && viMode !== "home_jeu",
     render: (close) => (
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {viModeOptions.map((m) => (
-          <button
-            key={m.key}
-            onClick={() => { setViMode(m.key); close(); }}
-            style={{
-              ...btnGhost, padding: "7px 12px",
-              background: viMode === m.key ? PURPLE : "transparent",
-              color: viMode === m.key ? "#fff" : MUTED,
-              border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
-              fontWeight: viMode === m.key ? 800 : 500,
-            }}
-          >{m.label}</button>
-        ))}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 220 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {viModeOptions.map((m) => (
+            <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <button
+                onClick={() => { setViMode(m.key); close(); }}
+                style={{
+                  ...btnGhost, padding: "7px 12px",
+                  background: viMode === m.key ? PURPLE : "transparent",
+                  color: viMode === m.key ? "#fff" : MUTED,
+                  border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
+                  fontWeight: viMode === m.key ? 800 : 500,
+                }}
+              >{m.label}</button>
+              {m.key !== "home_jeu" && m.key !== "home" && (
+                <button
+                  onClick={() => { if (viMode === m.key) setViMode("home_jeu"); removeJeuView(m.key); }}
+                  title={`Supprimer la vue "${m.label}"`}
+                  style={{ background: "transparent", border: "none", color: MUTED, cursor: "pointer", fontSize: 13, padding: "0 4px" }}
+                >✕</button>
+              )}
+            </div>
+          ))}
+        </div>
+        {!addViewOpen ? (
+          <button onClick={() => setAddViewOpen(true)} style={{ ...btnGhost, alignSelf: "flex-start" }}>+ Ajouter une vue</button>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: `1px solid ${LINE}`, paddingTop: 8 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Jeu(x) de la vue (1 ou plusieurs, ex. une paire)</div>
+            <div style={{ maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+              {Object.keys(jeuVideoByGen).map((gen) => (
+                <div key={gen}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, fontWeight: 700, marginBottom: 3 }}>{gen}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {jeuVideoByGen[gen].map((d) => (
+                      <button
+                        key={d.key}
+                        onClick={() => toggleNewViewKey(d.key)}
+                        style={{
+                          ...btnGhost, padding: "4px 8px", fontSize: 11.5,
+                          background: newViewKeys.includes(d.key) ? PURPLE : "transparent",
+                          color: newViewKeys.includes(d.key) ? "#fff" : MUTED,
+                          border: `1px solid ${newViewKeys.includes(d.key) ? PURPLE : LINE}`,
+                        }}
+                      >{d.label}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <input
+              value={newViewLabel}
+              onChange={(e) => setNewViewLabel(e.target.value)}
+              placeholder="Nom de la vue"
+              style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => { setAddViewOpen(false); setNewViewKeys([]); setNewViewLabel(""); }} style={btnGhost}>Annuler</button>
+              <button
+                disabled={newViewKeys.length === 0 || !newViewLabel.trim()}
+                onClick={async () => {
+                  const key = await addJeuView(newViewLabel.trim(), newViewKeys);
+                  setAddViewOpen(false); setNewViewKeys([]); setNewViewLabel("");
+                  setViMode(key); close();
+                }}
+                style={{ ...tabActive, background: newViewKeys.length === 0 || !newViewLabel.trim() ? LINE : ACCENT, color: "#fff", opacity: newViewKeys.length === 0 || !newViewLabel.trim() ? 0.6 : 1 }}
+              >Créer</button>
+            </div>
+          </div>
+        )}
       </div>
     ),
-  } : null;
+  };
 
   useEffect(() => {
     if (!isAlphaGame) return;
@@ -3033,7 +3147,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         const sep = multiDetailKey.indexOf("|");
         const nom = sep === -1 ? multiDetailKey : multiDetailKey.slice(0, sep);
         const forme = sep === -1 ? null : (multiDetailKey.slice(sep + 1) || null);
-        const allGames = marquePairs.flatMap((p) => p.games);
         return (
           <JeuMultiSourceModal
             nom={nom}
@@ -3047,7 +3160,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
               const idx = rows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
               return idx !== -1 && !!effective[idx];
             })()}
-            games={allGames}
+            games={marquePairs}
             checkedGames={(gameSourcesDict && gameSourcesDict[multiDetailKey]) || []}
             onCancel={() => setMultiDetailKey(null)}
             onSave={({ group, jeu, home, gameKeys }) => {
@@ -10026,7 +10139,7 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
   const gameJeuOverridesAll = useAllGameJeuOverrides();
   const gameTabSourcesAll = useAllGameTabSources();
   // Switch Home / Home + jeux (§ fermeture Banque Pokémon) — n'a d'effet visible que pour les
-  // marques ayant des paires configurées (MARQUE_JEU_PAIRS, VI pour l'instant) ; sans effet
+  // marques ayant des vues configurées (custom_jeu_views, VI pour l'instant) ; sans effet
   // ailleurs (game_tab_sources y reste vide). Non persisté (choix de consultation ponctuel).
   const [progressionMode, setProgressionMode] = useState("home"); // "home" | "home+jeux"
 
@@ -10623,13 +10736,17 @@ async function buildGameSheetRows(g) {
   } catch (e) {}
   const isAlphaGame = g === "LA" || g === "LZA";
   const alpha = isAlphaGame ? await storageGetJSON("alpha_caught", {}) : null;
-  // Suivi "en jeu" par jeu précis (§ fermeture Banque Pokémon, MARQUE_JEU_PAIRS) — une colonne
-  // booléenne "EnJeu_<clé>" par jeu de chaque paire configurée pour cette marque (ex. pour VI :
-  // EnJeu_saphiralpha, EnJeu_rubisomega). Marques sans paire configurée : aucune colonne ajoutée.
-  const marquePairs = MARQUE_JEU_PAIRS[g] || [];
-  const allGameDefs = marquePairs.flatMap((p) => p.games);
+  // Suivi "en jeu" par vue configurée (§ fermeture Banque Pokémon, custom_jeu_views — modulable,
+  // voir useJeuViews) — une colonne booléenne "EnJeu_<clé de vue>" par vue définie pour cette
+  // marque (ex. pour VI : EnJeu_sa_ro, EnJeu_x_y). Marque sans vue configurée : aucune colonne.
+  let marquePairs = [];
+  try {
+    const res = await window.storage.get("custom_jeu_views", false);
+    const all = res && res.value ? JSON.parse(res.value) : {};
+    marquePairs = all[g] || [];
+  } catch (e) {}
   let sourcesForGame = {};
-  if (allGameDefs.length > 0) {
+  if (marquePairs.length > 0) {
     try {
       const res = await window.storage.get("game_tab_sources", false);
       const all = res && res.value ? JSON.parse(res.value) : {};
@@ -10643,7 +10760,7 @@ async function buildGameSheetRows(g) {
       Groupe: effectiveBoxGroup(g, i, r, boxGroupOverridesForGame),
     };
     if (isAlphaGame) row.Alpha = alpha[g + "|" + key] ? 1 : 0;
-    allGameDefs.forEach((gd) => { row["EnJeu_" + gd.key] = (sourcesForGame[key] || []).includes(gd.key) ? 1 : 0; });
+    marquePairs.forEach((p) => { row["EnJeu_" + p.key] = (sourcesForGame[key] || []).includes(p.key) ? 1 : 0; });
     return row;
   });
 }
@@ -11046,11 +11163,16 @@ async function importGameSheet(g, rows, mode) {
   const hasGroupeColumn = rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Groupe");
   const isAlphaGame = g === "LA" || g === "LZA";
   const hasAlphaColumn = isAlphaGame && rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Alpha");
-  // Suivi "en jeu" (§ fermeture Banque Pokémon, MARQUE_JEU_PAIRS) — colonnes "EnJeu_<clé>",
-  // une par jeu précis configuré pour cette marque ; absentes du fichier = non touchées.
-  const marquePairs = MARQUE_JEU_PAIRS[g] || [];
-  const allGameDefs = marquePairs.flatMap((p) => p.games);
-  const enJeuColumns = allGameDefs.filter((gd) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "EnJeu_" + gd.key));
+  // Suivi "en jeu" (§ fermeture Banque Pokémon, custom_jeu_views — modulable, voir useJeuViews) —
+  // colonnes "EnJeu_<clé de vue>", une par vue configurée pour cette marque ; absentes du
+  // fichier = non touchées.
+  let marquePairs = [];
+  try {
+    const res = await window.storage.get("custom_jeu_views", false);
+    const all = res && res.value ? JSON.parse(res.value) : {};
+    marquePairs = all[g] || [];
+  } catch (e) {}
+  const enJeuColumns = marquePairs.filter((p) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "EnJeu_" + p.key));
   let jeuForGame = {};
   if (hasJeuColumn) {
     try {
@@ -12673,6 +12795,7 @@ function App() {
     "custom_box_groups",
     "game_jeu_overrides",
     "game_tab_sources",
+    "custom_jeu_views",
   ];
 
   const buildExportOut = async () => {
