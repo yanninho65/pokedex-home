@@ -177,7 +177,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.14.14.55";
+const APP_VERSION = "2026.8.14.15.30";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2184,7 +2184,19 @@ function useJeuViews(marque) {
     setViews(list);
   };
 
-  return { views, addView, removeView };
+  const updateView = async (viewKey, label, jeuKeys) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("custom_jeu_views", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const list = (all[marque] || []).map((v) => (v.key === viewKey ? { ...v, label, jeuKeys } : v));
+    all = { ...all, [marque]: list };
+    try { await window.storage.set("custom_jeu_views", JSON.stringify(all), false); } catch (e) {}
+    setViews(list);
+  };
+
+  return { views, addView, removeView, updateView };
 }
 
 function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, onCancel, onSave }) {
@@ -2587,7 +2599,132 @@ function PairModeBlock({
   );
 }
 
-function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
+// Popup de gestion des vues Jeu d'une marque (§ demande explicite : "petit bouton réglage ...
+// modifier, ajouter ou supprimer des onglets en vue pop up"). Remplace l'ancien formulaire
+// intégré au menu "Mode" (trop étroit — champ nom disproportionné). Édition en place (renommer,
+// changer les jeux) + suppression + ajout, tout au même endroit.
+function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView, onCancel }) {
+  const [editingKey, setEditingKey] = useState(null); // null = pas d'édition, "new" = ajout, sinon clé de la vue éditée
+  const [formLabel, setFormLabel] = useState("");
+  const [formKeys, setFormKeys] = useState([]);
+  const jeuVideoByGen = useMemo(() => {
+    const byGen = {};
+    JEU_VIDEO_DEFS.forEach((d) => { (byGen[d.gen] || (byGen[d.gen] = [])).push(d); });
+    return byGen;
+  }, []);
+  const startAdd = () => { setEditingKey("new"); setFormLabel(""); setFormKeys([]); };
+  const startEdit = (v) => { setEditingKey(v.key); setFormLabel(v.label); setFormKeys(v.jeuKeys || []); };
+  const cancelForm = () => { setEditingKey(null); setFormLabel(""); setFormKeys([]); };
+  const toggleFormKey = (k) => {
+    setFormKeys((prev) => {
+      const has = prev.includes(k);
+      const next = has ? prev.filter((x) => x !== k) : [...prev, k];
+      const autoLabel = prev.map((x) => JEU_VIDEO_DEFS.find((d) => d.key === x)?.label).filter(Boolean).join("/");
+      if (!formLabel || formLabel === autoLabel) {
+        setFormLabel(next.map((x) => JEU_VIDEO_DEFS.find((d) => d.key === x)?.label).filter(Boolean).join("/"));
+      }
+      return next;
+    });
+  };
+  const saveForm = async () => {
+    if (formKeys.length === 0 || !formLabel.trim()) return;
+    if (editingKey === "new") await addView(formLabel.trim(), formKeys);
+    else await updateView(editingKey, formLabel.trim(), formKeys);
+    cancelForm();
+  };
+
+  const formOpen = editingKey !== null;
+  const gameLabel = (k) => JEU_VIDEO_DEFS.find((d) => d.key === k)?.label || k;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 15, color: TXT, marginBottom: 4 }}>Vues Jeu — {marque}</div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 14 }}>
+          Chaque vue liste les Pokémon disponibles dans au moins un de ses jeux, et compte pour 1 dans le badge "x/max" de la vue Home + jeu.
+        </div>
+
+        {!formOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {(views || []).length === 0 && (
+              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED, fontStyle: "italic" }}>Aucune vue configurée pour l'instant.</div>
+            )}
+            {(views || []).map((v) => (
+              <div key={v.key} style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${LINE}`, borderRadius: 12, padding: "8px 10px" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, fontWeight: 700 }}>{v.label}</div>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {(v.jeuKeys || []).map(gameLabel).join(", ")}
+                  </div>
+                </div>
+                <button onClick={() => startEdit(v)} title="Modifier" style={{ background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8, width: 30, height: 30, color: MUTED, cursor: "pointer" }}>✎</button>
+                <button onClick={() => removeView(v.key)} title="Supprimer" style={{ background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8, width: 30, height: 30, color: MUTED, cursor: "pointer" }}>✕</button>
+              </div>
+            ))}
+            <button onClick={startAdd} style={{ ...btnGhost, alignSelf: "flex-start" }}>+ Ajouter une vue</button>
+          </div>
+        )}
+
+        {formOpen && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>
+              {editingKey === "new" ? "Nouvelle vue" : "Modifier la vue"}
+            </div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Jeu(x) de la vue (1 ou plusieurs, ex. une paire)</div>
+            <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+              {Object.keys(jeuVideoByGen).map((gen) => (
+                <div key={gen}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED, fontWeight: 700, marginBottom: 4 }}>{gen}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {jeuVideoByGen[gen].map((d) => (
+                      <button
+                        key={d.key}
+                        onClick={() => toggleFormKey(d.key)}
+                        style={{
+                          ...btnGhost, padding: "5px 9px", fontSize: 12,
+                          background: formKeys.includes(d.key) ? PURPLE : "transparent",
+                          color: formKeys.includes(d.key) ? "#fff" : MUTED,
+                          border: `1px solid ${formKeys.includes(d.key) ? PURPLE : LINE}`,
+                        }}
+                      >{d.label}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block" }}>
+              Nom de la vue
+              <input
+                value={formLabel}
+                onChange={(e) => setFormLabel(e.target.value)}
+                placeholder="Nom de la vue"
+                style={{
+                  display: "block", width: "100%", boxSizing: "border-box", marginTop: 4,
+                  background: BG, border: `1px solid ${LINE}`, borderRadius: 10,
+                  padding: "7px 10px", color: TXT, fontFamily: "Inter, sans-serif", fontSize: 13, outline: "none",
+                }}
+              />
+            </label>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={cancelForm} style={btnGhost}>Annuler</button>
+              <button
+                disabled={formKeys.length === 0 || !formLabel.trim()}
+                onClick={saveForm}
+                style={{ ...tabActive, background: formKeys.length === 0 || !formLabel.trim() ? LINE : ACCENT, color: "#fff", opacity: formKeys.length === 0 || !formLabel.trim() ? 0.6 : 1 }}
+              >Enregistrer</button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button onClick={onCancel} style={btnGhost}>Fermer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
   const { flags, setFlags, ready, persist, saveState } = useCollection(gameKey, rows.length);
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
   const [viewMode, setViewMode] = useCachedState(filterCache, gameKey, "viewMode", "list");
@@ -2629,7 +2766,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // Suivi "en jeu" par marque (§ fermeture Banque Pokémon) — entièrement modulable, voir
   // useJeuViews. Vide pour toute marque sans vue configurée, donc sans effet ailleurs que là où
   // l'utilisateur en a créé.
-  const { views: jeuViews, addView: addJeuView, removeView: removeJeuView } = useJeuViews(gameKey);
+  const { views: jeuViews, addView: addJeuView, removeView: removeJeuView, updateView: updateJeuView } = useJeuViews(gameKey);
   const marquePairs = jeuViews || [];
   const hasJeuPairs = marquePairs.length > 0;
   // Vue active : "home_jeu" | "home" | clé d'une vue précise (ex. "sa_ro"). Sans effet pour une
@@ -2692,100 +2829,32 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const viModeOptions = hasJeuPairs
     ? [{ key: "home_jeu", label: "Home + jeu" }, { key: "home", label: "Home" }, ...marquePairs.map((p) => ({ key: p.key, label: p.label }))]
     : [{ key: "home", label: "Home" }];
-  // Formulaire d'ajout de vue (§ demande explicite : "modulable", ajout par un bouton) — choix
-  // d'1 ou plusieurs jeux parmi JEU_VIDEO_DEFS (liste globale des jeux vidéo, groupée par
-  // génération pour rester lisible), avec un libellé éditable pré-rempli depuis la sélection.
-  const [addViewOpen, setAddViewOpen] = useState(false);
-  const [newViewLabel, setNewViewLabel] = useState("");
-  const [newViewKeys, setNewViewKeys] = useState([]);
-  const jeuVideoByGen = useMemo(() => {
-    const byGen = {};
-    JEU_VIDEO_DEFS.forEach((d) => { (byGen[d.gen] || (byGen[d.gen] = [])).push(d); });
-    return byGen;
-  }, []);
-  const toggleNewViewKey = (k) => {
-    setNewViewKeys((prev) => {
-      const has = prev.includes(k);
-      const next = has ? prev.filter((x) => x !== k) : [...prev, k];
-      if (!newViewLabel || prev.map((x) => JEU_VIDEO_DEFS.find((d) => d.key === x)?.label).filter(Boolean).join("/") === newViewLabel) {
-        setNewViewLabel(next.map((x) => JEU_VIDEO_DEFS.find((d) => d.key === x)?.label).filter(Boolean).join("/"));
-      }
-      return next;
-    });
-  };
+  const [jeuViewsSettingsOpen, setJeuViewsSettingsOpen] = useState(false);
   const modeMenuItem = {
     key: "vimode", title: "Mode", icon: BarIcon.dex, active: hasJeuPairs && viMode !== "home_jeu",
     render: (close) => (
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 220 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {viModeOptions.map((m) => (
-            <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 2 }}>
-              <button
-                onClick={() => { setViMode(m.key); close(); }}
-                style={{
-                  ...btnGhost, padding: "7px 12px",
-                  background: viMode === m.key ? PURPLE : "transparent",
-                  color: viMode === m.key ? "#fff" : MUTED,
-                  border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
-                  fontWeight: viMode === m.key ? 800 : 500,
-                }}
-              >{m.label}</button>
-              {m.key !== "home_jeu" && m.key !== "home" && (
-                <button
-                  onClick={() => { if (viMode === m.key) setViMode("home_jeu"); removeJeuView(m.key); }}
-                  title={`Supprimer la vue "${m.label}"`}
-                  style={{ background: "transparent", border: "none", color: MUTED, cursor: "pointer", fontSize: 13, padding: "0 4px" }}
-                >✕</button>
-              )}
-            </div>
-          ))}
-        </div>
-        {!addViewOpen ? (
-          <button onClick={() => setAddViewOpen(true)} style={{ ...btnGhost, alignSelf: "flex-start" }}>+ Ajouter une vue</button>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: `1px solid ${LINE}`, paddingTop: 8 }}>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Jeu(x) de la vue (1 ou plusieurs, ex. une paire)</div>
-            <div style={{ maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
-              {Object.keys(jeuVideoByGen).map((gen) => (
-                <div key={gen}>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, fontWeight: 700, marginBottom: 3 }}>{gen}</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                    {jeuVideoByGen[gen].map((d) => (
-                      <button
-                        key={d.key}
-                        onClick={() => toggleNewViewKey(d.key)}
-                        style={{
-                          ...btnGhost, padding: "4px 8px", fontSize: 11.5,
-                          background: newViewKeys.includes(d.key) ? PURPLE : "transparent",
-                          color: newViewKeys.includes(d.key) ? "#fff" : MUTED,
-                          border: `1px solid ${newViewKeys.includes(d.key) ? PURPLE : LINE}`,
-                        }}
-                      >{d.label}</button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <input
-              value={newViewLabel}
-              onChange={(e) => setNewViewLabel(e.target.value)}
-              placeholder="Nom de la vue"
-              style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}
-            />
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button onClick={() => { setAddViewOpen(false); setNewViewKeys([]); setNewViewLabel(""); }} style={btnGhost}>Annuler</button>
-              <button
-                disabled={newViewKeys.length === 0 || !newViewLabel.trim()}
-                onClick={async () => {
-                  const key = await addJeuView(newViewLabel.trim(), newViewKeys);
-                  setAddViewOpen(false); setNewViewKeys([]); setNewViewLabel("");
-                  setViMode(key); close();
-                }}
-                style={{ ...tabActive, background: newViewKeys.length === 0 || !newViewLabel.trim() ? LINE : ACCENT, color: "#fff", opacity: newViewKeys.length === 0 || !newViewLabel.trim() ? 0.6 : 1 }}
-              >Créer</button>
-            </div>
-          </div>
-        )}
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, minWidth: 200 }}>
+        {viModeOptions.map((m) => (
+          <button
+            key={m.key}
+            onClick={() => { setViMode(m.key); close(); }}
+            style={{
+              ...btnGhost, padding: "7px 12px",
+              background: viMode === m.key ? PURPLE : "transparent",
+              color: viMode === m.key ? "#fff" : MUTED,
+              border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
+              fontWeight: viMode === m.key ? 800 : 500,
+            }}
+          >{m.label}</button>
+        ))}
+        <button
+          onClick={() => { setJeuViewsSettingsOpen(true); close(); }}
+          title="Modifier, ajouter ou supprimer des vues"
+          style={{
+            background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8,
+            width: 30, height: 30, color: MUTED, cursor: "pointer", flexShrink: 0,
+          }}
+        >⚙️</button>
       </div>
     ),
   };
@@ -3064,26 +3133,38 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
 
   if (currentPair) {
     return (
-      <PairModeBlock
-        gameKey={gameKey}
-        pair={currentPair}
-        pairRows={pairRows}
-        filterCache={filterCache}
-        jeuOverrides={jeuOverrides}
-        setJeu={setJeu}
-        jeuOptionsForGame={jeuOptionsForGame}
-        boxOverrides={boxOverrides}
-        setBoxGroup={setBoxGroup}
-        boxGroupOptions={boxGroupOptions}
-        boxGroupRank={boxGroupRank}
-        boxSize={boxSize}
-        boxPrefix={boxPrefix}
-        saveBoxSettings={saveBoxSettings}
-        gameSourcesDict={gameSourcesDict}
-        setSource={setSource}
-        setAllSources={setAllSources}
-        modeMenuItem={modeMenuItem}
-      />
+      <React.Fragment>
+        <PairModeBlock
+          gameKey={gameKey}
+          pair={currentPair}
+          pairRows={pairRows}
+          filterCache={filterCache}
+          jeuOverrides={jeuOverrides}
+          setJeu={setJeu}
+          jeuOptionsForGame={jeuOptionsForGame}
+          boxOverrides={boxOverrides}
+          setBoxGroup={setBoxGroup}
+          boxGroupOptions={boxGroupOptions}
+          boxGroupRank={boxGroupRank}
+          boxSize={boxSize}
+          boxPrefix={boxPrefix}
+          saveBoxSettings={saveBoxSettings}
+          gameSourcesDict={gameSourcesDict}
+          setSource={setSource}
+          setAllSources={setAllSources}
+          modeMenuItem={modeMenuItem}
+        />
+        {jeuViewsSettingsOpen && (
+          <JeuViewsSettingsModal
+            marque={gameKey}
+            views={marquePairs}
+            addView={addJeuView}
+            removeView={removeJeuView}
+            updateView={updateJeuView}
+            onCancel={() => setJeuViewsSettingsOpen(false)}
+          />
+        )}
+      </React.Fragment>
     );
   }
 
@@ -3179,6 +3260,17 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           />
         );
       })()}
+
+      {jeuViewsSettingsOpen && (
+        <JeuViewsSettingsModal
+          marque={gameKey}
+          views={marquePairs}
+          addView={addJeuView}
+          removeView={removeJeuView}
+          updateView={updateJeuView}
+          onCancel={() => setJeuViewsSettingsOpen(false)}
+        />
+      )}
 
       {viewMode === "box" && (
         <BoxGrid
