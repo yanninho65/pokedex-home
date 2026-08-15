@@ -222,7 +222,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.15.19.35";
+const APP_VERSION = "2026.8.15.20.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -12505,6 +12505,8 @@ const HELP_CONTENT = {
     body: [
       "Pokédex complet du jeu sélectionné, avec ses propres formes réellement disponibles dans ce jeu.",
       "Vues Liste, Boîte (rangement par groupe de boîte configurable dans Paramètres) et Grille (colonnes ajustables via \"Par ligne\").",
+      "Icône Pokédex de la barre du bas (marques avec des vues Jeu configurées) : bascule entre Home (uniquement ce que tu as sur Pokémon Home), Home + jeu (agrège Home et tes vues jeu — coche violette si obtenu uniquement en jeu, badge x/max = nombre de vues où ce Pokémon est coché) et une vue par jeu précis (ex. Saphir Alpha). Chaque vue jeu précis a sa propre liste de Pokémon, son propre numéro et son propre groupe de boîte, éditables depuis la fiche de capture — le ⚙️ du menu Mode permet de créer/modifier/supprimer des vues (préréglages de paires/triples proposés, ou choix personnalisé).",
+      "Fiche de capture : pilules \"Disponible dans\" pour indiquer dans quel(s) jeu(x) de la marque (et sur Home) ce Pokémon existe réellement — un Pokémon attrapable en jeu mais non transférable sur Home peut ainsi apparaître en Home + jeu et dans sa vue jeu, sans jamais apparaître dans la vue Home seule.",
       "Filtres : Région, et Taille (Alpha) pour les onglets LA/LZA uniquement.",
       "Bouton cyclique ⟳ : Tous → Attrapés → Manquants. Bouton ↺ : réinitialise les filtres de l'onglet.",
     ],
@@ -12527,6 +12529,7 @@ const HELP_CONTENT = {
       "Marque / Méthode / Détail / Emplacement : listes personnalisées — renommer une valeur ici la renomme partout où elle est utilisée (Shiny, Double, Event, Interjeu, filtres) ; retirer une valeur ne supprime aucune donnée existante.",
       "Catalogue Pokémon : ajout, renommage ou suppression d'une forme, répercuté dans toute l'app.",
       "Jeu (par marque) et Groupe de boîte (par jeu) : listes dédiées à ces deux usages précis.",
+      "Numéro jeu vidéo : numéro affiché dans une vue jeu précise (ex. Saphir Alpha) à la place de celui de la marque — choisis une marque puis une vue, édite en liste ou au cas par cas depuis la fiche de capture. Le groupe de boîte par vue, lui, s'édite uniquement depuis la fiche de capture (même liste de groupes que la marque, juste une affectation différente possible par vue).",
       "Disponibilité par marque : choisis une marque, les pilules du haut montrent les Méthodes/Détails déjà disponibles pour elle (clic pour retirer), \"+ Ajouter\" propose celles qui ne le sont pas encore.",
       "Synchronisation GitHub Gist : renseigne un token (scope \"gist\") pour synchroniser la sauvegarde entre appareils via le bouton 🔗 de l'en-tête — reste complémentaire à l'export/import JSON, pas un remplacement.",
     ],
