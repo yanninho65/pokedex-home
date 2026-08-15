@@ -222,7 +222,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.15.20.10";
+const APP_VERSION = "2026.8.15.21.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -7909,6 +7909,11 @@ function buildFullCatalogOverrides() {
       const gnum = DATA.games[g][gi][0];
       if (String(gnum) !== String(row[0])) gameNumbers[g] = gnum;
     });
+    // § correctif : cette reconstruction "complète" remplace entièrement la valeur lue en
+    // stockage (voir buildExportOut) — tout champ absent d'ici disparaît silencieusement de
+    // chaque export JSON ET de chaque synchro Gist (les deux passent par cette fonction).
+    // `jeuVideo` (disponibilité par jeu précis, §5ter/§4) avait été oublié à sa création.
+    const jv = DATA.jeuVideo && DATA.jeuVideo[key];
     out[row.__baseKey] = {
       nom: row[1], forme: row[2] || null, nat: row[0], region: row[3] || undefined,
       evolution: DATA.evolutionMode[key] || "-",
@@ -7916,6 +7921,7 @@ function buildFullCatalogOverrides() {
       famille: row[14] != null ? row[14] : null,
       inHomeDex: !!(DATA.homeDex && DATA.homeDex[key]),
       games, gameNumbers,
+      jeuVideo: (jv && Object.keys(jv).length > 0) ? jv : undefined,
       storageKey: key, // déjà à jour, aucun renommage en attente pour cette entrée
     };
   });
