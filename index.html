@@ -177,7 +177,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.14.15.30";
+const APP_VERSION = "2026.8.15.13.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2724,7 +2724,7 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
   );
 }
 
-
+function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
   const { flags, setFlags, ready, persist, saveState } = useCollection(gameKey, rows.length);
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
   const [viewMode, setViewMode] = useCachedState(filterCache, gameKey, "viewMode", "list");
@@ -10747,6 +10747,7 @@ const EXCEL_SHEETS = [
   { key: "interjeu", label: "Interjeu" },
   { key: "listes", label: "Listes" },
   { key: "jeuxmarque", label: "Jeu par marque" },
+  { key: "vuesjeu", label: "Vues Jeu" },
   { key: "boitesgroupes", label: "Groupe de boîte" },
   { key: "dispo", label: "Disponibilité" },
   { key: "go1", label: "Go 1" },
@@ -11059,6 +11060,26 @@ async function buildJeuxMarqueSheetRows() {
   return rows;
 }
 
+// Définitions des vues Jeu (§ demande explicite : "gérables par Excel aussi") — une ligne par
+// vue (pas par jeu comme "Jeu par marque"), colonne "Jeux" = jeux de la vue séparés par ", "
+// (labels JEU_VIDEO_DEFS, ex. "Saphir Alpha, Rubis Oméga"). Ne couvre que les DÉFINITIONS des
+// vues (nom + jeux qui la composent) — le statut "attrapé dans cette vue" par Pokémon reste dans
+// les colonnes EnJeu_<clé> de la feuille de chaque marque (déjà géré, voir buildGameSheetRows).
+async function buildJeuVuesSheetRows() {
+  const all = await storageGetJSON("custom_jeu_views", {});
+  const rows = [];
+  Object.keys(all).forEach((marque) => {
+    (all[marque] || []).forEach((v) => {
+      rows.push({
+        Marque: marque,
+        Nom: v.label,
+        Jeux: (v.jeuKeys || []).map((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).label || k).join(", "),
+      });
+    });
+  });
+  return rows;
+}
+
 async function buildBoitesGroupesSheetRows() {
   const groups = await storageGetJSON("custom_box_groups", {});
   const settings = await storageGetJSON("box_settings", {});
@@ -11224,6 +11245,7 @@ async function buildExcelWorkbook(selectedKeys) {
     else if (sheetDef.key === "interjeu") rows = await buildInterjeuSheetRows();
     else if (sheetDef.key === "listes") rows = await buildListesSheetRows();
     else if (sheetDef.key === "jeuxmarque") rows = await buildJeuxMarqueSheetRows();
+    else if (sheetDef.key === "vuesjeu") rows = await buildJeuVuesSheetRows();
     else if (sheetDef.key === "boitesgroupes") rows = await buildBoitesGroupesSheetRows();
     else if (sheetDef.key === "dispo") rows = await buildDispoSheetRows();
     else if (sheetDef.key === "go1") rows = await buildGo1SheetRows();
@@ -11561,6 +11583,45 @@ async function importJeuxMarqueSheet(rows, mode) {
   await window.storage.set("custom_jeux", JSON.stringify(next), false);
 }
 
+// Miroir de importJeuxMarqueSheet pour les vues Jeu — une ligne par vue. Une vue déjà existante
+// (même Marque + même Nom) garde sa clé interne et voit juste ses jeux mis à jour, pour ne pas
+// perdre les cases déjà cochées dans game_tab_sources (EnJeu_<clé> des feuilles par marque) ;
+// une ligne sans correspondance crée une nouvelle vue.
+async function importJeuVuesSheet(rows, mode) {
+  const readJSON = async (key, fb) => {
+    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
+    return fb;
+  };
+  const byMarque = {};
+  rows.forEach((r) => {
+    const marque = String(r.Marque || "").trim();
+    const label = String(r.Nom || "").trim();
+    if (!marque || !label) return;
+    const jeuLabels = String(r.Jeux || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const jeuKeys = jeuLabels
+      .map((lbl) => {
+        const found = JEU_VIDEO_DEFS.find((d) => d.label.toLowerCase() === lbl.toLowerCase() || d.key === lbl);
+        return found ? found.key : null;
+      })
+      .filter(Boolean);
+    if (jeuKeys.length === 0) return;
+    (byMarque[marque] || (byMarque[marque] = [])).push({ label, jeuKeys });
+  });
+  const existing = mode === "replace" ? {} : await readJSON("custom_jeu_views", {});
+  const next = mode === "replace" ? {} : { ...existing };
+  Object.keys(byMarque).forEach((marque) => {
+    const existingList = mode === "replace" ? [] : (existing[marque] || []);
+    const result = [];
+    byMarque[marque].forEach((entry) => {
+      const match = existingList.find((v) => v.label === entry.label);
+      if (match) result.push({ key: match.key, label: entry.label, jeuKeys: entry.jeuKeys });
+      else result.push({ key: "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 4), label: entry.label, jeuKeys: entry.jeuKeys });
+    });
+    next[marque] = result;
+  });
+  await window.storage.set("custom_jeu_views", JSON.stringify(next), false);
+}
+
 async function importBoitesGroupesSheet(rows, mode) {
   const readJSON = async (key, fb) => {
     try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
@@ -11632,6 +11693,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     else if (sheetName === "Interjeu") { await importInterjeuSheet(rows, mode); touched++; }
     else if (sheetName === "Listes") { await importListesSheet(rows, mode); touched++; }
     else if (sheetName === "Jeu par marque") { await importJeuxMarqueSheet(rows, mode); touched++; }
+    else if (sheetName === "Vues Jeu") { await importJeuVuesSheet(rows, mode); touched++; }
     else if (sheetName === "Groupe de boîte") { await importBoitesGroupesSheet(rows, mode); touched++; }
     else if (sheetName === "Disponibilité") { await importDispoSheet(rows, mode); touched++; }
     else if (sheetName === "Go 1") { await importGo1Sheet(rows, mode); touched++; }
