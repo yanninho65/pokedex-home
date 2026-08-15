@@ -17,9 +17,15 @@
 <div id="root"></div>
 <script>
   window.storage = {
+    // § correctif : auparavant, une clé absente (première utilisation) levait une exception —
+    // tout bloc "lire l'existant puis écrire" (motif très répandu dans le fichier : get() suivi
+    // d'un set() dans le MÊME try) voyait alors son écriture silencieusement annulée par le catch
+    // englobant, dès la toute première fois qu'une nouvelle clé de stockage était utilisée (ex. :
+    // game_view_box_group_overrides jamais écrite tant qu'aucun groupe de boîte par vue n'avait
+    // encore été enregistré). Retourne désormais { value: null } plutôt que de lever — équivalent
+    // pour tout code qui teste déjà `res && res.value`, mais laisse la suite du bloc s'exécuter.
     get: async (key, shared) => {
       const raw = localStorage.getItem("pkdx_" + key);
-      if (raw === null) throw new Error("not found");
       return { key, value: raw, shared: !!shared };
     },
     set: async (key, value, shared) => {
@@ -222,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.15.21.05";
+const APP_VERSION = "2026.8.16.09.15";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
