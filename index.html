@@ -222,7 +222,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.15.18.05";
+const APP_VERSION = "2026.8.15.19.35";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -788,6 +788,16 @@ function useCustomLists() {
         const res = await window.storage.get("custom_marques", false);
         if (res && res.value) m = JSON.parse(res.value);
       } catch (e) {}
+      // Toute marque structurelle (GAME_ORDER, ex. GBA/VV nouvellement créées) doit être
+      // sélectionnable dans les champs "Marque" (Shiny/Double/Event/Interjeu) même sans capture
+      // existante — ces champs s'alimentent de custom_marques + valeurs déjà utilisées, jamais
+      // synchronisé automatiquement avec GAME_ORDER sinon. Complété au chargement plutôt que
+      // d'exiger un ajout manuel via Paramètres à chaque nouvelle marque.
+      const missingMarques = GAME_ORDER.filter((g) => !m.includes(g));
+      if (missingMarques.length > 0) {
+        m = [...m, ...missingMarques];
+        try { await window.storage.set("custom_marques", JSON.stringify(m), false); } catch (e) {}
+      }
       try {
         const res = await window.storage.get("custom_modes", false);
         if (res && res.value) mo = JSON.parse(res.value);
@@ -2332,9 +2342,7 @@ function useAllGameTabSources() {
 // Numéro spécifique à une vue jeu (§ demande explicite : "chaque Pokémon peut avoir un numéro...
 // différent de celui de la marque, géré au niveau paire/triple"). Par défaut, numéro de la
 // marque (`r[0]`, inchangé) ; un override explicite ici le remplace uniquement dans cette vue —
-// jamais dans Home/Home + jeu, qui continuent d'afficher le numéro de la marque. Le groupe de
-// boîte, lui, reste volontairement celui de la marque (§ demande explicite : "pour groupe de
-// boîtes, utiliser ceux de la marque") — pas de mécanisme équivalent nécessaire.
+// jamais dans Home/Home + jeu, qui continuent d'afficher le numéro de la marque.
 // Stockage `game_view_number_overrides` = { [marque]: { [vueKey]: { "nom|forme": numero } } }.
 function useGameViewNumberOverrides(marque, viewKey) {
   const [dict, setDict] = useState(null);
@@ -2368,6 +2376,49 @@ function useGameViewNumberOverrides(marque, viewKey) {
     setDict(forView);
   };
   return { dict, setNumber };
+}
+
+// Groupe de boîte spécifique à une vue jeu (§ précision explicite : "un Pokémon peut avoir un
+// groupe de boîte... différent en fonction des jeux", ex. X/Y range son Pokédex par emplacement
+// dans Kalos) — la LISTE des valeurs possibles reste celle de la marque (boxGroupOptions,
+// inchangé, § "pour groupe de boîtes, utiliser ceux de la marque"), seule l'AFFECTATION par
+// Pokémon peut différer ici. Un override ici prend le pas sur le groupe de la marque, y compris
+// pour le rangement réel en vue Boîte de cette vue (voir PairModeBlock, `effectiveOverridesForPair`
+// fusionné avant `computeGameSortOrder`/`computeGameBoxes` — aucune modification de ces fonctions
+// partagées nécessaire). Jamais utilisé en Home/Home + jeu, qui gardent le groupe de la marque.
+// Stockage `game_view_box_group_overrides` = { [marque]: { [vueKey]: { "nom|forme": groupe } } }.
+function useGameViewBoxGroupOverrides(marque, viewKey) {
+  const [dict, setDict] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setDict(null);
+    (async () => {
+      let forView = {};
+      try {
+        const res = await window.storage.get("game_view_box_group_overrides", false);
+        const all = res && res.value ? JSON.parse(res.value) : {};
+        forView = (all[marque] && all[marque][viewKey]) || {};
+      } catch (e) {}
+      if (!cancelled) setDict(forView);
+    })();
+    return () => { cancelled = true; };
+  }, [marque, viewKey]);
+  const setGroup = async (key, value) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("game_view_box_group_overrides", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const forMarque = { ...(all[marque] || {}) };
+    const forView = { ...(forMarque[viewKey] || {}) };
+    if (value === "" || value === null || value === undefined) delete forView[key];
+    else forView[key] = value;
+    forMarque[viewKey] = forView;
+    all = { ...all, [marque]: forMarque };
+    try { await window.storage.set("game_view_box_group_overrides", JSON.stringify(all), false); } catch (e) {}
+    setDict(forView);
+  };
+  return { dict, setGroup };
 }
 
 // Vues "jeu précis" par marque — entièrement éditables par l'utilisateur (§ demande explicite :
@@ -2555,18 +2606,28 @@ function PairModeBlock({
     const ov = numberOverrides && numberOverrides[key];
     return ov !== undefined && ov !== null && ov !== "" ? ov : (r.n ?? "—");
   };
+  // Groupe de boîte spécifique à cette vue (§ précision explicite : "un Pokémon peut avoir un
+  // groupe de boîte... différent en fonction des jeux", ex. X/Y range par emplacement Kalos) —
+  // fusionné PAR-DESSUS les overrides de la marque (priorité à la vue) avant de servir de source
+  // au tri/rangement réel des boîtes ci-dessous : aucune modification de computeGameSortOrder/
+  // computeGameBoxes/effectiveBoxGroup (partagées avec toutes les autres vues) n'est nécessaire.
+  const { dict: boxGroupViewOverrides, setGroup: setViewBoxGroup } = useGameViewBoxGroupOverrides(gameKey, pair.key);
+  const effectiveOverridesForPair = useMemo(
+    () => ({ ...(boxOverrides || {}), ...(boxGroupViewOverrides || {}) }),
+    [boxOverrides, boxGroupViewOverrides]
+  );
 
   const sources = gameSourcesDict || {};
   const isInPairKey = (key) => (sources[key] || []).includes(pair.key);
   const isInPairIdx = (i) => isInPairKey(boxGroupKeyFor(pairRows[i][1], pairRows[i][2]));
 
   const sortOrder = useMemo(
-    () => computeGameSortOrder(gameKey, pairRows, boxOverrides || {}, boxGroupRank),
-    [gameKey, pairRows, boxOverrides, boxGroupRank]
+    () => computeGameSortOrder(gameKey, pairRows, effectiveOverridesForPair, boxGroupRank),
+    [gameKey, pairRows, effectiveOverridesForPair, boxGroupRank]
   );
   const boxInfo = useMemo(
-    () => computeGameBoxes(gameKey, pairRows, boxOverrides || {}, boxSize, boxPrefix, sortOrder),
-    [gameKey, pairRows, boxOverrides, boxSize, boxPrefix, sortOrder]
+    () => computeGameBoxes(gameKey, pairRows, effectiveOverridesForPair, boxSize, boxPrefix, sortOrder),
+    [gameKey, pairRows, effectiveOverridesForPair, boxSize, boxPrefix, sortOrder]
   );
 
   const regions = useMemo(() => {
@@ -2661,13 +2722,18 @@ function PairModeBlock({
         const sep = multiDetailKey.indexOf("|");
         const nom = sep === -1 ? multiDetailKey : multiDetailKey.slice(0, sep);
         const forme = sep === -1 ? null : (multiDetailKey.slice(sep + 1) || null);
-        const marqueRow = pairRows.find((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
+        const rowIdx = pairRows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
+        const marqueRow = rowIdx !== -1 ? pairRows[rowIdx] : null;
         const marqueNumber = marqueRow ? marqueRow[0] : natInfoFor(nom, forme).n;
+        // Groupe actuellement effectif pour CETTE vue (override de vue s'il existe, sinon celui
+        // de la marque) — c'est lui qu'affiche déjà la liste via boxInfo, donc la fiche doit
+        // montrer la même valeur plutôt que systématiquement celle de la marque.
+        const currentGroupEffective = rowIdx !== -1 ? ((boxInfo[rowIdx] && boxInfo[rowIdx].groupe) || "") : "";
         return (
           <BoxGroupModal
             nom={nom}
             forme={forme}
-            currentGroup={(boxOverrides && boxOverrides[multiDetailKey]) || ""}
+            currentGroup={currentGroupEffective}
             options={boxGroupOptions}
             currentJeu={(jeuOverrides && jeuOverrides[multiDetailKey]) || ""}
             jeuOptions={jeuOptionsForGame}
@@ -2678,7 +2744,7 @@ function PairModeBlock({
             numberPlaceholder={marqueNumber}
             onCancel={() => setMultiDetailKey(null)}
             onSave={(group, jeu, numero) => {
-              setBoxGroup(multiDetailKey, group);
+              setViewBoxGroup(multiDetailKey, group);
               setJeu(multiDetailKey, jeu);
               setViewNumber(multiDetailKey, numero);
               setMultiDetailKey(null);
@@ -8768,7 +8834,15 @@ function SettingsView({
       readJSON("mode_marques", {}),
       readJSON("detail_marques", {}),
     ]);
-    setCustomMarques(m);
+    // Voir useCustomLists : même complétion automatique, pour que Paramètres affiche la bonne
+    // liste même si c'est le premier écran ouvert dans la session.
+    let mFixed = m;
+    const missingMarques = GAME_ORDER.filter((g) => !mFixed.includes(g));
+    if (missingMarques.length > 0) {
+      mFixed = [...mFixed, ...missingMarques];
+      try { await window.storage.set("custom_marques", JSON.stringify(mFixed), false); } catch (e) {}
+    }
+    setCustomMarques(mFixed);
     setCustomModes(mo);
     setCustomLocations(lo);
     setCustomJeux(je);
@@ -11386,6 +11460,17 @@ async function buildGameSheetRows(g) {
       numbersForMarque = all[g] || {};
     } catch (e) {}
   }
+  // Groupe de boîte spécifique à une vue (§ précision explicite : "un Pokémon peut avoir un
+  // groupe de boîte... différent en fonction des jeux") — une colonne "GroupeVue_<clé de vue>"
+  // par vue, valeur vide si pas d'override (groupe de la marque utilisé).
+  let boxGroupsForMarqueByView = {};
+  if (marquePairs.length > 0) {
+    try {
+      const res = await window.storage.get("game_view_box_group_overrides", false);
+      const all = res && res.value ? JSON.parse(res.value) : {};
+      boxGroupsForMarqueByView = all[g] || {};
+    } catch (e) {}
+  }
   return base.map((r, i) => {
     const key = r[1] + "|" + (r[2] || "");
     const row = {
@@ -11397,6 +11482,8 @@ async function buildGameSheetRows(g) {
       row["EnJeu_" + p.key] = (sourcesForGame[key] || []).includes(p.key) ? 1 : 0;
       const ov = (numbersForMarque[p.key] || {})[key];
       row["NumeroVue_" + p.key] = ov !== undefined && ov !== null ? ov : "";
+      const ovg = (boxGroupsForMarqueByView[p.key] || {})[key];
+      row["GroupeVue_" + p.key] = ovg !== undefined && ovg !== null ? ovg : "";
     });
     return row;
   });
@@ -11832,6 +11919,7 @@ async function importGameSheet(g, rows, mode) {
   } catch (e) {}
   const enJeuColumns = marquePairs.filter((p) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "EnJeu_" + p.key));
   const numeroColumns = marquePairs.filter((p) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "NumeroVue_" + p.key));
+  const groupeVueColumns = marquePairs.filter((p) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "GroupeVue_" + p.key));
   let jeuForGame = {};
   if (hasJeuColumn) {
     try {
@@ -11869,6 +11957,16 @@ async function importGameSheet(g, rows, mode) {
     numbersForMarque = { ...(numbersAll[g] || {}) };
     numeroColumns.forEach((p) => { numbersForMarque[p.key] = { ...(numbersForMarque[p.key] || {}) }; });
   }
+  let boxGroupVueAll = {};
+  let boxGroupVueForMarque = {};
+  if (groupeVueColumns.length > 0) {
+    try {
+      const res = await window.storage.get("game_view_box_group_overrides", false);
+      boxGroupVueAll = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    boxGroupVueForMarque = { ...(boxGroupVueAll[g] || {}) };
+    groupeVueColumns.forEach((p) => { boxGroupVueForMarque[p.key] = { ...(boxGroupVueForMarque[p.key] || {}) }; });
+  }
   let matched = 0;
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
@@ -11904,6 +12002,11 @@ async function importGameSheet(g, rows, mode) {
         const raw = row["NumeroVue_" + p.key];
         const val = raw === undefined || raw === null ? "" : String(raw).trim();
         if (val) numbersForMarque[p.key][key] = val; else delete numbersForMarque[p.key][key];
+      });
+      groupeVueColumns.forEach((p) => {
+        const raw = row["GroupeVue_" + p.key];
+        const val = raw === undefined || raw === null ? "" : String(raw).trim();
+        if (val) boxGroupVueForMarque[p.key][key] = val; else delete boxGroupVueForMarque[p.key][key];
       });
       matched++;
     }
@@ -11942,6 +12045,14 @@ async function importGameSheet(g, rows, mode) {
       const all = res && res.value ? JSON.parse(res.value) : {};
       all[g] = numbersForMarque;
       await window.storage.set("game_view_number_overrides", JSON.stringify(all), false);
+    } catch (e) {}
+  }
+  if (groupeVueColumns.length > 0) {
+    try {
+      const res = await window.storage.get("game_view_box_group_overrides", false);
+      const all = res && res.value ? JSON.parse(res.value) : {};
+      all[g] = boxGroupVueForMarque;
+      await window.storage.set("game_view_box_group_overrides", JSON.stringify(all), false);
     } catch (e) {}
   }
   return matched;
@@ -13527,6 +13638,8 @@ function App() {
     "game_jeu_overrides",
     "game_tab_sources",
     "custom_jeu_views",
+    "game_view_number_overrides",
+    "game_view_box_group_overrides",
   ];
 
   const buildExportOut = async () => {
