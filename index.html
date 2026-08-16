@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.10.05";
+const APP_VERSION = "2026.8.16.16.55";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -6364,7 +6364,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
         if (!rec.fromInterjeu) return;
         currentTagged[linkId(rec.fromInterjeu)] = rec.fromInterjeu;
         const it = findMatchingItem(rec.fromInterjeu);
-        if (catchLocation(rec) === DEFAULT_LOCATION || (it && /^Home/i.test(it.ou || ""))) {
+        if (catchLocation(rec) === DEFAULT_LOCATION || (it && it.ou === DEFAULT_LOCATION)) {
           confirmedLinks.push(rec.fromInterjeu);
         }
       }));
@@ -6374,7 +6374,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
         if (!rec.fromInterjeu) return;
         currentTagged[linkId(rec.fromInterjeu)] = rec.fromInterjeu;
         const it = findMatchingItem(rec.fromInterjeu);
-        if (catchLocation(rec) === DEFAULT_LOCATION || (it && /^Home/i.test(it.ou || ""))) {
+        if (catchLocation(rec) === DEFAULT_LOCATION || (it && it.ou === DEFAULT_LOCATION)) {
           confirmedLinks.push(rec.fromInterjeu);
         }
       }));
@@ -6721,7 +6721,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
 
   if (!ready || !items) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
 
-  const homeCount = catalog.filter((r) => /^Home/i.test(r.ou || "")).length;
+  const homeCount = catalog.filter((r) => r.ou === DEFAULT_LOCATION).length;
   const selectedEntry = selected ? catalog.find((r) => r.key === selected) : null;
 
   return (
@@ -6750,7 +6750,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
 
       {selectedEntry && (() => {
         const r = selectedEntry;
-        const isHome = /^Home/i.test(r.ou || "");
+        const isHome = r.ou === DEFAULT_LOCATION;
         // Vérification "déjà attrapé ?" désormais calculée pour toutes les entrées, pas
         // seulement celles actuellement en Home (demande explicite) — voir bloc dédié plus bas.
         const status = targetStatus(r);
@@ -10635,7 +10635,7 @@ function NationalDetailTable({ onOpenNational, onOpenShiny, onOpenEvent, onOpenD
     let sum = 0;
     if (interjeuLive) {
       interjeuLive.forEach((it) => {
-        if (!/^Home/i.test(it.ou || "")) return;
+        if (it.ou !== DEFAULT_LOCATION) return;
         sum++;
         const game = resolveInterjeuGame(it.marque);
         if (game && Object.prototype.hasOwnProperty.call(perMarque, game)) perMarque[game]++;
@@ -10938,7 +10938,7 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     return sum;
   }, [doubleCatchesLive]);
   const eventTotal = useMemo(() => (eventsLive || []).filter((e) => e.attrape).length, [eventsLive]);
-  const interjeuHomeTotal = useMemo(() => (interjeuLive || []).filter((it) => /^Home/i.test(it.ou || "")).length, [interjeuLive]);
+  const interjeuHomeTotal = useMemo(() => (interjeuLive || []).filter((it) => it.ou === DEFAULT_LOCATION).length, [interjeuLive]);
   // Alpha (α) : National (LA/LZA, via alpha_caught) + Shiny (Home 1) + Event (marque LA/LZA
   // attrapée — seuls jeux avec mécanique Alpha, même convention que le filtre "Taille" de Event).
   const alphaTotal = useMemo(() => {
@@ -11022,7 +11022,7 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     // Interjeu : uniquement les entrées actuellement dans Home (même convention que le reste
     // des agrégats Interjeu — voir Total Home).
     if (interjeuLive) {
-      interjeuLive.forEach((it) => { if (/^Home/i.test(it.ou || "")) bump(it.jeu, it.marque, "interjeu"); });
+      interjeuLive.forEach((it) => { if (it.ou === DEFAULT_LOCATION) bump(it.jeu, it.marque, "interjeu"); });
     }
     return Array.from(allDO).sort().map((v) => ({ do: v, count: counts[v] || 0, marques: marquesByDO[v] || new Set(), tabs: tabCountsByDO[v] || {} }));
   }, [customJeux, gameJeuOverridesAll, shinyCatchesLive, doubleCatchesLive, eventsLive, interjeuLive]);
@@ -11102,7 +11102,7 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     if (!interjeuLive) return 0;
     let sum = 0;
     interjeuLive.forEach((it) => {
-      if (!/^Home/i.test(it.ou || "")) return;
+      if (it.ou !== DEFAULT_LOCATION) return;
       const game = resolveInterjeuGame(it.marque);
       if (game && GAME_ORDER.includes(game)) sum++;
     });
