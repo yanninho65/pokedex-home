@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.16.55";
+const APP_VERSION = "2026.8.16.17.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -6722,6 +6722,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   if (!ready || !items) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
 
   const homeCount = catalog.filter((r) => r.ou === DEFAULT_LOCATION).length;
+  const home2Count = catalog.filter((r) => r.ou === "Home 2").length;
   const selectedEntry = selected ? catalog.find((r) => r.key === selected) : null;
 
   return (
@@ -6733,6 +6734,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
       }}>
         <StatBlock value={total} label="interjeu" color={INTERJEU} />
         <StatBlock value={homeCount} label="Home 1" color={OK} />
+        {home2Count > 0 && <StatBlock value={home2Count} label="Home 2" color={ACCENT} />}
         {otherLocationStats.map(({ loc, count }) => (
           <StatBlock key={loc} value={count} label={loc} color={TXT} />
         ))}
