@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.23.30";
+const APP_VERSION = "2026.8.17.00.20";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -13193,6 +13193,65 @@ function Go1View({ filterCache }) {
   const anyFilterActive = region !== null || sortiFilter !== null || statusFilter !== "all";
   const resetFilters = () => { setRegion(null); setSortiFilter(null); setStatusFilter("all"); };
 
+  // Bouton "📋" (mode Parfait uniquement, § doc §Recherche Go) : repère chaque famille
+  // d'évolution ayant au moins une espèce marquée Parfait, puis liste les NUMÉROS NATIONAUX de
+  // TOUS les membres de ces familles (via `familyMembersOf`, y compris ceux déjà marqués Parfait
+  // — § correctif explicite : pas seulement les manquants), triés, séparés par une virgule —
+  // pratique pour rechercher toute la ligne d'évolution dans Pokémon GO. Suffixe mémorisable,
+  // ajouté après la liste. Pas de filtre automatique appliqué au clic (§ correctif explicite).
+  const speciesByNumber = useMemo(() => {
+    const map = new Map();
+    NAT_ALL_FORMS.forEach((f) => { if (!map.has(f.n)) map.set(f.n, f); });
+    return map;
+  }, []);
+  const parfaitFamilyInfo = useMemo(() => {
+    if (mode !== "parfait" || !currentDict) return { numbers: [] };
+    const famSet = new Set();
+    const soloNames = new Set();
+    Object.keys(currentDict).forEach((natStr) => {
+      const sp = speciesByNumber.get(Number(natStr));
+      if (!sp) return;
+      if (sp.famille != null) famSet.add(sp.famille);
+      else soloNames.add(sp.nom);
+    });
+    const names = new Set(soloNames);
+    famSet.forEach((fam) => {
+      const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
+      if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
+    });
+    const numbers = [];
+    names.forEach((nom) => {
+      const sp = NAT_ALL_FORMS.find((f) => f.nom === nom);
+      if (sp) numbers.push(sp.n);
+    });
+    numbers.sort((a, b) => a - b);
+    return { numbers };
+  }, [mode, currentDict, speciesByNumber]);
+
+  const [parfaitSuffix, setParfaitSuffix] = useState("");
+  const [parfaitSavedSuffix, setParfaitSavedSuffix] = useState(null);
+  useEffect(() => {
+    (async () => {
+      let v = "";
+      try {
+        const res = await window.storage.get("parfait_search_suffix", false);
+        if (res && res.value != null) v = res.value;
+      } catch (e) {}
+      setParfaitSuffix(v);
+      setParfaitSavedSuffix(v);
+    })();
+  }, []);
+  const rememberParfaitSuffix = async () => {
+    try { await window.storage.set("parfait_search_suffix", parfaitSuffix, false); } catch (e) {}
+    setParfaitSavedSuffix(parfaitSuffix);
+  };
+  const [parfaitCopyFeedback, setParfaitCopyFeedback] = useState("");
+  const copyParfaitFamilies = async () => {
+    const str = parfaitFamilyInfo.numbers.join(",") + parfaitSuffix;
+    const ok = await copyToClipboard(str);
+    setParfaitCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
+  };
+
   if (!currentDict) {
     return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
   }
@@ -13310,6 +13369,41 @@ function Go1View({ filterCache }) {
               </div>
             ),
           },
+          ...(mode === "parfait" ? [{
+            key: "parfaitFamilies", title: "Familles Parfait", icon: BarIcon.clipboard,
+            render: () => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
+                  {parfaitFamilyInfo.numbers.length} Pokémon (familles Parfait, membres attrapés inclus)
+                </div>
+                <button
+                  onClick={copyParfaitFamilies}
+                  style={{ ...tabActive, background: modeDef.color, color: BG }}
+                  disabled={parfaitFamilyInfo.numbers.length === 0}
+                >📋 Copier la liste ({parfaitFamilyInfo.numbers.length})</button>
+                {parfaitCopyFeedback && (
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{parfaitCopyFeedback}</div>
+                )}
+                <textarea
+                  readOnly
+                  value={parfaitFamilyInfo.numbers.join(",") + parfaitSuffix}
+                  onFocus={(e) => e.target.select()}
+                  style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
+                />
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    value={parfaitSuffix}
+                    onChange={(e) => setParfaitSuffix(e.target.value)}
+                    placeholder="Suffixe (optionnel, ajouté après la liste)"
+                    style={{ ...inputStyle, flex: 1 }}
+                  />
+                  {parfaitSavedSuffix !== null && parfaitSuffix !== parfaitSavedSuffix && (
+                    <button onClick={rememberParfaitSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
+                  )}
+                </div>
+              </div>
+            ),
+          }] : []),
         ]}
       />
     </div>
@@ -13951,343 +14045,6 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   );
 }
 
-// ---- Onglet "Parfait" (§ demande explicite : ré-implémente le bouton "📋 Recherche Go" du mode
-// Parfait de Go 1 sous forme d'onglet complet, même présentation/fonctions que Home 2) --------
-// Catalogue = TOUS les membres des familles d'évolution ayant au moins une espèce marquée
-// Parfait dans Go 1 (`go1_parfait`, clé = numéro national, suivi par ESPÈCE — pas de distinction
-// de forme, donc pas de bascule "Par forme/Par Pokémon" ici, contrairement à Home 2). Cocher une
-// case ici bascule directement `go1_parfait` — même donnée que le mode "Parfait" de Go 1, pas un
-// suivi séparé, pour rester la source de vérité unique.
-const PARFAIT_VIEW_OPTIONS = [["list", "Liste"], ["grille", "Grille"]];
-
-function ParfaitFamiliesView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
-  const [parfait, setParfait] = useState(null); // { "<numéro national>": 1, ... }
-  const readParfait = async () => {
-    let d = {};
-    try {
-      const res = await window.storage.get("go1_parfait", false);
-      d = res && res.value ? JSON.parse(res.value) : {};
-    } catch (e) {}
-    return d;
-  };
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const d = await readParfait();
-      if (!cancelled) setParfait(d);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-  const toggleParfait = async (nat) => {
-    const d = await readParfait();
-    const next = { ...d };
-    if (next[nat]) delete next[nat]; else next[nat] = 1;
-    try { await window.storage.set("go1_parfait", JSON.stringify(next), false); } catch (e) {}
-    setParfait(next);
-  };
-
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange("saved"); }, []);
-  const [viewMode, setViewMode] = useCachedState(filterCache, "parfaitfam", "viewMode", "list");
-  const [search, setSearch] = useCachedState(filterCache, "parfaitfam", "search", "");
-  const [filter, setFilter] = useCachedState(filterCache, "parfaitfam", "filter", "all"); // "all" | "caught" | "missing"
-  const [region, setRegion] = useCachedState(filterCache, "parfaitfam", "region", null);
-  const anyFilterActive = filter !== "all" || region !== null;
-
-  useEffect(() => {
-    if (!initialFilter) return;
-    if (initialFilter.status) setFilter(initialFilter.status);
-    if (initialFilter.region) setRegion(new Set([initialFilter.region]));
-    if (onConsumeFilter) onConsumeFilter();
-    // eslint-disable-next-line
-  }, [initialFilter]);
-
-  const [mode, setMode] = useCachedState(filterCache, "parfaitfam", "mode", "forme"); // "forme" | "espece" — même bascule que Home 2
-  const [gridCols, setGridCols] = useCachedState(filterCache, "parfaitfam", "gridCols", 4); // 4 par ligne par défaut, comme Go 1 (§ demande explicite)
-  const windowWidth = useWindowWidth();
-  const effCols = effectiveGridCols(gridCols, windowWidth);
-  const [limit, setLimit] = useState(150);
-  useEffect(() => { setLimit(150); }, [search, filter, region, mode, viewMode]);
-
-  // Une entrée représentative par numéro national (Parfait est un suivi par ESPÈCE, pas par forme
-  // — la case "attrapé" est donc partagée par toutes les formes d'une même espèce, y compris en
-  // vue "Par forme" ci-dessous).
-  const speciesByNumber = useMemo(() => {
-    const map = new Map();
-    NAT_ALL_FORMS.forEach((f) => { if (!map.has(f.n)) map.set(f.n, f); });
-    return map;
-  }, []);
-
-  // Noms des espèces membres des familles ayant au moins une espèce marquée Parfait.
-  const memberNames = useMemo(() => {
-    if (!parfait) return new Set();
-    const famSet = new Set();
-    const soloNames = new Set();
-    Object.keys(parfait).forEach((natStr) => {
-      const sp = speciesByNumber.get(Number(natStr));
-      if (!sp) return;
-      if (sp.famille != null) famSet.add(sp.famille);
-      else soloNames.add(sp.nom);
-    });
-    const names = new Set(soloNames);
-    famSet.forEach((fam) => {
-      const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
-      if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
-    });
-    return names;
-  }, [parfait, speciesByNumber]);
-
-  // Catalogue "Par Pokémon" : une ligne par espèce (§ historique — inchangé).
-  const especeCatalog = useMemo(() => {
-    const rows = [];
-    const seen = new Set();
-    memberNames.forEach((nom) => {
-      if (seen.has(nom)) return;
-      const any = NAT_ALL_FORMS.find((f) => f.nom === nom);
-      if (any) { seen.add(nom); rows.push(any); }
-    });
-    return rows.sort((a, b) => a.n - b.n);
-  }, [memberNames]);
-
-  // Catalogue "Par forme" (§ demande explicite, même bascule que Home 2) : toutes les formes des
-  // espèces membres, pas seulement une par espèce.
-  const formeCatalog = useMemo(() => {
-    return NAT_ALL_FORMS.filter((f) => memberNames.has(f.nom)).sort((a, b) => a.n - b.n);
-  }, [memberNames]);
-
-  const isFormeMode = mode === "forme";
-  const catalog = isFormeMode ? formeCatalog : especeCatalog;
-
-  const isCaught = (f) => !!(parfait && parfait[String(f.n)]);
-
-  const total = catalog.length;
-  const caughtCount = useMemo(() => catalog.filter((f) => isCaught(f)).length, [catalog, parfait]);
-
-  const regions = useMemo(() => {
-    const s = new Set();
-    catalog.forEach((f) => { if (f.region) s.add(f.region); });
-    return Array.from(s).sort();
-  }, [catalog]);
-
-  const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
-    return catalog.filter((f) => {
-      if (s && !(String(f.nom).toLowerCase().includes(s) || (f.forme && String(f.forme).toLowerCase().includes(s)))) return false;
-      const c = isCaught(f);
-      if (filter === "caught" && !c) return false;
-      if (filter === "missing" && c) return false;
-      if (!matchesMulti(region, f.region)) return false;
-      return true;
-    });
-    // eslint-disable-next-line
-  }, [catalog, search, filter, region, parfait, mode]);
-
-  useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
-
-  const resetFilters = () => { setFilter("all"); setRegion(null); };
-
-  // Suffixe mémorisable (même patron que Home 2) — stocké séparément.
-  const [suffix, setSuffix] = useState("");
-  const [savedSuffix, setSavedSuffix] = useState(null);
-  useEffect(() => {
-    (async () => {
-      let v = "";
-      try {
-        const res = await window.storage.get("parfait_search_suffix", false);
-        if (res && res.value != null) v = res.value;
-      } catch (e) {}
-      setSuffix(v);
-      setSavedSuffix(v);
-    })();
-  }, []);
-  const rememberSuffix = async () => {
-    try { await window.storage.set("parfait_search_suffix", suffix, false); } catch (e) {}
-    setSavedSuffix(suffix);
-  };
-  const [copyFeedback, setCopyFeedback] = useState("");
-  const missingNumbers = useMemo(
-    () => especeCatalog.filter((f) => !isCaught(f)).map((f) => f.n).sort((a, b) => a - b),
-    [especeCatalog, parfait]
-  );
-  const copyMissing = async () => {
-    setFilter("missing");
-    const str = missingNumbers.join(",") + suffix;
-    const ok = await copyToClipboard(str);
-    setCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
-  };
-
-  if (!parfait) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
-
-  const filteredCaughtCount = filtered.filter((f) => isCaught(f)).length;
-  const PARFAIT_COLOR = "#4CAF83";
-
-  return (
-    <div style={{ paddingBottom: 100 }}>
-      <div style={{
-        position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
-        display: "flex", alignItems: "flex-start", gap: 20, marginBottom: 12, flexWrap: "wrap",
-        paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
-      }}>
-        <ProgressStatsTable
-          left={{
-            label: "Progression",
-            rings: [{ pct: pct(caughtCount, total), size: 46, stroke: 5, color: PARFAIT_COLOR, caption: `${caughtCount}/${total}` }],
-          }}
-          right={{
-            label: "Affiché",
-            rings: [{ pct: pct(filteredCaughtCount, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }],
-          }}
-        />
-      </div>
-
-      {viewMode === "grille" && (
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${effCols}, 1fr)`, gap: 6 }}>
-          {filtered.slice(0, limit).map((f) => {
-            const c = isCaught(f);
-            return (
-              <button key={f.key} onClick={() => toggleParfait(String(f.n))} style={{
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
-                background: c ? "rgba(76,175,131,0.16)" : PANEL2,
-                border: `1px solid ${c ? PARFAIT_COLOR : LINE}`,
-                borderRadius: 18, padding: "6px 2px", cursor: "pointer",
-              }}>
-                <Sprite nom={f.nom} forme={f.forme} size={40} />
-                <div style={{
-                  fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, whiteSpace: "nowrap",
-                  overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%",
-                }}>{f.nom}</div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {viewMode === "list" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 8 }}>
-          {filtered.slice(0, limit).map((f) => {
-            const c = isCaught(f);
-            return (
-              <button key={f.key} onClick={() => toggleParfait(String(f.n))} style={{
-                display: "flex", alignItems: "center", gap: 10, textAlign: "left",
-                background: c ? "rgba(76,175,131,0.16)" : PANEL2,
-                border: `1px solid ${c ? PARFAIT_COLOR : LINE}`,
-                borderRadius: 18, padding: "7px 12px", cursor: "pointer",
-              }}>
-                <Sprite nom={f.nom} forme={f.forme} size={32} />
-                <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
-                <div style={{ overflow: "hidden" }}>
-                  <div style={{
-                    fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
-                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                  }}>{f.nom}{isFormeMode && f.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {f.forme}</span> : null}</div>
-                </div>
-                <div style={{ marginLeft: "auto", flexShrink: 0, color: c ? PARFAIT_COLOR : MUTED, fontSize: 16, fontWeight: 900 }}>
-                  {c ? "✓" : ""}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
-      )}
-
-      <FloatingActionBar
-        search={search}
-        setSearch={setSearch}
-        searchPlaceholder="Rechercher…"
-        menus={[
-          {
-            key: "mode", title: "Mode", icon: BarIcon.dex,
-            render: (close) => <ViewToggle mode={mode} setMode={(m) => { setMode(m); close(); }} options={HOME2_MODE_OPTIONS} />,
-          },
-          {
-            key: "view", title: "Vue", icon: BarIcon.view,
-            render: (close) => (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={PARFAIT_VIEW_OPTIONS} />
-                {viewMode === "grille" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                    Par ligne :
-                    <button onClick={() => setGridCols(Math.max(2, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                    <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                  </div>
-                )}
-              </div>
-            ),
-          },
-          {
-            key: "filters", title: "Filtres", icon: BarIcon.filter, active: anyFilterActive,
-            render: () => (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {anyFilterActive && (
-                  <button onClick={resetFilters} style={{ ...tabInactive, alignSelf: "flex-start" }} title="Réinitialiser les filtres">↺ Réinitialiser</button>
-                )}
-                <StatusFilterPills value={filter} onChange={setFilter} />
-                <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} width="100%" />
-              </div>
-            ),
-          },
-          {
-            key: "copy", title: "Copier les manquants", icon: BarIcon.clipboard,
-            render: () => (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                  {missingNumbers.length} Pokémon manquant{missingNumbers.length > 1 ? "s" : ""} (familles Parfait)
-                </div>
-                <button
-                  onClick={copyMissing}
-                  style={{ ...tabActive, background: PARFAIT_COLOR, color: BG }}
-                  disabled={missingNumbers.length === 0}
-                >📋 Copier la liste ({missingNumbers.length})</button>
-                {copyFeedback && (
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{copyFeedback}</div>
-                )}
-                <textarea
-                  readOnly
-                  value={missingNumbers.join(",") + suffix}
-                  onFocus={(e) => e.target.select()}
-                  style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
-                />
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input
-                    value={suffix}
-                    onChange={(e) => setSuffix(e.target.value)}
-                    placeholder="Suffixe (optionnel, ajouté après la liste)"
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                  {savedSuffix !== null && suffix !== savedSuffix && (
-                    <button onClick={rememberSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
-                  )}
-                </div>
-              </div>
-            ),
-          },
-        ]}
-        add={{
-          title: "Marquer un Pokémon Parfait",
-          placeholder: "Rechercher un Pokémon…",
-          getSuggestions: (q) => {
-            const s = q.trim().toLowerCase();
-            if (!s) return [];
-            const seen = new Set();
-            return NAT_ALL_FORMS.filter((f) => {
-              if (seen.has(f.nom) || !String(f.nom).toLowerCase().includes(s)) return false;
-              seen.add(f.nom);
-              return true;
-            }).slice(0, 8);
-          },
-          onSelect: (f) => toggleParfait(String(f.n)),
-        }}
-      />
-    </div>
-  );
-}
-
 function App() {
   const [tab, setTab] = useState("overview");
   const [ioMsg, setIoMsg] = useState("");
@@ -14907,7 +14664,6 @@ function App() {
         <GameNavSelect tab={tab} setTab={setTab} />
         <JeuNavSelect tab={tab} setTab={setTab} />
         <button onClick={() => setTab("home2")} style={pillStyle(tab === "home2", LIGHTBLUE)}>Home 2</button>
-        <button onClick={() => setTab("parfait")} style={pillStyle(tab === "parfait", "#4CAF83")}>Parfait</button>
         <button onClick={() => setTab("double")} style={pillStyle(tab === "double", LIGHTRED)}>Double</button>
         <button onClick={() => setTab("event")} style={pillStyle(tab === "event", EVENTORANGE)}>Event</button>
         <button onClick={() => setTab("interjeu")} style={pillStyle(tab === "interjeu", INTERJEU)}>Interjeu</button>
@@ -14941,12 +14697,6 @@ function App() {
             filterCache={filterCache}
             initialFilter={pendingHome2Filter}
             onConsumeFilter={() => setPendingHome2Filter(null)}
-            onSaveStateChange={setGlobalSaveState}
-          />
-        )}
-        {tab === "parfait" && (
-          <ParfaitFamiliesView
-            filterCache={filterCache}
             onSaveStateChange={setGlobalSaveState}
           />
         )}
