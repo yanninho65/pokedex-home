@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.21.35";
+const APP_VERSION = "2026.8.16.22.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -13670,10 +13670,16 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   const isSpeciesCaught = (nom) => (formsOfSpecies.get(nom) || []).some((ff) => !!caught[ff.key]);
 
   // Bouton "📋 Familles manquantes" (§ demande explicite, même modèle que Go 1 / doc §Recherche Go) :
-  // repère chaque famille d'évolution ayant au moins une espèce manquante, puis liste TOUS les
-  // membres de ces familles (via `familyMembersOf`, pas seulement l'espèce manquante elle-même —
-  // pratique pour rechercher toute la ligne d'évolution dans l'app Pokémon Home), triés par numéro
-  // national, séparés par une virgule. Espèces sans numéro de famille connu : traitées isolément.
+  // repère chaque famille d'évolution ayant au moins une espèce manquante, puis liste les NUMÉROS
+  // NATIONAUX de TOUS les membres de ces familles (via `familyMembersOf`, pas seulement l'espèce
+  // manquante elle-même — pratique pour rechercher toute la ligne d'évolution dans l'app Pokémon
+  // Home), triés, séparés par une virgule. Espèces sans numéro de famille connu : traitées isolément.
+  const numberOfSpecies = (nom) => {
+    const info = natInfoFor(nom, null);
+    if (info && info.n !== 999999) return info.n;
+    const any = NAT_ALL_FORMS.find((f) => f.nom === nom);
+    return any ? any.n : null;
+  };
   const missingFamiliesInfo = useMemo(() => {
     const famSet = new Set();
     const soloNames = new Set();
@@ -13687,8 +13693,13 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
       const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
       if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
     });
-    const sorted = Array.from(names).sort((a, b) => natInfoFor(a, null).n - natInfoFor(b, null).n);
-    return { names: sorted, familyCount: famSet.size + soloNames.size };
+    const numbers = new Set();
+    names.forEach((nom) => {
+      const n = numberOfSpecies(nom);
+      if (n != null) numbers.add(n);
+    });
+    const sortedNumbers = Array.from(numbers).sort((a, b) => a - b);
+    return { numbers: sortedNumbers, pokemonCount: names.size, familyCount: famSet.size + soloNames.size };
   }, [especeCatalog, caught]);
 
   // Suffixe mémorisable ajouté après la liste copiée (§ demande explicite) — stocké séparément
@@ -13713,7 +13724,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   const [copyFeedback, setCopyFeedback] = useState("");
   const copyMissingFamilies = async () => {
     setFilter("missing");
-    const str = missingFamiliesInfo.names.join(",") + suffix;
+    const str = missingFamiliesInfo.numbers.join(",") + suffix;
     const ok = await copyToClipboard(str);
     setCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
   };
@@ -13755,6 +13766,8 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     });
     // eslint-disable-next-line
   }, [sortedCatalog, search, filter, region, caught, mode]);
+
+  useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
 
   const onToggle = (f) => {
     if (isFormeMode) {
@@ -13891,19 +13904,19 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
             render: () => (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                  {missingFamiliesInfo.familyCount} famille{missingFamiliesInfo.familyCount > 1 ? "s" : ""} incomplète{missingFamiliesInfo.familyCount > 1 ? "s" : ""} — {missingFamiliesInfo.names.length} Pokémon
+                  {missingFamiliesInfo.familyCount} famille{missingFamiliesInfo.familyCount > 1 ? "s" : ""} incomplète{missingFamiliesInfo.familyCount > 1 ? "s" : ""} — {missingFamiliesInfo.numbers.length} Pokémon
                 </div>
                 <button
                   onClick={copyMissingFamilies}
                   style={{ ...tabActive, background: LIGHTBLUE, color: BG }}
-                  disabled={missingFamiliesInfo.names.length === 0}
-                >📋 Copier la liste ({missingFamiliesInfo.names.length})</button>
+                  disabled={missingFamiliesInfo.numbers.length === 0}
+                >📋 Copier la liste ({missingFamiliesInfo.numbers.length})</button>
                 {copyFeedback && (
                   <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{copyFeedback}</div>
                 )}
                 <textarea
                   readOnly
-                  value={missingFamiliesInfo.names.join(",") + suffix}
+                  value={missingFamiliesInfo.numbers.join(",") + suffix}
                   onFocus={(e) => e.target.select()}
                   style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
                 />
