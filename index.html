@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.22.05";
+const APP_VERSION = "2026.8.16.22.30";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -13665,15 +13665,15 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     return Array.from(bySpecies.values());
   }, [formeCatalog]);
 
-  // Espèce attrapée = au moins une de ses formes retenues l'est — indépendant du mode d'affichage
-  // ("forme"/"espece"), utilisé pour le bouton "Familles manquantes" ci-dessous.
-  const isSpeciesCaught = (nom) => (formsOfSpecies.get(nom) || []).some((ff) => !!caught[ff.key]);
-
   // Bouton "📋 Familles manquantes" (§ demande explicite, même modèle que Go 1 / doc §Recherche Go) :
-  // repère chaque famille d'évolution ayant au moins une espèce manquante, puis liste les NUMÉROS
-  // NATIONAUX de TOUS les membres de ces familles (via `familyMembersOf`, pas seulement l'espèce
-  // manquante elle-même — pratique pour rechercher toute la ligne d'évolution dans l'app Pokémon
-  // Home), triés, séparés par une virgule. Espèces sans numéro de famille connu : traitées isolément.
+  // repère chaque famille d'évolution ayant au moins une FORME manquante (§ correctif : par forme,
+  // pas par espèce — une espèce à plusieurs formes comme Florizarre ne doit pas être considérée
+  // "complète" tant que toutes ses formes retenues ne sont pas cochées, ex. Florizarre non Gmax
+  // coché mais pas Gmax/Méga → la famille de Bulbizarre doit quand même apparaître), puis liste
+  // les NUMÉROS NATIONAUX de TOUS les membres de ces familles (via `familyMembersOf`, pas
+  // seulement les formes manquantes elles-mêmes — pratique pour rechercher toute la ligne
+  // d'évolution dans l'app Pokémon Home), triés, séparés par une virgule. Formes sans numéro de
+  // famille connu : traitées isolément.
   const numberOfSpecies = (nom) => {
     const info = natInfoFor(nom, null);
     if (info && info.n !== 999999) return info.n;
@@ -13683,8 +13683,8 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   const missingFamiliesInfo = useMemo(() => {
     const famSet = new Set();
     const soloNames = new Set();
-    especeCatalog.forEach((f) => {
-      if (isSpeciesCaught(f.nom)) return;
+    formeCatalog.forEach((f) => {
+      if (caught[f.key]) return; // cette forme précise est déjà cochée
       if (f.famille != null) famSet.add(f.famille);
       else soloNames.add(f.nom);
     });
@@ -13700,7 +13700,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     });
     const sortedNumbers = Array.from(numbers).sort((a, b) => a - b);
     return { numbers: sortedNumbers, pokemonCount: names.size, familyCount: famSet.size + soloNames.size };
-  }, [especeCatalog, caught]);
+  }, [formeCatalog, caught]);
 
   // Suffixe mémorisable ajouté après la liste copiée (§ demande explicite) — stocké séparément
   // du reste de home2 (simple préférence, pas une donnée de collection).
@@ -13839,6 +13839,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
                 borderRadius: 18, padding: "7px 12px", cursor: "pointer",
               }}>
                 <Sprite nom={f.nom} forme={f.forme} size={32} />
+                <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
                 <div style={{ overflow: "hidden" }}>
                   <div style={{
                     fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
