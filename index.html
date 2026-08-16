@@ -77,6 +77,10 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 const DATA = window.DATA; // voir <script> précédent (données structurelles hors Babel)
 const GAME_ORDER = ["IàV", "VI", "Alola", "GB", "LG", "Go", "DEPS", "Galar", "LA", "Paldea", "LZA", "GBA", "VV"];
+// Onglet "Autre" (§ demande explicite) : regroupe Double/Event/Interjeu sous un seul sélecteur
+// déroulant, même patron que GameNavSelect (menu Home).
+const AUTRE_ORDER = ["double", "event", "interjeu"];
+const AUTRE_LABELS = { double: "Double", event: "Event", interjeu: "Interjeu" };
 // Nouvelles marques "GBA" (Rouge Feu Switch / Vert Feuille Switch) et "VV" (Vents/Vagues, 10G) —
 // § demande explicite. Aucune donnée Pokémon structurelle n'existe encore pour elles dans
 // DATA (généré depuis l'Excel source, pas modifiable ici) : on se contente d'amorcer des
@@ -92,11 +96,6 @@ const GAME_ORDER = ["IàV", "VI", "Alola", "GB", "LG", "Go", "DEPS", "Galar", "L
   if (!DATA.boxPrefixDefault[code]) DATA.boxPrefixDefault[code] = code;
   if (DATA.natGames && !DATA.natGames.includes(code)) DATA.natGames.push(code);
 });
-// Nouvel onglet "Jeu" (après Home) : suivi des Pokémon dans les jeux vidéo (par opposition à
-// Home), présenté comme les marques du menu Home (GameNavSelect) via un même sélecteur déroulant.
-// Un seul jeu pour l'instant (Go 1), extensible plus tard sans autre changement de structure.
-const JEU_ORDER = ["go1"];
-const JEU_LABELS = { go1: "Go 1" };
 // Vues "jeu précis" par marque (§ fermeture Banque Pokémon / transfert 3DS→Switch) — pas d'onglet
 // séparé : un sélecteur de vue flottant (comme Go 1) au sein même de l'onglet Home de la marque
 // (voir GameView, `viMode`). Entièrement modulable : la liste réellement utilisée par l'app vit
@@ -228,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.00.20";
+const APP_VERSION = "2026.8.17.02.00";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -3171,6 +3170,10 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
 function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
   const { flags, setFlags, ready, persist, saveState } = useCollection(gameKey, rows.length);
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
+  // "Go 1" (suivi Pokémon GO avancé : Pokédex/Shiny/Chanceux/Parfait/Purifié/Obscur/XXS/XXL)
+  // intégré dans l'onglet Go, à côté de Home (§ demande explicite) — uniquement pertinent pour
+  // gameKey === "Go" ; sans effet pour les autres marques.
+  const [goSubView, setGoSubView] = useCachedState(filterCache, gameKey, "goSubView", "home"); // "home" | "go1"
   const [viewMode, setViewMode] = useCachedState(filterCache, gameKey, "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, gameKey, "search", "");
   const [filter, setFilter] = useCachedState(filterCache, gameKey, "filter", "all");
@@ -3287,31 +3290,75 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     () => (allMarqueGames.length > 0 ? [{ key: "home", label: "Home" }, ...allMarqueGames] : []),
     [allMarqueGames]
   );
+  // Pour la marque "Go" uniquement (§ demande explicite) : "Go 1" s'ajoute comme option de ce
+  // même bouton flottant "Mode" (comme "Home + jeu"/"Home"/"Saphir Alpha" pour les autres
+  // marques) — pas de bascule séparée en haut de page. Une fois "Go 1" sélectionné, le même
+  // panneau affiche en plus les sous-modes Go 1 (Pokédex/Shiny/Chanceux/Parfait/Purifié/Obscur/
+  // XXS/XXL), dans le même format de pilules.
+  const isGoMarque = gameKey === "Go";
+  const [go1Mode, setGo1Mode] = useCachedState(filterCache, "go1", "mode", "pokedex");
+  const goModeOptions = isGoMarque ? [{ key: "home", label: "Home" }, { key: "go1", label: "Go 1" }] : [];
   const modeMenuItem = {
-    key: "vimode", title: "Mode", icon: BarIcon.dex, active: hasJeuPairs && viMode !== "home_jeu",
+    key: "vimode", title: "Mode", icon: BarIcon.dex,
+    active: isGoMarque ? goSubView === "go1" : (hasJeuPairs && viMode !== "home_jeu"),
     render: (close) => (
-      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, minWidth: 200 }}>
-        {viModeOptions.map((m) => (
-          <button
-            key={m.key}
-            onClick={() => { setViMode(m.key); close(); }}
-            style={{
-              ...btnGhost, padding: "7px 12px",
-              background: viMode === m.key ? PURPLE : "transparent",
-              color: viMode === m.key ? "#fff" : MUTED,
-              border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
-              fontWeight: viMode === m.key ? 800 : 500,
-            }}
-          >{m.label}</button>
-        ))}
-        <button
-          onClick={() => { setJeuViewsSettingsOpen(true); close(); }}
-          title="Modifier, ajouter ou supprimer des vues"
-          style={{
-            background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8,
-            width: 30, height: 30, color: MUTED, cursor: "pointer", flexShrink: 0,
-          }}
-        >⚙️</button>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 200 }}>
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          {isGoMarque
+            ? goModeOptions.map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => setGoSubView(m.key)}
+                  style={{
+                    ...btnGhost, padding: "7px 12px",
+                    background: goSubView === m.key ? PURPLE : "transparent",
+                    color: goSubView === m.key ? "#fff" : MUTED,
+                    border: `1px solid ${goSubView === m.key ? PURPLE : LINE}`,
+                    fontWeight: goSubView === m.key ? 800 : 500,
+                  }}
+                >{m.label}</button>
+              ))
+            : viModeOptions.map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => { setViMode(m.key); close(); }}
+                  style={{
+                    ...btnGhost, padding: "7px 12px",
+                    background: viMode === m.key ? PURPLE : "transparent",
+                    color: viMode === m.key ? "#fff" : MUTED,
+                    border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
+                    fontWeight: viMode === m.key ? 800 : 500,
+                  }}
+                >{m.label}</button>
+              ))}
+          {!isGoMarque && (
+            <button
+              onClick={() => { setJeuViewsSettingsOpen(true); close(); }}
+              title="Modifier, ajouter ou supprimer des vues"
+              style={{
+                background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8,
+                width: 30, height: 30, color: MUTED, cursor: "pointer", flexShrink: 0,
+              }}
+            >⚙️</button>
+          )}
+        </div>
+        {isGoMarque && goSubView === "go1" && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
+            {GO1_MODES.map((m) => (
+              <button
+                key={m.key}
+                onClick={() => { setGo1Mode(m.key); close(); }}
+                style={{
+                  ...btnGhost, padding: "7px 12px",
+                  background: go1Mode === m.key ? m.color : "transparent",
+                  color: go1Mode === m.key ? "#fff" : MUTED,
+                  border: `1px solid ${go1Mode === m.key ? m.color : LINE}`,
+                  fontWeight: go1Mode === m.key ? 800 : 500,
+                }}
+              >{m.label}</button>
+            ))}
+          </div>
+        )}
       </div>
     ),
   };
@@ -3654,6 +3701,10 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
 
   if (!ready || !effective) {
     return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
+  }
+
+  if (gameKey === "Go" && goSubView === "go1") {
+    return <Go1View filterCache={filterCache} mode={go1Mode} setMode={setGo1Mode} modeMenuItem={modeMenuItem} />;
   }
 
   if (currentPair) {
@@ -13107,8 +13158,7 @@ function Go1Body({ items, color, viewMode, showForme, groupByRegion, gridCols, o
 // Vue principale de l'onglet Go 1 — un seul composant pour les 8 modes (Pokédex/Shiny avec
 // sous-vue toutes formes/forme unique, + les 6 modes forme unique), barre flottante avec 4
 // menus (Pokédex = sélecteur de mode, Affichage, Filtres, +) + recherche.
-function Go1View({ filterCache }) {
-  const [mode, setMode] = useCachedState(filterCache, "go1", "mode", "pokedex");
+function Go1View({ filterCache, mode, setMode, modeMenuItem }) {
   const [subView, setSubView] = useCachedState(filterCache, "go1", "subView", "forms"); // "forms" | "unique" (Pokédex/Shiny)
   const [viewMode, setViewMode] = useCachedState(filterCache, "go1", "viewMode", "list"); // "list" | "grid"
   const [groupByRegion, setGroupByRegion] = useCachedState(filterCache, "go1", "groupByRegion", true);
@@ -13313,26 +13363,7 @@ function Go1View({ filterCache }) {
           },
         }}
         menus={[
-          {
-            key: "mode", title: "Pokédex", icon: BarIcon.dex,
-            render: (close) => (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {GO1_MODES.map((m) => (
-                  <button
-                    key={m.key}
-                    onClick={() => { setMode(m.key); close(); }}
-                    style={{
-                      ...btnGhost, padding: "7px 12px",
-                      background: mode === m.key ? m.color : "transparent",
-                      color: mode === m.key ? "#fff" : MUTED,
-                      border: `1px solid ${mode === m.key ? m.color : LINE}`,
-                      fontWeight: mode === m.key ? 800 : 500,
-                    }}
-                  >{m.label}</button>
-                ))}
-              </div>
-            ),
-          },
+          ...(modeMenuItem ? [modeMenuItem] : []),
           {
             key: "view", title: "Affichage", icon: BarIcon.view,
             render: (close) => (
@@ -13625,14 +13656,6 @@ function initialsOfDO(v) {
   const base = String(v).split(" - ")[0].trim();
   if (!base) return "";
   return base.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 3);
-}
-
-// Délègue au bon composant selon le jeu choisi dans l'onglet "Jeu" (JEU_ORDER) — pour l'instant
-// uniquement Go 1 ; le suivi "en jeu" par marque (Saphir Alpha, etc.) vit maintenant DANS
-// l'onglet Home de la marque concernée (GameView, sélecteur de vue flottant), pas ici.
-function JeuGameView({ jeuKey, filterCache }) {
-  if (jeuKey === "go1") return <Go1View filterCache={filterCache} />;
-  return null;
 }
 
 // ---- Onglet "Home 2" (§ demande explicite) --------------------------------------------------
@@ -14651,22 +14674,20 @@ function App() {
       )}
 
       <div className="no-print" style={{
-        position: "fixed", bottom: 14, left: 12, right: 12, zIndex: 30,
+        position: "fixed", bottom: 14, left: "50%", zIndex: 30,
         display: "flex", gap: 6, padding: "8px 10px", overflowX: "auto",
         borderRadius: 26, border: GLASS_BORDER, background: GLASS_BG,
         backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR, boxShadow: GLASS_SHADOW,
-        transform: "translateZ(0)", WebkitTransform: "translateZ(0)",
+        maxWidth: "calc(100vw - 24px)",
+        transform: "translateX(-50%) translateZ(0)", WebkitTransform: "translateX(-50%) translateZ(0)",
         marginBottom: "env(safe-area-inset-bottom, 0px)",
       }} ref={scrollRef}>
         <button onClick={() => setTab("overview")} style={pillStyle(tab === "overview", OK)}>%</button>
         <button onClick={() => setTab("national")} style={pillStyle(tab === "national", DARKBLUE)}>National</button>
         <button onClick={() => setTab("shiny")} style={pillStyle(tab === "shiny", GOLD)}>Shiny</button>
         <GameNavSelect tab={tab} setTab={setTab} />
-        <JeuNavSelect tab={tab} setTab={setTab} />
+        <AutreNavSelect tab={tab} setTab={setTab} />
         <button onClick={() => setTab("home2")} style={pillStyle(tab === "home2", LIGHTBLUE)}>Home 2</button>
-        <button onClick={() => setTab("double")} style={pillStyle(tab === "double", LIGHTRED)}>Double</button>
-        <button onClick={() => setTab("event")} style={pillStyle(tab === "event", EVENTORANGE)}>Event</button>
-        <button onClick={() => setTab("interjeu")} style={pillStyle(tab === "interjeu", INTERJEU)}>Interjeu</button>
       </div>
 
       <div style={{ padding: "20px 20px 110px", maxWidth: 1100, margin: "0 auto" }}>
@@ -14710,14 +14731,6 @@ function App() {
             initialFilter={pendingFilter}
             onConsumeFilter={() => setPendingFilter(null)}
             onOpenProgress={openProgressTable}
-            onSaveStateChange={setGlobalSaveState}
-          />
-        )}
-        {JEU_ORDER.includes(tab) && (
-          <JeuGameView
-            key={tab}
-            jeuKey={tab}
-            filterCache={filterCache}
             onSaveStateChange={setGlobalSaveState}
           />
         )}
@@ -14837,12 +14850,12 @@ function GameNavSelect({ tab, setTab }) {
   );
 }
 
-// Sélecteur de jeu pour l'onglet "Jeu" (Go 1, etc.) — même patron que GameNavSelect (menu Home),
-// pour rester cohérent visuellement même si un seul jeu est disponible pour l'instant.
-function JeuNavSelect({ tab, setTab }) {
+// Sélecteur "Autre" (Double/Event/Interjeu) — même patron que GameNavSelect (menu Home).
+function AutreNavSelect({ tab, setTab }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
-  const active = JEU_ORDER.includes(tab);
+  const active = AUTRE_ORDER.includes(tab);
+  const AUTRE_COLOR = "#78909C";
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e) => {
@@ -14859,14 +14872,14 @@ function JeuNavSelect({ tab, setTab }) {
         ref={btnRef}
         onClick={() => setOpen((o) => !o)}
         style={{
-          flexShrink: 0, background: PURPLE, color: "#fff", border: "none",
+          flexShrink: 0, background: AUTRE_COLOR, color: "#fff", border: "none",
           boxShadow: active ? "0 0 0 2px rgba(255,255,255,0.85), 0 2px 8px rgba(0,0,0,0.35)" : "0 1px 3px rgba(0,0,0,0.25)",
           borderRadius: 999, padding: "9px 12px 9px 14px", fontFamily: "Inter, sans-serif",
           fontSize: 12.5, fontWeight: active ? 800 : 500, cursor: "pointer", whiteSpace: "nowrap",
           display: "flex", alignItems: "center", gap: 4,
         }}
       >
-        {active ? JEU_LABELS[tab] : "Jeu"}
+        {active ? AUTRE_LABELS[tab] : "Autre"}
         <span style={{ fontSize: 9, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▾</span>
       </button>
       {open && ReactDOM.createPortal(
@@ -14879,18 +14892,18 @@ function JeuNavSelect({ tab, setTab }) {
             boxShadow: GLASS_SHADOW,
           }}
         >
-          {JEU_ORDER.map((g) => (
+          {AUTRE_ORDER.map((g) => (
             <button
               key={g}
               onClick={() => { setTab(g); setOpen(false); }}
               style={{
                 ...btnGhost, padding: "7px 12px",
-                background: tab === g ? PURPLE : "transparent",
+                background: tab === g ? AUTRE_COLOR : "transparent",
                 color: tab === g ? "#fff" : MUTED,
-                border: `1px solid ${tab === g ? PURPLE : LINE}`,
+                border: `1px solid ${tab === g ? AUTRE_COLOR : LINE}`,
                 fontWeight: tab === g ? 800 : 500,
               }}
-            >{JEU_LABELS[g]}</button>
+            >{AUTRE_LABELS[g]}</button>
           ))}
         </div>,
         document.body
