@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.09.15";
+const APP_VERSION = "2026.8.16.10.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1723,13 +1723,24 @@ function useBoxGroupRank(gameKey) {
 }
 
 // Ordre d'affichage/de rangement en boîte d'un onglet jeu : d'abord par groupe de boîte selon
-// `groupRank` (voir `computeBoxGroupRank`), puis par numéro dans le jeu (`parseGameNumber`).
+// `groupRank` (voir `computeBoxGroupRank`), puis par numéro dans le jeu (`parseGameNumber`) —
+// `numberOverrides` optionnel (§ demande explicite, vues jeu précis uniquement) : si fourni et
+// qu'un Pokémon y a un numéro spécifique à cette vue, ce numéro prime sur celui de la marque pour
+// le tri (même repli "sans les lettres" via `parseGameNumber`, ex. "E-415" → 415). Absent pour
+// Home/Home + jeu, qui continuent de trier sur le numéro de la marque, inchangé.
 // Retourne un tableau d'indices dans `rows` (pas les lignes elles-mêmes), pour rester aligné
 // avec le contrat positionnel existant (`effective`/`toggle`/etc. indexés sur la position
 // d'origine) — un Pokémon ajouté au catalogue et assigné à un groupe existant se retrouve donc
 // automatiquement à la bonne place, sans jamais avoir à décaler les autres.
-function computeGameSortOrder(gameKey, rows, overrides, groupRank) {
+function computeGameSortOrder(gameKey, rows, overrides, groupRank, numberOverrides) {
   const indices = rows.map((_, i) => i);
+  const numberFor = (row) => {
+    if (numberOverrides) {
+      const ov = numberOverrides[boxGroupKeyFor(row[1], row[2])];
+      if (ov !== undefined && ov !== null && ov !== "") return parseGameNumber(ov);
+    }
+    return parseGameNumber(row[0]);
+  };
   indices.sort((a, b) => {
     const ga = effectiveBoxGroup(gameKey, a, rows[a], overrides);
     const gb = effectiveBoxGroup(gameKey, b, rows[b], overrides);
@@ -1737,7 +1748,7 @@ function computeGameSortOrder(gameKey, rows, overrides, groupRank) {
     const rb = groupRank.has(gb) ? groupRank.get(gb) : Infinity;
     if (ra !== rb) return ra - rb;
     if (ga !== gb) return ga < gb ? -1 : 1; // repli si l'une des deux valeurs n'est dans aucune liste
-    return parseGameNumber(rows[a][0]) - parseGameNumber(rows[b][0]);
+    return numberFor(rows[a]) - numberFor(rows[b]);
   });
   return indices;
 }
@@ -2615,8 +2626,7 @@ function PairModeBlock({
   // Groupe de boîte spécifique à cette vue (§ précision explicite : "un Pokémon peut avoir un
   // groupe de boîte... différent en fonction des jeux", ex. X/Y range par emplacement Kalos) —
   // fusionné PAR-DESSUS les overrides de la marque (priorité à la vue) avant de servir de source
-  // au tri/rangement réel des boîtes ci-dessous : aucune modification de computeGameSortOrder/
-  // computeGameBoxes/effectiveBoxGroup (partagées avec toutes les autres vues) n'est nécessaire.
+  // au tri/rangement réel des boîtes ci-dessous.
   const { dict: boxGroupViewOverrides, setGroup: setViewBoxGroup } = useGameViewBoxGroupOverrides(gameKey, pair.key);
   const effectiveOverridesForPair = useMemo(
     () => ({ ...(boxOverrides || {}), ...(boxGroupViewOverrides || {}) }),
@@ -2627,9 +2637,12 @@ function PairModeBlock({
   const isInPairKey = (key) => (sources[key] || []).includes(pair.key);
   const isInPairIdx = (i) => isInPairKey(boxGroupKeyFor(pairRows[i][1], pairRows[i][2]));
 
+  // § demande explicite : tri par groupe de boîte puis par numéro, en ignorant les lettres
+  // (ex. "E-415" → 415) — le numéro utilisé est celui de CETTE vue quand il est défini
+  // (`numberOverrides`, ex. tes "E-13"/"E-14" pour Saphir Alpha), sinon celui de la marque.
   const sortOrder = useMemo(
-    () => computeGameSortOrder(gameKey, pairRows, effectiveOverridesForPair, boxGroupRank),
-    [gameKey, pairRows, effectiveOverridesForPair, boxGroupRank]
+    () => computeGameSortOrder(gameKey, pairRows, effectiveOverridesForPair, boxGroupRank, numberOverrides),
+    [gameKey, pairRows, effectiveOverridesForPair, boxGroupRank, numberOverrides]
   );
   const boxInfo = useMemo(
     () => computeGameBoxes(gameKey, pairRows, effectiveOverridesForPair, boxSize, boxPrefix, sortOrder),
