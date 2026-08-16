@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.18.05";
+const APP_VERSION = "2026.8.16.18.20";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2677,16 +2677,15 @@ function PairModeBlock({
     return Array.from(s).sort();
   }, [jeuOptionsForGame, jeuOverrides]);
 
-  // Nombre de boîtes contenant au moins un Pokémon (§ demande explicite) : toutes les boîtes
-  // comptent pour une vue jeu, comme pour Home — se base sur `isInPairIdx` (présence dans CETTE
-  // vue jeu précise, ex. Saphir Alpha).
+  // Nombre total de boîtes existantes (§ demande explicite : estimer la place physique prise par
+  // la collection) — pour une vue jeu, comme pour Home, toutes les boîtes comptent, même vides.
   const boxesWithPokemonCount = useMemo(() => {
     const set = new Set();
     pairRows.forEach((_, i) => {
-      if (isInPairIdx(i) && boxInfo[i]) set.add(boxInfo[i].nboite);
+      if (boxInfo[i]) set.add(boxInfo[i].nboite);
     });
     return set.size;
-  }, [pairRows, boxInfo, sources]);
+  }, [pairRows, boxInfo]);
 
   const anyFilterActive = filter !== "all" || region !== null || boxGroupFilter !== null || jeuFilter !== null;
   const resetFilters = () => {
@@ -3361,17 +3360,16 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     });
   }, [effective, gameSourcesDict, rows, extendedRows, showJeuMerge]);
   const isSourcedOnly = (i) => !(i < rows.length && effective[i]) && !!(displayEffective && displayEffective[i]);
-  // Nombre de boîtes contenant au moins un Pokémon (§ demande explicite) : pour Home/Home + jeu,
-  // toutes les boîtes comptent — se base sur `displayEffective` (Home réel, + "en jeu" en vue
-  // Home + jeu) plutôt que sur `effective` seul, pour rester cohérent avec ce qui est affiché.
+  // Nombre total de boîtes existantes (§ demande explicite : estimer la place physique prise par
+  // la collection) — pour Home/Home + jeu, toutes les boîtes comptent, même vides.
   const boxesWithPokemonCount = useMemo(() => {
     const set = new Set();
-    if (!displayEffective || !currentBoxInfo) return 0;
+    if (!currentBoxInfo) return 0;
     currentRows.forEach((_, i) => {
-      if (displayEffective[i] && currentBoxInfo[i]) set.add(currentBoxInfo[i].nboite);
+      if (currentBoxInfo[i]) set.add(currentBoxInfo[i].nboite);
     });
     return set.size;
-  }, [currentRows, displayEffective, currentBoxInfo]);
+  }, [currentRows, currentBoxInfo]);
   const [boxSettingsOpen, setBoxSettingsOpen] = useState(false);
   const [groupEditTarget, setGroupEditTarget] = useState(null); // index dans `rows`
   const [showBoxGroup, setShowBoxGroup] = useState(false); // options d'affichage : groupe sous le nom
@@ -4542,17 +4540,14 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     return n;
   }, [catches]);
 
-  // Nombre de boîtes contenant au moins un Pokémon (§ demande explicite) : pour Shiny, toutes les
-  // boîtes comptent (pas seulement Home 1) — une boîte "compte" dès qu'au moins une forme qui y
-  // est rangée a été capturée au moins une fois.
+  // Nombre total de boîtes existantes (§ demande explicite : estimer la place physique prise par
+  // la collection) — pour Shiny, toutes les boîtes du catalogue comptent, même vides (les boîtes
+  // de doublons, elles, n'existent que si au moins un doublon a été capturé — comptées dès lors).
   const boxesWithPokemonCount = useMemo(() => {
-    if (!catches) return 0;
     const set = new Set();
-    catalog.forEach((r) => {
-      if (recordsFor(keyOf(r[1], r[2])).length > 0) set.add(r[4]);
-    });
+    catalog.forEach((r) => set.add(r[4]));
     return set.size;
-  }, [catalog, catches]);
+  }, [catalog]);
 
   const occurrenceIndexOf = useMemo(() => {
     const counts = {};
