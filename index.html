@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.18.20";
+const APP_VERSION = "2026.8.16.21.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -524,6 +524,35 @@ function familyMembersOf(nom) {
     if (f.famille === fam && !seen.has(f.nom)) { seen.add(f.nom); out.push(f.nom); }
   });
   return out.sort((a, b) => natInfoFor(a, null).n - natInfoFor(b, null).n);
+}
+
+// `navigator.clipboard.writeText` échoue silencieusement (ou est absente) dans certains
+// contextes mobiles (webview Samsung Internet non sécurisé, focus, permissions refusées) —
+// repli textarea + document.execCommand("copy") si l'API moderne échoue ou n'existe pas.
+// Retourne true/false selon la réussite, pour permettre un repli d'affichage (champ
+// sélectionnable) côté appelant en cas d'échec.
+async function copyToClipboard(str) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(str);
+      return true;
+    }
+  } catch (e) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = str;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
 }
 
 const SPRITE_BASE = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/";
@@ -2002,6 +2031,13 @@ const BarIcon = {
   close: (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
       <line x1="5" y1="5" x2="19" y2="19" /><line x1="19" y1="5" x2="5" y2="19" />
+    </svg>
+  ),
+  clipboard: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="6" y="4" width="12" height="17" rx="2" />
+      <rect x="9" y="2" width="6" height="4" rx="1" fill="#fff" stroke="none" />
+      <line x1="9" y1="11" x2="15" y2="11" /><line x1="9" y1="15" x2="15" y2="15" />
     </svg>
   ),
 };
@@ -11442,6 +11478,7 @@ function FloatingBackButton({ onClick }) {
 const EXCEL_SHEETS = [
   { key: "national", label: "National" },
   { key: "params", label: "Paramètres" },
+  { key: "home2", label: "Home 2" },
   { key: "shiny", label: "Shiny" },
   { key: "double", label: "Double" },
   { key: "event", label: "Event" },
@@ -11960,6 +11997,48 @@ async function importShinySheet(rows, mode) {
   await window.storage.set("shiny_catches", JSON.stringify(next), false);
 }
 
+// Feuille "Home 2" (§ demande explicite) : une ligne par forme du catalogue Home 2 (disponibles
+// sur Pokémon Home, § jeuVideoFor(...).home, + ajouts manuels via le bouton "+") — Attrape (0/1)
+// reflète le flag propre à cet onglet (indépendant de Home 1/National/Shiny), Extra (0/1) marque
+// les formes ajoutées manuellement (à réimporter sinon perdues si leur pilule Home n'est pas cochée).
+async function buildHome2SheetRows() {
+  const h2 = await storageGetJSON("home2", { caught: {}, extra: [] });
+  const extraSet = new Set(h2.extra || []);
+  const catalog = NAT_ALL_FORMS.filter((f) => !!jeuVideoFor(f.nom, f.forme).home || extraSet.has(f.key));
+  return catalog
+    .slice()
+    .sort((a, b) => {
+      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
+      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
+      return an - bn;
+    })
+    .map((f) => ({
+      Nom: f.nom, Forme: excelForme(f.forme),
+      Attrape: h2.caught && h2.caught[f.key] ? 1 : 0,
+      Extra: extraSet.has(f.key) ? 1 : 0,
+    }));
+}
+
+// Chaque ligne du fichier fixe explicitement l'état de sa clé (Attrape et Extra), en mode
+// "Ajouter" comme "Remplacer" — même principe que la colonne Attrape de la feuille Home/marque
+// (§ importGameSheet) : la présence de la colonne fait foi, pas de fusion implicite ambiguë.
+// Seule différence entre les deux modes : "Remplacer" repart d'un état vide avant d'appliquer
+// les lignes du fichier (les clés absentes du fichier redeviennent non capturées/non extra).
+async function importHome2Sheet(rows, mode) {
+  const current = await storageGetJSON("home2", { caught: {}, extra: [] });
+  const caught = mode === "replace" ? {} : { ...(current.caught || {}) };
+  const extraSet = mode === "replace" ? new Set() : new Set(current.extra || []);
+  rows.forEach((row) => {
+    const nom = String(row.Nom || "").trim();
+    if (!nom) return;
+    const forme = excelParseForme(row.Forme);
+    const key = nom + "|" + forme;
+    if (Number(row.Attrape)) caught[key] = 1; else delete caught[key];
+    if (Number(row.Extra)) extraSet.add(key); else extraSet.delete(key);
+  });
+  await window.storage.set("home2", JSON.stringify({ caught, extra: Array.from(extraSet) }), false);
+}
+
 async function buildExcelWorkbook(selectedKeys) {
   const wb = XLSX.utils.book_new();
   for (const sheetDef of EXCEL_SHEETS) {
@@ -11967,6 +12046,7 @@ async function buildExcelWorkbook(selectedKeys) {
     let rows;
     if (sheetDef.key === "national") rows = await buildNationalSheetRows();
     else if (sheetDef.key === "params") rows = await buildParamsSheetRows();
+    else if (sheetDef.key === "home2") rows = await buildHome2SheetRows();
     else if (sheetDef.key === "shiny") rows = await buildShinySheetRows();
     else if (sheetDef.key === "double") rows = await buildDoubleSheetRows();
     else if (sheetDef.key === "event") rows = await buildEventSheetRows();
@@ -12463,6 +12543,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     if (gameSet.has(sheetName)) { await importGameSheet(sheetName, rows, mode); touched++; }
     else if (sheetName === "National") { await importNationalSheet(rows, mode); touched++; }
     else if (sheetName === "Paramètres") { await importParamsSheet(rows); touched++; }
+    else if (sheetName === "Home 2") { await importHome2Sheet(rows, mode); touched++; }
     else if (sheetName === "Shiny") { await importShinySheet(rows, mode); touched++; }
     else if (sheetName === "Double") { await importDoubleSheet(rows, mode); touched++; }
     else if (sheetName === "Event") { await importEventSheet(rows, mode); touched++; }
@@ -13459,6 +13540,401 @@ function JeuGameView({ jeuKey, filterCache }) {
   if (jeuKey === "go1") return <Go1View filterCache={filterCache} />;
   return null;
 }
+
+// ---- Onglet "Home 2" (§ demande explicite) --------------------------------------------------
+// Suivi de complétion du Pokédex Home 2 (second stockage Pokémon Home) : liste tous les Pokémon
+// marqués disponibles sur Pokémon Home (pilule "Home" des fiches de capture, `jeuVideoFor(...).home`
+// — même clé spéciale que celle utilisée pour la vue "Home + jeu" des onglets marque), plus ceux
+// ajoutés manuellement via le bouton "+" (`extra`, pour couvrir les cas où la pilule Home n'a pas
+// encore été renseignée pour un Pokémon qu'on possède déjà dans ce second stockage). Attrapé/
+// manquant est un flag INDÉPENDANT de tout autre onglet (Home 1, National, Shiny...), propre à
+// cette collection. Stockage unique `home2` = { caught: {"nom|forme": 1}, extra: ["nom|forme"] }.
+const HOME2_VIEW_OPTIONS = [["list", "Liste"], ["grille", "Grille"]];
+const HOME2_MODE_OPTIONS = [["forme", "Par forme"], ["espece", "Par Pokémon"]];
+
+function useHome2() {
+  const [state, setState] = useState(null); // { caught: {}, extra: [] }
+  const readAll = async () => {
+    let s = { caught: {}, extra: [] };
+    try {
+      const res = await window.storage.get("home2", false);
+      const parsed = res && res.value ? JSON.parse(res.value) : null;
+      if (parsed) s = { caught: parsed.caught || {}, extra: parsed.extra || [] };
+    } catch (e) {}
+    return s;
+  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const s = await readAll();
+      if (!cancelled) setState(s);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const toggle = async (key) => {
+    const all = await readAll();
+    const caughtNext = { ...all.caught };
+    if (caughtNext[key]) delete caughtNext[key]; else caughtNext[key] = 1;
+    const next = { ...all, caught: caughtNext };
+    try { await window.storage.set("home2", JSON.stringify(next), false); } catch (e) {}
+    setState(next);
+  };
+  // Décoche toutes les formes d'une espèce d'un coup (§ vue "Par Pokémon" : décocher une espèce
+  // décoche toutes ses formes actuellement cochées, pas seulement la représentative affichée).
+  const uncheckMany = async (keys) => {
+    const all = await readAll();
+    const caughtNext = { ...all.caught };
+    keys.forEach((k) => delete caughtNext[k]);
+    const next = { ...all, caught: caughtNext };
+    try { await window.storage.set("home2", JSON.stringify(next), false); } catch (e) {}
+    setState(next);
+  };
+  // Ajoute une forme au catalogue (bouton "+") et la marque directement attrapée — on l'ajoute
+  // précisément parce qu'on la possède déjà dans ce second stockage.
+  const addExtra = async (key) => {
+    const all = await readAll();
+    const extraNext = Array.from(new Set([...(all.extra || []), key]));
+    const caughtNext = { ...all.caught, [key]: 1 };
+    const next = { caught: caughtNext, extra: extraNext };
+    try { await window.storage.set("home2", JSON.stringify(next), false); } catch (e) {}
+    setState(next);
+  };
+  return {
+    caught: (state && state.caught) || {},
+    extra: (state && state.extra) || [],
+    ready: state !== null,
+    toggle, uncheckMany, addExtra,
+  };
+}
+
+function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
+  const { caught, extra, ready, toggle, uncheckMany, addExtra } = useHome2();
+  useEffect(() => { if (onSaveStateChange) onSaveStateChange("saved"); }, []);
+  const [mode, setMode] = useCachedState(filterCache, "home2", "mode", "forme"); // "forme" | "espece"
+  const [viewMode, setViewMode] = useCachedState(filterCache, "home2", "viewMode", "list");
+  const [search, setSearch] = useCachedState(filterCache, "home2", "search", "");
+  const [filter, setFilter] = useCachedState(filterCache, "home2", "filter", "all"); // "all" | "caught" | "missing"
+  const [region, setRegion] = useCachedState(filterCache, "home2", "region", null); // null = toutes, ou Set de régions cochées
+  const anyFilterActive = filter !== "all" || region !== null;
+
+  // Filtre reçu depuis l'onglet Progression (même patron que les autres onglets).
+  useEffect(() => {
+    if (!initialFilter) return;
+    if (initialFilter.status) setFilter(initialFilter.status);
+    if (initialFilter.region) setRegion(new Set([initialFilter.region]));
+    if (onConsumeFilter) onConsumeFilter();
+    // eslint-disable-next-line
+  }, [initialFilter]);
+
+  const [gridCols, setGridCols] = useCachedState(filterCache, "home2", "gridCols", 3); // 3 par ligne par défaut (§ demande explicite)
+  const windowWidth = useWindowWidth();
+  const effCols = effectiveGridCols(gridCols, windowWidth);
+  const [limit, setLimit] = useState(150);
+  useEffect(() => { setLimit(150); }, [search, filter, region, mode, viewMode]);
+
+  // Catalogue "par forme" : toutes les formes marquées disponibles sur Pokémon Home + celles
+  // ajoutées manuellement (bouton "+", voir `extra`).
+  const extraSet = useMemo(() => new Set(extra), [extra]);
+  const formeCatalog = useMemo(() => {
+    return NAT_ALL_FORMS.filter((f) => !!jeuVideoFor(f.nom, f.forme).home || extraSet.has(f.key));
+  }, [extraSet]);
+
+  // Toutes les formes retenues d'une même espèce (pour la vue "Par Pokémon" : agrégation et
+  // décoche groupée).
+  const formsOfSpecies = useMemo(() => {
+    const map = new Map();
+    formeCatalog.forEach((f) => {
+      if (!map.has(f.nom)) map.set(f.nom, []);
+      map.get(f.nom).push(f);
+    });
+    return map;
+  }, [formeCatalog]);
+
+  // Catalogue "par Pokémon" : une ligne par espèce (forme représentative = numéro national le
+  // plus bas parmi ses formes retenues), "attrapée" dès qu'au moins une de ses formes l'est.
+  const especeCatalog = useMemo(() => {
+    const bySpecies = new Map();
+    formeCatalog.forEach((f) => {
+      const existing = bySpecies.get(f.nom);
+      const fn = typeof f.n === "number" ? f.n : parseFloat(String(f.n).replace(/[^0-9.]/g, "")) || 999999;
+      const en = existing ? (typeof existing.n === "number" ? existing.n : parseFloat(String(existing.n).replace(/[^0-9.]/g, "")) || 999999) : Infinity;
+      if (!existing || fn < en) bySpecies.set(f.nom, f);
+    });
+    return Array.from(bySpecies.values());
+  }, [formeCatalog]);
+
+  // Espèce attrapée = au moins une de ses formes retenues l'est — indépendant du mode d'affichage
+  // ("forme"/"espece"), utilisé pour le bouton "Familles manquantes" ci-dessous.
+  const isSpeciesCaught = (nom) => (formsOfSpecies.get(nom) || []).some((ff) => !!caught[ff.key]);
+
+  // Bouton "📋 Familles manquantes" (§ demande explicite, même modèle que Go 1 / doc §Recherche Go) :
+  // repère chaque famille d'évolution ayant au moins une espèce manquante, puis liste TOUS les
+  // membres de ces familles (via `familyMembersOf`, pas seulement l'espèce manquante elle-même —
+  // pratique pour rechercher toute la ligne d'évolution dans l'app Pokémon Home), triés par numéro
+  // national, séparés par une virgule. Espèces sans numéro de famille connu : traitées isolément.
+  const missingFamiliesInfo = useMemo(() => {
+    const famSet = new Set();
+    const soloNames = new Set();
+    especeCatalog.forEach((f) => {
+      if (isSpeciesCaught(f.nom)) return;
+      if (f.famille != null) famSet.add(f.famille);
+      else soloNames.add(f.nom);
+    });
+    const names = new Set(soloNames);
+    famSet.forEach((fam) => {
+      const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
+      if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
+    });
+    const sorted = Array.from(names).sort((a, b) => natInfoFor(a, null).n - natInfoFor(b, null).n);
+    return { names: sorted, familyCount: famSet.size + soloNames.size };
+  }, [especeCatalog, caught]);
+
+  // Suffixe mémorisable ajouté après la liste copiée (§ demande explicite) — stocké séparément
+  // du reste de home2 (simple préférence, pas une donnée de collection).
+  const [suffix, setSuffix] = useState("");
+  const [savedSuffix, setSavedSuffix] = useState(null); // null = pas encore chargé depuis le stockage
+  useEffect(() => {
+    (async () => {
+      let v = "";
+      try {
+        const res = await window.storage.get("home2_search_suffix", false);
+        if (res && res.value != null) v = res.value;
+      } catch (e) {}
+      setSuffix(v);
+      setSavedSuffix(v);
+    })();
+  }, []);
+  const rememberSuffix = async () => {
+    try { await window.storage.set("home2_search_suffix", suffix, false); } catch (e) {}
+    setSavedSuffix(suffix);
+  };
+  const [copyFeedback, setCopyFeedback] = useState("");
+  const copyMissingFamilies = async () => {
+    setFilter("missing");
+    const str = missingFamiliesInfo.names.join(",") + suffix;
+    const ok = await copyToClipboard(str);
+    setCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
+  };
+
+  const isFormeMode = mode === "forme";
+  const baseCatalog = isFormeMode ? formeCatalog : especeCatalog;
+
+  const isCaught = (f) => {
+    if (isFormeMode) return !!caught[f.key];
+    return (formsOfSpecies.get(f.nom) || []).some((ff) => !!caught[ff.key]);
+  };
+
+  const sortedCatalog = useMemo(() => {
+    return [...baseCatalog].sort((a, b) => {
+      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
+      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
+      return an - bn;
+    });
+  }, [baseCatalog]);
+
+  const total = sortedCatalog.length;
+  const caughtCount = useMemo(() => sortedCatalog.filter((f) => isCaught(f)).length, [sortedCatalog, caught, mode]);
+
+  const regions = useMemo(() => {
+    const s = new Set();
+    sortedCatalog.forEach((f) => { if (f.region) s.add(f.region); });
+    return Array.from(s).sort();
+  }, [sortedCatalog]);
+
+  const filtered = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return sortedCatalog.filter((f) => {
+      if (s && !(String(f.nom).toLowerCase().includes(s) || (f.forme && String(f.forme).toLowerCase().includes(s)))) return false;
+      const c = isCaught(f);
+      if (filter === "caught" && !c) return false;
+      if (filter === "missing" && c) return false;
+      if (!matchesMulti(region, f.region)) return false;
+      return true;
+    });
+    // eslint-disable-next-line
+  }, [sortedCatalog, search, filter, region, caught, mode]);
+
+  const onToggle = (f) => {
+    if (isFormeMode) {
+      toggle(f.key);
+      return;
+    }
+    const forms = formsOfSpecies.get(f.nom) || [f];
+    const anyCaught = forms.some((ff) => !!caught[ff.key]);
+    if (anyCaught) uncheckMany(forms.map((ff) => ff.key));
+    else toggle(f.key);
+  };
+
+  const resetFilters = () => { setFilter("all"); setRegion(null); };
+
+  if (!ready) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
+
+  const filteredCaughtCount = filtered.filter((f) => isCaught(f)).length;
+
+  return (
+    <div style={{ paddingBottom: 100 }}>
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
+        display: "flex", alignItems: "flex-start", gap: 20, marginBottom: 12, flexWrap: "wrap",
+        paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
+      }}>
+        <ProgressStatsTable
+          left={{
+            label: "Progression",
+            rings: [{ pct: pct(caughtCount, total), size: 46, stroke: 5, color: LIGHTBLUE, caption: `${caughtCount}/${total}` }],
+          }}
+          right={{
+            label: "Affiché",
+            rings: [{ pct: pct(filteredCaughtCount, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }],
+          }}
+        />
+      </div>
+
+      {viewMode === "grille" && (
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${effCols}, 1fr)`, gap: 6 }}>
+          {filtered.slice(0, limit).map((f) => {
+            const c = isCaught(f);
+            return (
+              <button key={f.key} onClick={() => onToggle(f)} style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
+                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
+                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
+                borderRadius: 18, padding: "6px 2px", cursor: "pointer",
+              }}>
+                <Sprite nom={f.nom} forme={f.forme} size={40} />
+                <div style={{
+                  fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, whiteSpace: "nowrap",
+                  overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%",
+                }}>{f.nom}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {viewMode === "list" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 8 }}>
+          {filtered.slice(0, limit).map((f) => {
+            const c = isCaught(f);
+            return (
+              <button key={f.key} onClick={() => onToggle(f)} style={{
+                display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
+                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
+                borderRadius: 18, padding: "7px 12px", cursor: "pointer",
+              }}>
+                <Sprite nom={f.nom} forme={f.forme} size={32} />
+                <div style={{ overflow: "hidden" }}>
+                  <div style={{
+                    fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  }}>
+                    {f.nom}{isFormeMode && f.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {f.forme}</span> : null}
+                  </div>
+                </div>
+                <div style={{ marginLeft: "auto", flexShrink: 0, color: c ? LIGHTBLUE : MUTED, fontSize: 16, fontWeight: 900 }}>
+                  {c ? "✓" : ""}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {filtered.length > limit && (
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
+        </div>
+      )}
+
+      <FloatingActionBar
+        search={search}
+        setSearch={setSearch}
+        searchPlaceholder="Rechercher…"
+        menus={[
+          {
+            key: "mode", title: "Mode", icon: BarIcon.dex,
+            render: (close) => <ViewToggle mode={mode} setMode={(m) => { setMode(m); close(); }} options={HOME2_MODE_OPTIONS} />,
+          },
+          {
+            key: "view", title: "Vue", icon: BarIcon.view,
+            render: (close) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={HOME2_VIEW_OPTIONS} />
+                {viewMode === "grille" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
+                    Par ligne :
+                    <button onClick={() => setGridCols(Math.max(2, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
+                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
+                    <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
+                  </div>
+                )}
+              </div>
+            ),
+          },
+          {
+            key: "filters", title: "Filtres", icon: BarIcon.filter, active: anyFilterActive,
+            render: () => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {anyFilterActive && (
+                  <button onClick={resetFilters} style={{ ...tabInactive, alignSelf: "flex-start" }} title="Réinitialiser les filtres">↺ Réinitialiser</button>
+                )}
+                <StatusFilterPills value={filter} onChange={setFilter} />
+                <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} width="100%" />
+              </div>
+            ),
+          },
+          {
+            key: "families", title: "Familles manquantes", icon: BarIcon.clipboard,
+            render: () => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
+                  {missingFamiliesInfo.familyCount} famille{missingFamiliesInfo.familyCount > 1 ? "s" : ""} incomplète{missingFamiliesInfo.familyCount > 1 ? "s" : ""} — {missingFamiliesInfo.names.length} Pokémon
+                </div>
+                <button
+                  onClick={copyMissingFamilies}
+                  style={{ ...tabActive, background: LIGHTBLUE, color: BG }}
+                  disabled={missingFamiliesInfo.names.length === 0}
+                >📋 Copier la liste ({missingFamiliesInfo.names.length})</button>
+                {copyFeedback && (
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{copyFeedback}</div>
+                )}
+                <textarea
+                  readOnly
+                  value={missingFamiliesInfo.names.join(",") + suffix}
+                  onFocus={(e) => e.target.select()}
+                  style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
+                />
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    value={suffix}
+                    onChange={(e) => setSuffix(e.target.value)}
+                    placeholder="Suffixe (optionnel, ajouté après la liste)"
+                    style={{ ...inputStyle, flex: 1 }}
+                  />
+                  {savedSuffix !== null && suffix !== savedSuffix && (
+                    <button onClick={rememberSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
+                  )}
+                </div>
+              </div>
+            ),
+          },
+        ]}
+        add={{
+          title: "Ajouter un Pokémon",
+          placeholder: "Rechercher un Pokémon…",
+          getSuggestions: (q) => {
+            const s = q.trim().toLowerCase();
+            if (!s) return [];
+            return NAT_ALL_FORMS.filter((f) => String(f.nom).toLowerCase().includes(s) || (f.forme && String(f.forme).toLowerCase().includes(s))).slice(0, 8);
+          },
+          onSelect: (f) => addExtra(f.key),
+        }}
+      />
+    </div>
+  );
+}
+
 function App() {
   const [tab, setTab] = useState("overview");
   const [ioMsg, setIoMsg] = useState("");
@@ -13469,6 +13945,7 @@ function App() {
   const [pendingFilter, setPendingFilter] = useState(null); // { region, status } transmis depuis l'onglet Progression vers un onglet jeu
   const [pendingShinyFilter, setPendingShinyFilter] = useState(null); // { region, status, marque } transmis depuis l'onglet Progression vers l'onglet Shiny
   const [pendingNationalFilter, setPendingNationalFilter] = useState(null); // { region, status, marque } transmis vers l'onglet National
+  const [pendingHome2Filter, setPendingHome2Filter] = useState(null); // { region, status } transmis vers l'onglet Home 2
   const [pendingEventFilter, setPendingEventFilter] = useState(null); // { marque, boite } transmis vers l'onglet Event depuis Progression
   const [pendingDoubleFilter, setPendingDoubleFilter] = useState(null); // { marque } transmis vers l'onglet Double depuis Progression
   const [pendingInterjeuFilter, setPendingInterjeuFilter] = useState(null); // { marque, home } transmis vers l'onglet Interjeu depuis Progression
@@ -13740,6 +14217,8 @@ function App() {
     "custom_jeu_views",
     "game_view_number_overrides",
     "game_view_box_group_overrides",
+    "home2",
+    "home2_search_suffix",
   ];
 
   const buildExportOut = async () => {
@@ -14073,6 +14552,7 @@ function App() {
         <button onClick={() => setTab("shiny")} style={pillStyle(tab === "shiny", GOLD)}>Shiny</button>
         <GameNavSelect tab={tab} setTab={setTab} />
         <JeuNavSelect tab={tab} setTab={setTab} />
+        <button onClick={() => setTab("home2")} style={pillStyle(tab === "home2", LIGHTBLUE)}>Home 2</button>
         <button onClick={() => setTab("double")} style={pillStyle(tab === "double", LIGHTRED)}>Double</button>
         <button onClick={() => setTab("event")} style={pillStyle(tab === "event", EVENTORANGE)}>Event</button>
         <button onClick={() => setTab("interjeu")} style={pillStyle(tab === "interjeu", INTERJEU)}>Interjeu</button>
@@ -14098,6 +14578,14 @@ function App() {
             initialFilter={pendingNationalFilter}
             onConsumeFilter={() => setPendingNationalFilter(null)}
             onOpenProgress={() => openProgressTable("__national__")}
+            onSaveStateChange={setGlobalSaveState}
+          />
+        )}
+        {tab === "home2" && (
+          <Home2View
+            filterCache={filterCache}
+            initialFilter={pendingHome2Filter}
+            onConsumeFilter={() => setPendingHome2Filter(null)}
             onSaveStateChange={setGlobalSaveState}
           />
         )}
