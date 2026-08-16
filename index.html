@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.16.21.10";
+const APP_VERSION = "2026.8.16.21.35";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -13632,11 +13632,13 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   const [limit, setLimit] = useState(150);
   useEffect(() => { setLimit(150); }, [search, filter, region, mode, viewMode]);
 
-  // Catalogue "par forme" : toutes les formes marquées disponibles sur Pokémon Home + celles
-  // ajoutées manuellement (bouton "+", voir `extra`).
+  // Catalogue "par forme" : toutes les formes marquées "Pokédex Home" (§ correctif : même flag
+  // que le filtre "Pokédex Home" de National — `DATA.homeDex[key]`, coché depuis la fiche Pokémon
+  // (CatalogEntryModal) — PAS la pilule "Home" du bloc Jeu vidéo, qui est un attribut différent)
+  // + celles ajoutées manuellement (bouton "+", voir `extra`).
   const extraSet = useMemo(() => new Set(extra), [extra]);
   const formeCatalog = useMemo(() => {
-    return NAT_ALL_FORMS.filter((f) => !!jeuVideoFor(f.nom, f.forme).home || extraSet.has(f.key));
+    return NAT_ALL_FORMS.filter((f) => !!(DATA.homeDex && DATA.homeDex[f.key]) || extraSet.has(f.key));
   }, [extraSet]);
 
   // Toutes les formes retenues d'une même espèce (pour la vue "Par Pokémon" : agrégation et
