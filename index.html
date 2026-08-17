@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.02.00";
+const APP_VERSION = "2026.8.17.14.30";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -11528,7 +11528,6 @@ function FloatingBackButton({ onClick }) {
 // les deux premières colonnes de chaque feuille — voir doc §21.
 const EXCEL_SHEETS = [
   { key: "national", label: "National" },
-  { key: "params", label: "Paramètres" },
   { key: "home2", label: "Home 2" },
   { key: "shiny", label: "Shiny" },
   { key: "double", label: "Double" },
@@ -11635,16 +11634,6 @@ async function buildGameSheetRows(g) {
       sourcesForGame = all[g] || {};
     } catch (e) {}
   }
-  // Numéro spécifique à une vue (§ demande explicite) — une colonne "NumeroVue_<clé de vue>" par
-  // vue configurée pour cette marque, valeur vide si pas d'override (numéro de la marque utilisé).
-  let numbersForMarque = {};
-  if (marquePairs.length > 0) {
-    try {
-      const res = await window.storage.get("game_view_number_overrides", false);
-      const all = res && res.value ? JSON.parse(res.value) : {};
-      numbersForMarque = all[g] || {};
-    } catch (e) {}
-  }
   // Groupe de boîte spécifique à une vue (§ précision explicite : "un Pokémon peut avoir un
   // groupe de boîte... différent en fonction des jeux") — une colonne "GroupeVue_<clé de vue>"
   // par vue, valeur vide si pas d'override (groupe de la marque utilisé).
@@ -11665,8 +11654,10 @@ async function buildGameSheetRows(g) {
     if (isAlphaGame) row.Alpha = alpha[g + "|" + key] ? 1 : 0;
     marquePairs.forEach((p) => {
       row["EnJeu_" + p.key] = (sourcesForGame[key] || []).includes(p.key) ? 1 : 0;
-      const ov = (numbersForMarque[p.key] || {})[key];
-      row["NumeroVue_" + p.key] = ov !== undefined && ov !== null ? ov : "";
+      // Numéro spécifique à une vue (§ centralisation, § voir doc) : déplacé dans la feuille
+      // "National" (colonnes "NumeroVue_<jeu>_<vue>") — ne fait plus partie de cet onglet de
+      // marque à l'export. La lecture reste tolérante en import (voir importGameSheet) pour ne
+      // pas perdre les données d'un ancien fichier déjà exporté avec cette colonne ici.
       const ovg = (boxGroupsForMarqueByView[p.key] || {})[key];
       row["GroupeVue_" + p.key] = ovg !== undefined && ovg !== null ? ovg : "";
     });
@@ -11674,13 +11665,33 @@ async function buildGameSheetRows(g) {
   });
 }
 
-async function buildParamsSheetRows() {
+// National + Paramètres (§ fusion demandée explicitement, § voir doc) — une seule feuille "National"
+// qui réunit désormais les deux : colonnes Paramètres d'abord (catalogue éditable : Numero, Region,
+// Evolution, AlphaLA/AlphaLZA, HomeDex, numéro par jeu), puis colonnes National (disponibilité
+// structurelle par jeu — renommées "Dispo_<jeu>" pour ne pas entrer en collision avec les colonnes
+// de numéro par jeu ci-dessus —, Forme(manuel), JV_<clé>). AlphaLA/AlphaLZA n'apparaissent qu'une
+// fois (position Paramètres) puisque c'est la même information dans les deux anciennes feuilles.
+// Les colonnes "NumeroVue_<jeu>_<vue>" (numéros spécifiques par vue Jeu, paires/triples) sont
+// également centralisées ici — auparavant dispersées dans chaque onglet de marque, ce qui les
+// rendait difficiles à repérer et à maintenir cohérentes entre marques (§ demande explicite).
+// Colonnes Dispo_<jeu> et AlphaLA/AlphaLZA : purement informatives, jamais relues à l'import (la
+// disponibilité se modifie via le Catalogue, §21bis) — toutes les autres colonnes sont éditables.
+async function buildNationalSheetRows() {
+  const manual = await storageGetJSON("manual_caught", {});
+  const jeuViewsAll = await storageGetJSON("custom_jeu_views", {});
+  const numberOverridesAll = await storageGetJSON("game_view_number_overrides", {});
+  const numeroVueCols = [];
+  GAME_ORDER.forEach((g) => {
+    (jeuViewsAll[g] || []).forEach((v) => numeroVueCols.push({ g, viewKey: v.key, col: "NumeroVue_" + g + "_" + v.key }));
+  });
+
   const order = DATA.natSortOrder || DATA.nat.map((_, i) => i);
   return order.map((idx) => {
     const r = DATA.nat[idx];
     const [nat, nom, forme] = r;
     const key = nom + "|" + (forme || "");
     const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
+    // ---- Colonnes Paramètres (catalogue) ----
     const row = {
       Nom: nom, Forme: excelForme(forme), Numero: nat, Region: r[3] || "",
       Evolution: DATA.evolutionMode[key] || "-",
@@ -11691,36 +11702,18 @@ async function buildParamsSheetRows() {
       const gi = DATA.gameIndex[g] ? DATA.gameIndex[g][key] : undefined;
       row[g] = gi !== undefined ? DATA.games[g][gi][0] : "";
     }
-    return row;
-  });
-}
-
-// National (§ voir doc) — ne duplique plus le statut Attrapé/Alpha (déjà dans les feuilles de jeu
-// et LA/LZA), mais garde une colonne par marque et AlphaLA/AlphaLZA en tant qu'info STRUCTURELLE
-// pure (disponibilité, pas possession) : 1 si le Pokémon existe dans ce jeu / peut être Alpha,
-// 0 sinon — pratique à copier tel quel (grille 0/1) dans un tableur externe. Différent de la
-// feuille Paramètres, qui donne le numéro exact dans chaque jeu plutôt qu'un simple booléen.
-// Purement informatif : ces colonnes ne sont pas relues à l'import (voir importNationalSheet).
-async function buildNationalSheetRows() {
-  const manual = await storageGetJSON("manual_caught", {});
-  const order = DATA.natSortOrder || DATA.nat.map((_, i) => i);
-  return order.map((idx) => {
-    const r = DATA.nat[idx];
-    const [, nom, forme] = r;
-    const key = nom + "|" + (forme || "");
-    const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
-    const row = { Nom: nom, Forme: excelForme(forme) };
+    // ---- Colonnes National (disponibilité structurelle, informatives) ----
     for (const g of GAME_ORDER) {
-      row[g] = (DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key)) ? 1 : 0;
+      row["Dispo_" + g] = (DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key)) ? 1 : 0;
     }
     row["Forme(manuel)"] = manual["Forme|" + key] ? 1 : 0;
-    row["AlphaLA"] = alpha.LA ? 1 : 0;
-    row["AlphaLZA"] = alpha.LZA ? 1 : 0;
-    // "Jeu vidéo" (§ demande explicite, bloc catalogue distinct de la marque) — une colonne par
-    // jeu précis (JEU_VIDEO_DEFS), gérable en écriture depuis ces colonnes, contrairement à
-    // AlphaLA/AlphaLZA ci-dessus qui restent purement informatives.
     const jv = jeuVideoFor(nom, forme);
     JEU_VIDEO_DEFS.forEach((def) => { row["JV_" + def.key] = jv[def.key] ? 1 : 0; });
+    // ---- Numéros spécifiques par vue Jeu (paires/triples), toutes marques confondues ----
+    numeroVueCols.forEach((c) => {
+      const ov = ((numberOverridesAll[c.g] || {})[c.viewKey] || {})[key];
+      row[c.col] = ov !== undefined && ov !== null ? ov : "";
+    });
     return row;
   });
 }
@@ -12096,7 +12089,6 @@ async function buildExcelWorkbook(selectedKeys) {
     if (!selectedKeys.has(sheetDef.key)) continue;
     let rows;
     if (sheetDef.key === "national") rows = await buildNationalSheetRows();
-    else if (sheetDef.key === "params") rows = await buildParamsSheetRows();
     else if (sheetDef.key === "home2") rows = await buildHome2SheetRows();
     else if (sheetDef.key === "shiny") rows = await buildShinySheetRows();
     else if (sheetDef.key === "double") rows = await buildDoubleSheetRows();
@@ -12146,6 +12138,9 @@ async function importGameSheet(g, rows, mode) {
     marquePairs = all[g] || [];
   } catch (e) {}
   const enJeuColumns = marquePairs.filter((p) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "EnJeu_" + p.key));
+  // "NumeroVue_<vue>" dans un onglet de marque : n'est plus généré à l'export (déplacé dans la
+  // feuille "National", § voir doc) mais reste lu ici en compatibilité descendante, pour ne rien
+  // perdre si un ancien fichier exporté avant ce changement est réimporté.
   const numeroColumns = marquePairs.filter((p) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "NumeroVue_" + p.key));
   const groupeVueColumns = marquePairs.filter((p) => rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "GroupeVue_" + p.key));
   let jeuForGame = {};
@@ -12286,31 +12281,65 @@ async function importGameSheet(g, rows, mode) {
   return matched;
 }
 
-// Miroir de buildNationalSheetRows ci-dessus : ne touche qu'à manual_caught (pseudo-jeu "Forme").
-// Les colonnes par marque et AlphaLA/AlphaLZA de cette feuille sont volontairement IGNORÉES à
-// l'import — ce sont des colonnes structurelles informatives (disponibilité, pas possession),
-// non éditables depuis cette feuille (la disponibilité se modifie via le Catalogue, §21bis).
-// caught_<jeu> et alpha_caught (ownership) restent exclusivement pilotés par les feuilles de jeu
-// (importGameSheet) — ne pas les réécrire ici évite qu'un import National désynchronisé n'écrase
-// silencieusement un statut Attrapé/Alpha déjà à jour ailleurs.
+// Miroir de buildNationalSheetRows ci-dessus (feuille fusionnée National + Paramètres, § voir
+// doc). Trois familles de colonnes traitées, chacune indépendamment (présence de colonne =
+// donnée touchée, absence = donnée non touchée, même logique de fusion par colonnes que l'ancien
+// importParamsSheet) :
+//  - "Forme(manuel)" → manual_caught (pseudo-jeu "Forme").
+//  - Colonnes Paramètres (Numero/Region/Evolution/AlphaLA/AlphaLZA/HomeDex/numéro par jeu) →
+//    catalog_overrides/catalog_additions, jamais de suppression de fiche via cette feuille.
+//  - "JV_<clé>" (Jeu vidéo) → catalog_overrides/catalog_additions (jeuVideo). "JV_go" relit aussi
+//    l'ancienne colonne "GoSorti" (compatibilité descendante).
+//  - "NumeroVue_<jeu>_<vue>" (numéros spécifiques par vue Jeu, paires/triples — anciennement dans
+//    les onglets de marque) → game_view_number_overrides.
+// Colonnes "Dispo_<jeu>" et AlphaLA/AlphaLZA : volontairement IGNORÉES à l'import — ce sont des
+// colonnes structurelles informatives (disponibilité, pas possession), non éditables depuis cette
+// feuille (la disponibilité se modifie via le Catalogue, §21bis). caught_<jeu> et alpha_caught
+// (ownership) restent exclusivement pilotés par les feuilles de jeu (importGameSheet) — ne pas
+// les réécrire ici évite qu'un import National désynchronisé n'écrase silencieusement un statut
+// Attrapé/Alpha déjà à jour ailleurs.
 async function importNationalSheet(rows, mode) {
+  if (!rows.length) return;
   let manual = mode === "replace" ? {} : await storageGetJSON("manual_caught", {});
-  // "Jeu vidéo" (§ demande explicite) — contrairement à AlphaLA/AlphaLZA (informatives), ces
-  // colonnes JV_<key> sont éditables depuis l'Excel : écrites dans catalog_overrides (fiches
-  // structurelles, clé stable __baseKey) ou catalog_additions (Pokémon ajoutés, clé
-  // __additionId), jamais par position — même mécanique que persistCatalogEdit. "JV_go" reprend
-  // l'ancienne colonne "GoSorti" (compatibilité avec un export généré avant ce changement).
   const overrides = await storageGetJSON("catalog_overrides", {});
   const additions = await storageGetJSON("catalog_additions", []);
   let overridesChanged = false, additionsChanged = false;
+
+  const sample = rows[0];
+  const hasCol = (c) => Object.prototype.hasOwnProperty.call(sample, c);
+  const hasNumero = hasCol("Numero"), hasRegion = hasCol("Region"), hasEvolution = hasCol("Evolution");
+  const hasAlphaLA = hasCol("AlphaLA"), hasAlphaLZA = hasCol("AlphaLZA"), hasHomeDex = hasCol("HomeDex");
+  const gameColsPresent = GAME_ORDER.filter(hasCol);
+  const applyGames = gameColsPresent.length === GAME_ORDER.length; // jeu de colonnes complet uniquement, par sécurité
+
+  // Colonnes "NumeroVue_<jeu>_<vue>" présentes dans le fichier, regroupées par marque pour
+  // minimiser les lectures/écritures storage.
+  const numeroVueColsByGame = {};
+  Object.keys(sample).forEach((col) => {
+    const m = /^NumeroVue_([^_]+)_(.+)$/.exec(col);
+    if (m && GAME_ORDER.includes(m[1])) {
+      (numeroVueColsByGame[m[1]] || (numeroVueColsByGame[m[1]] = [])).push({ col, viewKey: m[2] });
+    }
+  });
+  let numberOverridesAll = null;
+  if (Object.keys(numeroVueColsByGame).length > 0) {
+    numberOverridesAll = await storageGetJSON("game_view_number_overrides", {});
+    Object.keys(numeroVueColsByGame).forEach((g) => {
+      numberOverridesAll[g] = { ...(numberOverridesAll[g] || {}) };
+      numeroVueColsByGame[g].forEach((c) => { numberOverridesAll[g][c.viewKey] = { ...(numberOverridesAll[g][c.viewKey] || {}) }; });
+    });
+  }
+
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
     const forme = excelParseForme(row.Forme);
     const key = nom + "|" + forme;
+
     if (row["Forme(manuel)"] !== "" && row["Forme(manuel)"] !== undefined) {
       if (Number(row["Forme(manuel)"])) manual["Forme|" + key] = 1; else delete manual["Forme|" + key];
     }
+
     const jvPatch = {};
     let hasJvPatch = false;
     JEU_VIDEO_DEFS.forEach((def) => {
@@ -12320,25 +12349,68 @@ async function importNationalSheet(rows, mode) {
         : (legacyCol && row[legacyCol] !== "" && row[legacyCol] !== undefined ? row[legacyCol] : undefined);
       if (cell !== undefined) { jvPatch[def.key] = !!Number(cell); hasJvPatch = true; }
     });
-    if (hasJvPatch) {
+
+    const fields = { nom, forme: forme || null };
+    if (hasNumero && row.Numero !== "") fields.nat = row.Numero;
+    if (hasRegion && row.Region) fields.region = row.Region;
+    if (hasEvolution && row.Evolution !== "") fields.evolution = row.Evolution;
+    if (hasAlphaLA) fields.alphaLA = !!Number(row.AlphaLA);
+    if (hasAlphaLZA) fields.alphaLZA = !!Number(row.AlphaLZA);
+    if (hasHomeDex) fields.inHomeDex = !!Number(row.HomeDex);
+    if (applyGames) {
+      const games = GAME_ORDER.filter((g) => row[g] !== "" && row[g] !== undefined);
+      const gameNumbers = {};
+      games.forEach((g) => { const v = String(row[g]).trim(); if (v) gameNumbers[g] = v; });
+      fields.games = games;
+      fields.gameNumbers = gameNumbers;
+    }
+    const hasParamsPatch = Object.keys(fields).length > 2; // plus que nom/forme
+
+    if (hasJvPatch || hasParamsPatch) {
       const idx = findNatIdx(nom, forme);
       const natRow = idx >= 0 ? DATA.nat[idx] : null;
       if (natRow && natRow.__additionId) {
         const i2 = additions.findIndex((a) => a.id === natRow.__additionId);
         if (i2 >= 0) {
-          additions[i2] = { ...additions[i2], jeuVideo: { ...(additions[i2].jeuVideo || {}), ...jvPatch } };
+          let patched = additions[i2];
+          if (hasJvPatch) patched = { ...patched, jeuVideo: { ...(patched.jeuVideo || {}), ...jvPatch } };
+          if (hasParamsPatch) patched = { ...patched, ...fields };
+          additions[i2] = patched;
           additionsChanged = true;
         }
       } else if (natRow && natRow.__baseKey) {
         const bk = natRow.__baseKey;
-        overrides[bk] = { ...(overrides[bk] || {}), jeuVideo: { ...((overrides[bk] || {}).jeuVideo || {}), ...jvPatch } };
+        let patched = overrides[bk] || {};
+        if (hasJvPatch) patched = { ...patched, jeuVideo: { ...(patched.jeuVideo || {}), ...jvPatch } };
+        if (hasParamsPatch) patched = { ...patched, ...fields };
+        overrides[bk] = patched;
         overridesChanged = true;
+      } else if (hasParamsPatch) {
+        // Pokémon absent du catalogue (ni override ni addition) mais colonnes Paramètres
+        // renseignées : création, comme l'ancien importParamsSheet.
+        additions.push({
+          id: "custom_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+          ...fields, region: fields.region || "Extra", evolution: fields.evolution || "-",
+        });
+        additionsChanged = true;
       }
     }
+
+    if (numberOverridesAll) {
+      Object.keys(numeroVueColsByGame).forEach((g) => {
+        numeroVueColsByGame[g].forEach((c) => {
+          const raw = row[c.col];
+          const val = raw === undefined || raw === null ? "" : String(raw).trim();
+          if (val) numberOverridesAll[g][c.viewKey][key] = val; else delete numberOverridesAll[g][c.viewKey][key];
+        });
+      });
+    }
   });
+
   await window.storage.set("manual_caught", JSON.stringify(manual), false);
   if (overridesChanged) await window.storage.set("catalog_overrides", JSON.stringify(overrides), false);
   if (additionsChanged) await window.storage.set("catalog_additions", JSON.stringify(additions), false);
+  if (numberOverridesAll) await window.storage.set("game_view_number_overrides", JSON.stringify(numberOverridesAll), false);
 }
 
 async function importEventSheet(rows, mode) {
@@ -12385,11 +12457,13 @@ async function importInterjeuSheet(rows, mode) {
   await window.storage.set("custom_interjeu", JSON.stringify(Array.from(map.values())), false);
 }
 
-// La feuille "Paramètres" édite le catalogue lui-même (numéro, région, évolution, α, Pokédex
-// Home, marques possibles, numéros par jeu). Contrairement aux autres feuilles, elle ignore le
-// mode "remplacer" au sens suppression : une ligne absente du fichier n'est jamais retirée du
-// catalogue (trop risqué pour les ~1000 entrées de base) — seules les colonnes présentes sur
-// les lignes du fichier sont appliquées, en fusion, comme demandé.
+// Feuille "Paramètres" — désormais fusionnée dans "National" (§ voir buildNationalSheetRows /
+// importNationalSheet). Cette fonction est conservée UNIQUEMENT pour la compatibilité
+// descendante : si un ancien fichier Excel exporté avant la fusion (avec une feuille "Paramètres"
+// séparée) est réimporté, il reste pris en charge sans perte de données. Plus aucun nouvel export
+// ne génère cette feuille. Comme avant : ignore le mode "remplacer" au sens suppression — une
+// ligne absente du fichier n'est jamais retirée du catalogue — seules les colonnes présentes sur
+// les lignes du fichier sont appliquées, en fusion.
 async function importParamsSheet(rows) {
   if (!rows.length) return;
   const readJSON = async (key, fb) => {
