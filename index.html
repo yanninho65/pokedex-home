@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.17.40";
+const APP_VERSION = "2026.8.17.20.15";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -398,6 +398,32 @@ async function patchJeuVideo(nom, forme, patch) {
   if (!DATA.jeuVideo) DATA.jeuVideo = {};
   DATA.jeuVideo[key] = { ...(DATA.jeuVideo[key] || {}), ...patch };
 }
+// Coche/décoche "Pokédex Home" (DATA.homeDex) depuis en dehors du Catalogue — § demande explicite :
+// la liste affichée dans l'onglet Home 2 doit toujours correspondre EXACTEMENT aux Pokémon
+// National présents dans le Pokédex Home, sans jamais pouvoir diverger (voir migration des
+// anciens ajouts manuels "extra" dans useHome2, qui appelle cette fonction). Même mécanisme de
+// stockage que patchJeuVideo ci-dessus (catalog_overrides/catalog_additions, clé `inHomeDex`),
+// plus mise à jour immédiate de DATA.homeDex en mémoire.
+async function patchHomeDex(nom, forme, want) {
+  const key = nom + "|" + (forme || "");
+  const idx = findNatIdx(nom, forme);
+  const natRow = idx >= 0 ? DATA.nat[idx] : null;
+  if (natRow && natRow.__additionId) {
+    const additions = await storageGetJSON("catalog_additions", []);
+    const i = additions.findIndex((a) => a.id === natRow.__additionId);
+    if (i >= 0) {
+      additions[i] = { ...additions[i], inHomeDex: want };
+      try { await window.storage.set("catalog_additions", JSON.stringify(additions), false); } catch (e) {}
+    }
+  } else {
+    const bk = (natRow && natRow.__baseKey) || key;
+    const overrides = await storageGetJSON("catalog_overrides", {});
+    overrides[bk] = { ...(overrides[bk] || {}), inHomeDex: want };
+    try { await window.storage.set("catalog_overrides", JSON.stringify(overrides), false); } catch (e) {}
+  }
+  if (!DATA.homeDex) DATA.homeDex = {};
+  if (want) DATA.homeDex[key] = 1; else delete DATA.homeDex[key];
+}
 
 // Pilules de disponibilité "Jeu vidéo" (Home + jeux de la marque), affichées dans toute fiche de
 // capture d'une marque ayant des vues Jeu configurées (§ demande explicite : "dans toutes les
@@ -472,6 +498,21 @@ const NAT_ALL_FORMS = (() => {
   });
   return list;
 })();
+
+// Une ligne par ESPÈCE (nom), pas par forme : forme représentative = numéro national le plus bas
+// parmi toutes les formes de l'espèce. Utilisé par l'onglet Go 2 (§ demande explicite : "chaque
+// Pokémon n'apparaît qu'une fois") ET par son export/import Excel — même liste des deux côtés,
+// pour que la feuille "Go 2" corresponde exactement à ce que l'onglet affiche.
+function speciesRepresentatives() {
+  const bySpecies = new Map();
+  NAT_ALL_FORMS.forEach((f) => {
+    const existing = bySpecies.get(f.nom);
+    const fn = typeof f.n === "number" ? f.n : parseFloat(String(f.n).replace(/[^0-9.]/g, "")) || 999999;
+    const en = existing ? (typeof existing.n === "number" ? existing.n : parseFloat(String(existing.n).replace(/[^0-9.]/g, "")) || 999999) : Infinity;
+    if (!existing || fn < en) bySpecies.set(f.nom, f);
+  });
+  return Array.from(bySpecies.values());
+}
 
 // Appartenance d'un Pokémon à une marque (§ demande explicite : "Home" = disponibilité dans la
 // MARQUE, pas un attribut séparé) — ajoute/retire une entrée de DATA.games[marque], même
@@ -3209,7 +3250,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // "Go 1" (suivi Pokémon GO avancé : Pokédex/Shiny/Chanceux/Parfait/Purifié/Obscur/XXS/XXL)
   // intégré dans l'onglet Go, à côté de Home (§ demande explicite) — uniquement pertinent pour
   // gameKey === "Go" ; sans effet pour les autres marques.
-  const [goSubView, setGoSubView] = useCachedState(filterCache, gameKey, "goSubView", "home"); // "home" | "go1"
+  const [goSubView, setGoSubView] = useCachedState(filterCache, gameKey, "goSubView", "home"); // "home" | "go1" | "go2"
   const [viewMode, setViewMode] = useCachedState(filterCache, gameKey, "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, gameKey, "search", "");
   const [filter, setFilter] = useCachedState(filterCache, gameKey, "filter", "all");
@@ -3365,10 +3406,10 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // XXS/XXL), dans le même format de pilules.
   const isGoMarque = gameKey === "Go";
   const [go1Mode, setGo1Mode] = useCachedState(filterCache, "go1", "mode", "pokedex");
-  const goModeOptions = isGoMarque ? [{ key: "home", label: "Home" }, { key: "go1", label: "Go 1" }] : [];
+  const goModeOptions = isGoMarque ? [{ key: "home", label: "Home" }, { key: "go1", label: "Go 1" }, { key: "go2", label: "Go 2" }] : [];
   const modeMenuItem = {
     key: "vimode", title: "Mode", icon: BarIcon.dex,
-    active: isGoMarque ? goSubView === "go1" : (hasJeuPairs && viMode !== "home_jeu"),
+    active: isGoMarque ? (goSubView === "go1" || goSubView === "go2") : (hasJeuPairs && viMode !== "home_jeu"),
     render: (close) => (
       <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 200 }}>
         <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -3784,6 +3825,9 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
 
   if (gameKey === "Go" && goSubView === "go1") {
     return <Go1View filterCache={filterCache} mode={go1Mode} setMode={setGo1Mode} modeMenuItem={modeMenuItem} />;
+  }
+  if (gameKey === "Go" && goSubView === "go2") {
+    return <Go2View filterCache={filterCache} />;
   }
 
   if (currentPair) {
@@ -11628,6 +11672,7 @@ function FloatingBackButton({ onClick }) {
 const EXCEL_SHEETS = [
   { key: "national", label: "National" },
   { key: "home2", label: "Home 2" },
+  { key: "go2", label: "Go 2" },
   { key: "shiny", label: "Shiny" },
   { key: "double", label: "Double" },
   { key: "event", label: "Event" },
@@ -12143,18 +12188,17 @@ async function importShinySheet(rows, mode) {
   await window.storage.set("shiny_catches", JSON.stringify(next), false);
 }
 
-// Feuille "Home 2" (§ demande explicite) : une ligne par forme du catalogue Home 2 (marquées
-// "Pokédex Home" — `DATA.homeDex[key]`, § même source que l'onglet en app, voir formeCatalog —
-// + ajouts manuels via le bouton "+"). BUG CORRIGÉ : utilisait auparavant `jeuVideoFor(...).home`,
-// une clé jamais écrite nulle part (absente de JEU_VIDEO_DEFS, aucune UI pour la renseigner), ce
-// qui rendait cette feuille systématiquement vide même quand l'onglet Home 2 de l'app affichait
-// des entrées. Attrape (0/1) reflète le flag propre à cet onglet (indépendant de Home 1/National/
-// Shiny), Extra (0/1) marque les formes ajoutées manuellement (à réimporter sinon perdues si leur
-// case "Pokédex Home" n'est pas cochée).
+// Feuille "Home 2" (§ demande explicite) : une ligne par forme du catalogue Home 2, calculé
+// EXCLUSIVEMENT depuis "Pokédex Home" (`DATA.homeDex[key]`, coché sur la fiche Catalogue — colonne
+// HomeDex de la feuille "National") — la liste ne peut plus diverger de National (§ demande
+// explicite : l'ancien ajout manuel "Extra"/bouton "+" a été retiré, migré automatiquement vers
+// "Pokédex Home" au premier chargement de l'app après cette mise à jour, voir useHome2). Seule
+// colonne éditable : Attrape (0/1), flag propre à cet onglet (indépendant de Home 1/National/
+// Shiny). BUG CORRIGÉ (session précédente) : utilisait auparavant `jeuVideoFor(...).home`, une
+// clé jamais écrite nulle part, ce qui rendait cette feuille systématiquement vide.
 async function buildHome2SheetRows() {
-  const h2 = await storageGetJSON("home2", { caught: {}, extra: [] });
-  const extraSet = new Set(h2.extra || []);
-  const catalog = NAT_ALL_FORMS.filter((f) => !!(DATA.homeDex && DATA.homeDex[f.key]) || extraSet.has(f.key));
+  const h2 = await storageGetJSON("home2", { caught: {} });
+  const catalog = NAT_ALL_FORMS.filter((f) => !!(DATA.homeDex && DATA.homeDex[f.key]));
   return catalog
     .slice()
     .sort((a, b) => {
@@ -12165,28 +12209,67 @@ async function buildHome2SheetRows() {
     .map((f) => ({
       Nom: f.nom, Forme: excelForme(f.forme),
       Attrape: h2.caught && h2.caught[f.key] ? 1 : 0,
-      Extra: extraSet.has(f.key) ? 1 : 0,
     }));
 }
 
-// Chaque ligne du fichier fixe explicitement l'état de sa clé (Attrape et Extra), en mode
-// "Ajouter" comme "Remplacer" — même principe que la colonne Attrape de la feuille Home/marque
-// (§ importGameSheet) : la présence de la colonne fait foi, pas de fusion implicite ambiguë.
-// Seule différence entre les deux modes : "Remplacer" repart d'un état vide avant d'appliquer
-// les lignes du fichier (les clés absentes du fichier redeviennent non capturées/non extra).
+// La présence d'une ligne ne fait plus foi pour l'appartenance au catalogue (§ voir
+// buildHome2SheetRows ci-dessus : uniquement piloté par la colonne HomeDex de la feuille
+// "National") — uniquement pour le flag Attrape, sur les clés présentes dans le fichier. Une ligne
+// pour un Pokémon qui ne serait pas (ou plus) dans le Pokédex Home reste stockée sans effet visible
+// (n'apparaît pas dans l'onglet tant que "Pokédex Home" n'est pas coché), plutôt que rejetée, pour
+// ne rien perdre en cas d'ordre d'import différent de celui de l'export (National avant/après Home 2).
 async function importHome2Sheet(rows, mode) {
-  const current = await storageGetJSON("home2", { caught: {}, extra: [] });
+  const current = await storageGetJSON("home2", { caught: {} });
   const caught = mode === "replace" ? {} : { ...(current.caught || {}) };
-  const extraSet = mode === "replace" ? new Set() : new Set(current.extra || []);
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
     if (!nom) return;
     const forme = excelParseForme(row.Forme);
     const key = nom + "|" + forme;
     if (Number(row.Attrape)) caught[key] = 1; else delete caught[key];
-    if (Number(row.Extra)) extraSet.add(key); else extraSet.delete(key);
   });
-  await window.storage.set("home2", JSON.stringify({ caught, extra: Array.from(extraSet) }), false);
+  await window.storage.set("home2", JSON.stringify({ caught }), false);
+}
+
+// Feuille "Go 2" (§ demande explicite) : une ligne par forme unique du Pokédex (NAT_ALL_FORMS,
+// sans filtre — même principe que buildHome2SheetRows, mais sans restriction à "Pokédex Home").
+// Seule colonne éditable : Attrape (0/1), flag propre à cet onglet.
+// Feuille "Go 2" (§ demande explicite) : une ligne par ESPÈCE (voir speciesRepresentatives),
+// pas par forme — exactement le même catalogue que l'onglet Go 2 en app, pour que la feuille ne
+// diverge jamais de ce qui y est réellement affiché/cochable. Seule colonne éditable : Attrape
+// (0/1), flag propre à cet onglet.
+async function buildGo2SheetRows() {
+  const g2 = await storageGetJSON("go2", { caught: {} });
+  return speciesRepresentatives()
+    .slice()
+    .sort((a, b) => {
+      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
+      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
+      return an - bn;
+    })
+    .map((f) => ({
+      Nom: f.nom, Forme: excelForme(f.forme),
+      Attrape: g2.caught && g2.caught[f.key] ? 1 : 0,
+    }));
+}
+
+// Miroir de importHome2Sheet ci-dessus, pour le stockage "go2". La colonne Forme d'une ligne
+// importée est ignorée pour la clé de stockage si elle ne correspond pas à la forme
+// représentative actuelle de l'espèce (§ cohérence avec buildGo2SheetRows) — seul le Nom fait foi,
+// la forme représentative est recalculée depuis le catalogue courant, pour rester robuste même si
+// le fichier a été généré avec une version antérieure du catalogue (renommage de forme, etc.).
+async function importGo2Sheet(rows, mode) {
+  const current = await storageGetJSON("go2", { caught: {} });
+  const caught = mode === "replace" ? {} : { ...(current.caught || {}) };
+  const repByNom = new Map(speciesRepresentatives().map((f) => [f.nom, f]));
+  rows.forEach((row) => {
+    const nom = String(row.Nom || "").trim();
+    if (!nom) return;
+    const rep = repByNom.get(nom);
+    const key = rep ? rep.key : nom + "|" + excelParseForme(row.Forme);
+    if (Number(row.Attrape)) caught[key] = 1; else delete caught[key];
+  });
+  await window.storage.set("go2", JSON.stringify({ caught }), false);
 }
 
 async function buildExcelWorkbook(selectedKeys) {
@@ -12196,6 +12279,7 @@ async function buildExcelWorkbook(selectedKeys) {
     let rows;
     if (sheetDef.key === "national") rows = await buildNationalSheetRows();
     else if (sheetDef.key === "home2") rows = await buildHome2SheetRows();
+    else if (sheetDef.key === "go2") rows = await buildGo2SheetRows();
     else if (sheetDef.key === "shiny") rows = await buildShinySheetRows();
     else if (sheetDef.key === "double") rows = await buildDoubleSheetRows();
     else if (sheetDef.key === "event") rows = await buildEventSheetRows();
@@ -12778,6 +12862,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     else if (sheetName === "National") { await importNationalSheet(rows, mode); touched++; }
     else if (sheetName === "Paramètres") { await importParamsSheet(rows); touched++; }
     else if (sheetName === "Home 2") { await importHome2Sheet(rows, mode); touched++; }
+    else if (sheetName === "Go 2") { await importGo2Sheet(rows, mode); touched++; }
     else if (sheetName === "Shiny") { await importShinySheet(rows, mode); touched++; }
     else if (sheetName === "Double") { await importDoubleSheet(rows, mode); touched++; }
     else if (sheetName === "Event") { await importEventSheet(rows, mode); touched++; }
@@ -13842,30 +13927,49 @@ function initialsOfDO(v) {
 }
 
 // ---- Onglet "Home 2" (§ demande explicite) --------------------------------------------------
-// Suivi de complétion du Pokédex Home 2 (second stockage Pokémon Home) : liste tous les Pokémon
-// marqués "Pokédex Home" (`DATA.homeDex[key]`, coché depuis la fiche Pokémon du Catalogue — § même
-// correctif que formeCatalog plus bas, PAS la pilule "Home" du bloc Jeu vidéo, qui est un attribut
-// différent), plus ceux ajoutés manuellement via le bouton "+" (`extra`, pour couvrir les cas où
-// "Pokédex Home" n'a pas encore été coché pour un Pokémon qu'on possède déjà dans ce second
-// stockage). Attrapé/manquant est un flag INDÉPENDANT de tout autre onglet (Home 1, National,
-// Shiny...), propre à cette collection. Stockage unique `home2` = { caught: {"nom|forme": 1}, extra: ["nom|forme"] }.
+// Suivi de complétion du Pokédex Home 2 (second stockage Pokémon Home) : liste EXACTEMENT les
+// Pokémon marqués "Pokédex Home" (`DATA.homeDex[key]`, coché depuis la fiche Pokémon du Catalogue,
+// colonne HomeDex de la feuille Excel "National" — PAS la pilule "Home" du bloc Jeu vidéo, qui est
+// un attribut différent). § demande explicite : cette liste ne doit JAMAIS diverger de National —
+// l'ancien ajout manuel (bouton "+", champ `extra`) a été retiré ; toute entrée `extra` existante
+// est migrée une fois vers "Pokédex Home" au premier chargement (voir useHome2), sans perte de
+// données. Attrapé/manquant est un flag INDÉPENDANT de tout autre onglet (Home 1, National,
+// Shiny...), propre à cette collection. Stockage unique `home2` = { caught: {"nom|forme": 1} }.
 const HOME2_VIEW_OPTIONS = [["list", "Liste"], ["grille", "Grille"]];
 const HOME2_MODE_OPTIONS = [["forme", "Par forme"], ["espece", "Par Pokémon"]];
 
 function useHome2() {
-  const [state, setState] = useState(null); // { caught: {}, extra: [] }
+  const [state, setState] = useState(null); // { caught: {} }
   const readAll = async () => {
-    let s = { caught: {}, extra: [] };
+    let s = { caught: {} };
     try {
       const res = await window.storage.get("home2", false);
       const parsed = res && res.value ? JSON.parse(res.value) : null;
-      if (parsed) s = { caught: parsed.caught || {}, extra: parsed.extra || [] };
+      if (parsed) s = { caught: parsed.caught || {} };
     } catch (e) {}
     return s;
   };
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Migration à usage unique (§ demande explicite : la liste Home 2 ne doit plus jamais
+      // diverger du Pokédex Home National) — les anciens ajouts manuels "extra" (bouton "+",
+      // retiré) sont convertis en cases "Pokédex Home" cochées sur les fiches concernées, pour ne
+      // perdre aucune donnée, puis le champ `extra` est purgé du stockage `home2`.
+      let res = null;
+      try { res = await window.storage.get("home2", false); } catch (e) {}
+      const parsed = res && res.value ? JSON.parse(res.value) : null;
+      if (parsed && Array.isArray(parsed.extra) && parsed.extra.length > 0) {
+        for (const key of parsed.extra) {
+          if (DATA.homeDex && DATA.homeDex[key]) continue;
+          const sep = key.lastIndexOf("|");
+          const nom = sep >= 0 ? key.slice(0, sep) : key;
+          const forme = sep >= 0 ? key.slice(sep + 1) : "";
+          await patchHomeDex(nom, forme, true);
+        }
+        const cleaned = { caught: parsed.caught || {} };
+        try { await window.storage.set("home2", JSON.stringify(cleaned), false); } catch (e) {}
+      }
       const s = await readAll();
       if (!cancelled) setState(s);
     })();
@@ -13875,7 +13979,7 @@ function useHome2() {
     const all = await readAll();
     const caughtNext = { ...all.caught };
     if (caughtNext[key]) delete caughtNext[key]; else caughtNext[key] = 1;
-    const next = { ...all, caught: caughtNext };
+    const next = { caught: caughtNext };
     try { await window.storage.set("home2", JSON.stringify(next), false); } catch (e) {}
     setState(next);
   };
@@ -13885,30 +13989,19 @@ function useHome2() {
     const all = await readAll();
     const caughtNext = { ...all.caught };
     keys.forEach((k) => delete caughtNext[k]);
-    const next = { ...all, caught: caughtNext };
-    try { await window.storage.set("home2", JSON.stringify(next), false); } catch (e) {}
-    setState(next);
-  };
-  // Ajoute une forme au catalogue (bouton "+") et la marque directement attrapée — on l'ajoute
-  // précisément parce qu'on la possède déjà dans ce second stockage.
-  const addExtra = async (key) => {
-    const all = await readAll();
-    const extraNext = Array.from(new Set([...(all.extra || []), key]));
-    const caughtNext = { ...all.caught, [key]: 1 };
-    const next = { caught: caughtNext, extra: extraNext };
+    const next = { caught: caughtNext };
     try { await window.storage.set("home2", JSON.stringify(next), false); } catch (e) {}
     setState(next);
   };
   return {
     caught: (state && state.caught) || {},
-    extra: (state && state.extra) || [],
     ready: state !== null,
-    toggle, uncheckMany, addExtra,
+    toggle, uncheckMany,
   };
 }
 
 function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
-  const { caught, extra, ready, toggle, uncheckMany, addExtra } = useHome2();
+  const { caught, ready, toggle, uncheckMany } = useHome2();
   useEffect(() => { if (onSaveStateChange) onSaveStateChange("saved"); }, []);
   const [mode, setMode] = useCachedState(filterCache, "home2", "mode", "forme"); // "forme" | "espece"
   const [viewMode, setViewMode] = useCachedState(filterCache, "home2", "viewMode", "list");
@@ -13932,14 +14025,16 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   const [limit, setLimit] = useState(150);
   useEffect(() => { setLimit(150); }, [search, filter, region, mode, viewMode]);
 
-  // Catalogue "par forme" : toutes les formes marquées "Pokédex Home" (§ correctif : même flag
-  // que le filtre "Pokédex Home" de National — `DATA.homeDex[key]`, coché depuis la fiche Pokémon
-  // (CatalogEntryModal) — PAS la pilule "Home" du bloc Jeu vidéo, qui est un attribut différent)
-  // + celles ajoutées manuellement (bouton "+", voir `extra`).
-  const extraSet = useMemo(() => new Set(extra), [extra]);
-  const formeCatalog = useMemo(() => {
-    return NAT_ALL_FORMS.filter((f) => !!(DATA.homeDex && DATA.homeDex[f.key]) || extraSet.has(f.key));
-  }, [extraSet]);
+  // Catalogue "par forme" (§ demande explicite : ne doit JAMAIS diverger du Pokédex Home National)
+  // : exactement les formes marquées "Pokédex Home" — `DATA.homeDex[key]`, coché depuis la fiche
+  // Pokémon (CatalogEntryModal), PAS la pilule "Home" du bloc Jeu vidéo, qui est un attribut
+  // différent. Plus d'ajout manuel possible ici (ancien bouton "+"/`extra`, retiré) : pour faire
+  // apparaître un Pokémon dans Home 2, cocher "Pokédex Home" sur sa fiche Catalogue. Pas de
+  // useMemo ici volontairement : DATA.homeDex est muté EN PLACE (même référence d'objet) par la
+  // migration ponctuelle des anciens "extra" dans useHome2 — un useMemo dépendant de cette
+  // référence ne détecterait pas la mutation et laisserait la liste divergente jusqu'au prochain
+  // rechargement complet de la page.
+  const formeCatalog = NAT_ALL_FORMS.filter((f) => !!(DATA.homeDex && DATA.homeDex[f.key]));
 
   // Toutes les formes retenues d'une même espèce (pour la vue "Par Pokémon" : agrégation et
   // décoche groupée).
@@ -14236,16 +14331,325 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
             ),
           },
         ]}
-        add={{
-          title: "Ajouter un Pokémon",
-          placeholder: "Rechercher un Pokémon…",
-          getSuggestions: (q) => {
-            const s = q.trim().toLowerCase();
-            if (!s) return [];
-            return NAT_ALL_FORMS.filter((f) => String(f.nom).toLowerCase().includes(s) || (f.forme && String(f.forme).toLowerCase().includes(s))).slice(0, 8);
+        add={null}
+      />
+    </div>
+  );
+}
+
+// ---- Onglet "Go 2" (§ demande explicite) -----------------------------------------------------
+// Variante de Home 2 pour la marque Go, mais par ESPÈCE et non par forme (§ correctif explicite :
+// "les Pokémon uniques, chacun n'apparaît qu'une fois" — pas de bascule Forme/Espèce comme Home 2,
+// c'est la seule vue). Catalogue = toutes les espèces du Pokédex (une ligne par nom, forme
+// représentative = numéro national le plus bas), sans filtre "Pokédex Home". Mêmes vues
+// Liste/Grille, mêmes filtres (statut, région), même bouton de copie ("Familles manquantes") et
+// même barre de recherche que Home 2 — seule la grille change de défaut (7 par ligne au lieu de
+// 3, § demande explicite). Attrapé/manquant est un flag INDÉPENDANT de tout autre onglet, propre
+// à cette collection. Stockage unique `go2` = { caught: {"nom|forme": 1} } (une seule clé par
+// espèce, celle de sa forme représentative).
+function useGo2() {
+  const [state, setState] = useState(null); // { caught: {} }
+  const readAll = async () => {
+    let s = { caught: {} };
+    try {
+      const res = await window.storage.get("go2", false);
+      const parsed = res && res.value ? JSON.parse(res.value) : null;
+      if (parsed) s = { caught: parsed.caught || {} };
+    } catch (e) {}
+    return s;
+  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const s = await readAll();
+      if (!cancelled) setState(s);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const toggle = async (key) => {
+    const all = await readAll();
+    const caughtNext = { ...all.caught };
+    if (caughtNext[key]) delete caughtNext[key]; else caughtNext[key] = 1;
+    const next = { caught: caughtNext };
+    try { await window.storage.set("go2", JSON.stringify(next), false); } catch (e) {}
+    setState(next);
+  };
+  // Décoche toutes les formes d'une espèce d'un coup (§ vue "Par Pokémon", même mécanique que Home 2).
+  const uncheckMany = async (keys) => {
+    const all = await readAll();
+    const caughtNext = { ...all.caught };
+    keys.forEach((k) => delete caughtNext[k]);
+    const next = { caught: caughtNext };
+    try { await window.storage.set("go2", JSON.stringify(next), false); } catch (e) {}
+    setState(next);
+  };
+  return { caught: (state && state.caught) || {}, ready: state !== null, toggle, uncheckMany };
+}
+
+function Go2View({ filterCache }) {
+  const { caught, ready, toggle } = useGo2();
+  const [viewMode, setViewMode] = useCachedState(filterCache, "go2", "viewMode", "list");
+  const [search, setSearch] = useCachedState(filterCache, "go2", "search", "");
+  const [filter, setFilter] = useCachedState(filterCache, "go2", "filter", "all"); // "all" | "caught" | "missing"
+  const [region, setRegion] = useCachedState(filterCache, "go2", "region", null); // null = toutes, ou Set de régions cochées
+  const anyFilterActive = filter !== "all" || region !== null;
+
+  // 7 par ligne par défaut en vue grille (§ demande explicite — Home 2 utilise 3).
+  const [gridCols, setGridCols] = useCachedState(filterCache, "go2", "gridCols", 7);
+  const windowWidth = useWindowWidth();
+  const effCols = effectiveGridCols(gridCols, windowWidth);
+  const [limit, setLimit] = useState(150);
+  useEffect(() => { setLimit(150); }, [search, filter, region, viewMode]);
+
+  // Catalogue : un Pokémon (espèce) = une seule ligne, jamais par forme (§ demande explicite,
+  // correctif — Go 2 ne doit pas dupliquer une espèce pour chacune de ses formes). Forme
+  // représentative = numéro national le plus bas parmi toutes les formes de l'espèce, comme la
+  // vue "Par Pokémon" de Home 2, mais ici c'est la SEULE vue disponible (pas de bascule forme/espèce).
+  const speciesCatalog = useMemo(() => speciesRepresentatives(), []);
+
+  // Bouton "📋 Familles manquantes" — même principe que Home 2, adapté à un catalogue déjà par
+  // espèce (chaque entrée non cochée fait remonter toute sa famille, comme avant).
+  const numberOfSpecies = (nom) => {
+    const info = natInfoFor(nom, null);
+    if (info && info.n !== 999999) return info.n;
+    const any = NAT_ALL_FORMS.find((f) => f.nom === nom);
+    return any ? any.n : null;
+  };
+  const missingFamiliesInfo = useMemo(() => {
+    const famSet = new Set();
+    const soloNames = new Set();
+    speciesCatalog.forEach((f) => {
+      if (caught[f.key]) return;
+      if (f.famille != null) famSet.add(f.famille);
+      else soloNames.add(f.nom);
+    });
+    const names = new Set(soloNames);
+    famSet.forEach((fam) => {
+      const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
+      if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
+    });
+    const numbers = new Set();
+    names.forEach((nom) => {
+      const n = numberOfSpecies(nom);
+      if (n != null) numbers.add(n);
+    });
+    const sortedNumbers = Array.from(numbers).sort((a, b) => a - b);
+    return { numbers: sortedNumbers, pokemonCount: names.size, familyCount: famSet.size + soloNames.size };
+  }, [speciesCatalog, caught]);
+
+  // Suffixe mémorisable (§ même principe que Home 2), stocké séparément sous sa propre clé.
+  const [suffix, setSuffix] = useState("");
+  const [savedSuffix, setSavedSuffix] = useState(null);
+  useEffect(() => {
+    (async () => {
+      let v = "";
+      try {
+        const res = await window.storage.get("go2_search_suffix", false);
+        if (res && res.value != null) v = res.value;
+      } catch (e) {}
+      setSuffix(v);
+      setSavedSuffix(v);
+    })();
+  }, []);
+  const rememberSuffix = async () => {
+    try { await window.storage.set("go2_search_suffix", suffix, false); } catch (e) {}
+    setSavedSuffix(suffix);
+  };
+  const [copyFeedback, setCopyFeedback] = useState("");
+  const copyMissingFamilies = async () => {
+    setFilter("missing");
+    const str = missingFamiliesInfo.numbers.join(",") + suffix;
+    const ok = await copyToClipboard(str);
+    setCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
+  };
+
+  const isCaught = (f) => !!caught[f.key];
+
+  const sortedCatalog = useMemo(() => {
+    return [...speciesCatalog].sort((a, b) => {
+      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
+      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
+      return an - bn;
+    });
+  }, [speciesCatalog]);
+
+  const total = sortedCatalog.length;
+  const caughtCount = useMemo(() => sortedCatalog.filter((f) => isCaught(f)).length, [sortedCatalog, caught]);
+
+  const regions = useMemo(() => {
+    const s = new Set();
+    sortedCatalog.forEach((f) => { if (f.region) s.add(f.region); });
+    return Array.from(s).sort();
+  }, [sortedCatalog]);
+
+  const filtered = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return sortedCatalog.filter((f) => {
+      if (s && !String(f.nom).toLowerCase().includes(s)) return false;
+      const c = isCaught(f);
+      if (filter === "caught" && !c) return false;
+      if (filter === "missing" && c) return false;
+      if (!matchesMulti(region, f.region)) return false;
+      return true;
+    });
+    // eslint-disable-next-line
+  }, [sortedCatalog, search, filter, region, caught]);
+
+  useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
+
+  const onToggle = (f) => toggle(f.key);
+
+  const resetFilters = () => { setFilter("all"); setRegion(null); };
+
+  if (!ready) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
+
+  const filteredCaughtCount = filtered.filter((f) => isCaught(f)).length;
+
+  return (
+    <div style={{ paddingBottom: 100 }}>
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
+        display: "flex", alignItems: "flex-start", gap: 20, marginBottom: 12, flexWrap: "wrap",
+        paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
+      }}>
+        <ProgressStatsTable
+          left={{
+            label: "Progression",
+            rings: [{ pct: pct(caughtCount, total), size: 46, stroke: 5, color: LIGHTBLUE, caption: `${caughtCount}/${total}` }],
+          }}
+          right={{
+            label: "Affiché",
+            rings: [{ pct: pct(filteredCaughtCount, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }],
+          }}
+        />
+      </div>
+
+      {viewMode === "grille" && (
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${effCols}, 1fr)`, gap: 6 }}>
+          {filtered.slice(0, limit).map((f) => {
+            const c = isCaught(f);
+            return (
+              <button key={f.key} onClick={() => onToggle(f)} style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
+                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
+                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
+                borderRadius: 18, padding: "6px 2px", cursor: "pointer",
+              }}>
+                <Sprite nom={f.nom} forme={f.forme} size={40} />
+                <div style={{
+                  fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, whiteSpace: "nowrap",
+                  overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%",
+                }}>{f.nom}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {viewMode === "list" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 8 }}>
+          {filtered.slice(0, limit).map((f) => {
+            const c = isCaught(f);
+            return (
+              <button key={f.key} onClick={() => onToggle(f)} style={{
+                display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
+                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
+                borderRadius: 18, padding: "7px 12px", cursor: "pointer",
+              }}>
+                <Sprite nom={f.nom} forme={f.forme} size={32} />
+                <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
+                <div style={{ overflow: "hidden" }}>
+                  <div style={{
+                    fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  }}>{f.nom}</div>
+                </div>
+                <div style={{ marginLeft: "auto", flexShrink: 0, color: c ? LIGHTBLUE : MUTED, fontSize: 16, fontWeight: 900 }}>
+                  {c ? "✓" : ""}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {filtered.length > limit && (
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
+        </div>
+      )}
+
+      <FloatingActionBar
+        search={search}
+        setSearch={setSearch}
+        searchPlaceholder="Rechercher…"
+        menus={[
+          {
+            key: "view", title: "Vue", icon: BarIcon.view,
+            render: (close) => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={HOME2_VIEW_OPTIONS} />
+                {viewMode === "grille" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
+                    Par ligne :
+                    <button onClick={() => setGridCols(Math.max(2, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
+                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
+                    <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
+                  </div>
+                )}
+              </div>
+            ),
           },
-          onSelect: (f) => addExtra(f.key),
-        }}
+          {
+            key: "filters", title: "Filtres", icon: BarIcon.filter, active: anyFilterActive,
+            render: () => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {anyFilterActive && (
+                  <button onClick={resetFilters} style={{ ...tabInactive, alignSelf: "flex-start" }} title="Réinitialiser les filtres">↺ Réinitialiser</button>
+                )}
+                <StatusFilterPills value={filter} onChange={setFilter} />
+                <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} width="100%" />
+              </div>
+            ),
+          },
+          {
+            key: "families", title: "Familles manquantes", icon: BarIcon.clipboard,
+            render: () => (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
+                  {missingFamiliesInfo.familyCount} famille{missingFamiliesInfo.familyCount > 1 ? "s" : ""} incomplète{missingFamiliesInfo.familyCount > 1 ? "s" : ""} — {missingFamiliesInfo.numbers.length} Pokémon
+                </div>
+                <button
+                  onClick={copyMissingFamilies}
+                  style={{ ...tabActive, background: LIGHTBLUE, color: BG }}
+                  disabled={missingFamiliesInfo.numbers.length === 0}
+                >📋 Copier la liste ({missingFamiliesInfo.numbers.length})</button>
+                {copyFeedback && (
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{copyFeedback}</div>
+                )}
+                <textarea
+                  readOnly
+                  value={missingFamiliesInfo.numbers.join(",") + suffix}
+                  onFocus={(e) => e.target.select()}
+                  style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
+                />
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    value={suffix}
+                    onChange={(e) => setSuffix(e.target.value)}
+                    placeholder="Suffixe (optionnel, ajouté après la liste)"
+                    style={{ ...inputStyle, flex: 1 }}
+                  />
+                  {savedSuffix !== null && suffix !== savedSuffix && (
+                    <button onClick={rememberSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
+                  )}
+                </div>
+              </div>
+            ),
+          },
+        ]}
+        add={null}
       />
     </div>
   );
@@ -14536,6 +14940,8 @@ function App() {
     "home2",
     "home2_search_suffix",
     "parfait_search_suffix",
+    "go2",
+    "go2_search_suffix",
   ];
 
   const buildExportOut = async () => {
