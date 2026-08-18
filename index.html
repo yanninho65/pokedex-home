@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.20.15";
+const APP_VERSION = "2026.8.17.21.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -12233,13 +12233,12 @@ async function importHome2Sheet(rows, mode) {
 
 // Feuille "Go 2" (§ demande explicite) : une ligne par forme unique du Pokédex (NAT_ALL_FORMS,
 // sans filtre — même principe que buildHome2SheetRows, mais sans restriction à "Pokédex Home").
-// Seule colonne éditable : Attrape (0/1), flag propre à cet onglet.
 // Feuille "Go 2" (§ demande explicite) : une ligne par ESPÈCE (voir speciesRepresentatives),
-// pas par forme — exactement le même catalogue que l'onglet Go 2 en app, pour que la feuille ne
-// diverge jamais de ce qui y est réellement affiché/cochable. Seule colonne éditable : Attrape
-// (0/1), flag propre à cet onglet.
+// pas par forme — TOUTES les espèces (y compris exclues, pour ne rien perdre à l'export), même
+// catalogue de base que l'onglet Go 2 en app. Colonnes éditables : Attrape (0/1, flag propre à
+// cet onglet) et Exclu (0/1, § demande explicite — exclut l'espèce de la liste et des totaux).
 async function buildGo2SheetRows() {
-  const g2 = await storageGetJSON("go2", { caught: {} });
+  const g2 = await storageGetJSON("go2", { caught: {}, excluded: {} });
   return speciesRepresentatives()
     .slice()
     .sort((a, b) => {
@@ -12250,6 +12249,7 @@ async function buildGo2SheetRows() {
     .map((f) => ({
       Nom: f.nom, Forme: excelForme(f.forme),
       Attrape: g2.caught && g2.caught[f.key] ? 1 : 0,
+      Exclu: g2.excluded && g2.excluded[f.nom] ? 1 : 0,
     }));
 }
 
@@ -12258,9 +12258,12 @@ async function buildGo2SheetRows() {
 // représentative actuelle de l'espèce (§ cohérence avec buildGo2SheetRows) — seul le Nom fait foi,
 // la forme représentative est recalculée depuis le catalogue courant, pour rester robuste même si
 // le fichier a été généré avec une version antérieure du catalogue (renommage de forme, etc.).
+// Colonne "Exclu" : absente d'un ancien fichier → non touchée (compatibilité descendante).
 async function importGo2Sheet(rows, mode) {
-  const current = await storageGetJSON("go2", { caught: {} });
+  const current = await storageGetJSON("go2", { caught: {}, excluded: {} });
   const caught = mode === "replace" ? {} : { ...(current.caught || {}) };
+  const excluded = mode === "replace" ? {} : { ...(current.excluded || {}) };
+  const hasExcluCol = rows.length > 0 && Object.prototype.hasOwnProperty.call(rows[0], "Exclu");
   const repByNom = new Map(speciesRepresentatives().map((f) => [f.nom, f]));
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
@@ -12268,8 +12271,9 @@ async function importGo2Sheet(rows, mode) {
     const rep = repByNom.get(nom);
     const key = rep ? rep.key : nom + "|" + excelParseForme(row.Forme);
     if (Number(row.Attrape)) caught[key] = 1; else delete caught[key];
+    if (hasExcluCol) { if (Number(row.Exclu)) excluded[nom] = 1; else delete excluded[nom]; }
   });
-  await window.storage.set("go2", JSON.stringify({ caught }), false);
+  await window.storage.set("go2", JSON.stringify({ caught, excluded }), false);
 }
 
 async function buildExcelWorkbook(selectedKeys) {
@@ -14227,15 +14231,29 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
           {filtered.slice(0, limit).map((f) => {
             const c = isCaught(f);
             return (
-              <button key={f.key} onClick={() => onToggle(f)} style={{
-                display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+              <div key={f.key} style={{
+                display: "flex", alignItems: "center", gap: 10,
                 background: c ? "rgba(144,202,249,0.14)" : PANEL2,
                 border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "7px 12px", cursor: "pointer",
+                borderRadius: 18, padding: "7px 12px",
               }}>
-                <Sprite nom={f.nom} forme={f.forme} size={32} />
-                <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
-                <div style={{ overflow: "hidden" }}>
+                <button
+                  onClick={() => onToggle(f)}
+                  title={c ? "Marquer comme non capturé" : "Marquer comme capturé"}
+                  style={{
+                    width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
+                    border: `2px solid ${c ? LIGHTBLUE : MUTED}`,
+                    background: c ? LIGHTBLUE : "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
+                  }}
+                >{c ? "✓" : ""}</button>
+                <div
+                  onClick={() => onToggle(f)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}
+                >
+                  <Sprite nom={f.nom} forme={f.forme} size={32} />
+                  <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
                   <div style={{
                     fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
                     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
@@ -14243,10 +14261,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
                     {f.nom}{isFormeMode && f.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {f.forme}</span> : null}
                   </div>
                 </div>
-                <div style={{ marginLeft: "auto", flexShrink: 0, color: c ? LIGHTBLUE : MUTED, fontSize: 16, fontWeight: 900 }}>
-                  {c ? "✓" : ""}
-                </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -14341,20 +14356,23 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
 // Variante de Home 2 pour la marque Go, mais par ESPÈCE et non par forme (§ correctif explicite :
 // "les Pokémon uniques, chacun n'apparaît qu'une fois" — pas de bascule Forme/Espèce comme Home 2,
 // c'est la seule vue). Catalogue = toutes les espèces du Pokédex (une ligne par nom, forme
-// représentative = numéro national le plus bas), sans filtre "Pokédex Home". Mêmes vues
-// Liste/Grille, mêmes filtres (statut, région), même bouton de copie ("Familles manquantes") et
-// même barre de recherche que Home 2 — seule la grille change de défaut (7 par ligne au lieu de
-// 3, § demande explicite). Attrapé/manquant est un flag INDÉPENDANT de tout autre onglet, propre
-// à cette collection. Stockage unique `go2` = { caught: {"nom|forme": 1} } (une seule clé par
-// espèce, celle de sa forme représentative).
+// représentative = numéro national le plus bas), sans filtre "Pokédex Home", MOINS les espèces
+// exclues (§ demande explicite : "certains pokémon ne doivent pas être comptés" — une espèce
+// exclue disparaît de la liste et des totaux, jusqu'à ce qu'elle soit réintégrée depuis "Gérer
+// les exclusions"). Mêmes vues Liste/Grille, mêmes filtres (statut, région), même bouton de copie
+// ("Familles manquantes") et même barre de recherche que Home 2 — la grille change de défaut (7
+// par ligne au lieu de 3) et la vue Liste utilise une case à cocher dédiée + clic sur la ligne
+// pour ouvrir la fiche d'exclusion (§ demande explicite, comme la plupart des onglets). Attrapé/
+// manquant est un flag INDÉPENDANT de tout autre onglet, propre à cette collection. Stockage
+// unique `go2` = { caught: {"nom|forme": 1}, excluded: {"nom": 1} }.
 function useGo2() {
-  const [state, setState] = useState(null); // { caught: {} }
+  const [state, setState] = useState(null); // { caught: {}, excluded: {} }
   const readAll = async () => {
-    let s = { caught: {} };
+    let s = { caught: {}, excluded: {} };
     try {
       const res = await window.storage.get("go2", false);
       const parsed = res && res.value ? JSON.parse(res.value) : null;
-      if (parsed) s = { caught: parsed.caught || {} };
+      if (parsed) s = { caught: parsed.caught || {}, excluded: parsed.excluded || {} };
     } catch (e) {}
     return s;
   };
@@ -14370,24 +14388,130 @@ function useGo2() {
     const all = await readAll();
     const caughtNext = { ...all.caught };
     if (caughtNext[key]) delete caughtNext[key]; else caughtNext[key] = 1;
-    const next = { caught: caughtNext };
+    const next = { caught: caughtNext, excluded: all.excluded };
     try { await window.storage.set("go2", JSON.stringify(next), false); } catch (e) {}
     setState(next);
   };
-  // Décoche toutes les formes d'une espèce d'un coup (§ vue "Par Pokémon", même mécanique que Home 2).
-  const uncheckMany = async (keys) => {
+  // Exclut/réintègre une espèce (clé = nom) du décompte et de la liste (§ demande explicite).
+  const setExcluded = async (nom, want) => {
     const all = await readAll();
-    const caughtNext = { ...all.caught };
-    keys.forEach((k) => delete caughtNext[k]);
-    const next = { caught: caughtNext };
+    const excludedNext = { ...all.excluded };
+    if (want) excludedNext[nom] = 1; else delete excludedNext[nom];
+    const next = { caught: all.caught, excluded: excludedNext };
     try { await window.storage.set("go2", JSON.stringify(next), false); } catch (e) {}
     setState(next);
   };
-  return { caught: (state && state.caught) || {}, ready: state !== null, toggle, uncheckMany };
+  return { caught: (state && state.caught) || {}, excluded: (state && state.excluded) || {}, ready: state !== null, toggle, setExcluded };
+}
+
+// Fiche d'un Pokémon Go 2 : sprite/nom + case "Exclure du décompte" (§ demande explicite —
+// l'exclusion s'applique à l'ESPÈCE entière, pas à une forme précise, cohérent avec le catalogue
+// de Go 2 qui est déjà par espèce).
+function Go2ExcludeModal({ nom, forme, nat, excluded, onSetExcluded, onClose }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 360, width: "100%" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <Sprite nom={nom} forme={forme} size={44} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 15, color: TXT }}>
+              N°{nat ?? "—"} {nom}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "transparent", border: "none", color: MUTED, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>✕</button>
+        </div>
+        <label style={{
+          display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 10px", borderRadius: 12,
+          background: excluded ? "#E85D6B26" : "transparent", border: `1px solid ${excluded ? "#E85D6B" : LINE}`,
+        }}>
+          <input
+            type="checkbox" checked={excluded}
+            onChange={(e) => onSetExcluded(nom, e.target.checked)}
+            style={{ width: 18, height: 18, accentColor: "#E85D6B", flexShrink: 0 }}
+          />
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: excluded ? 700 : 500 }}>
+            Exclure ce Pokémon du décompte
+          </span>
+        </label>
+        {excluded && (
+          <div style={{ marginTop: 8, fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
+            N'apparaît plus dans la liste ni dans les totaux — réintégrable depuis "Gérer les exclusions".
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Panneau "Gérer les exclusions" (§ demande explicite : "au cas où ça change") — liste toutes les
+// espèces actuellement exclues avec un bouton pour les réintégrer, plus un champ de recherche
+// pour en exclure de nouvelles directement (sans devoir les retrouver dans la liste principale,
+// dont elles sont par définition absentes).
+function Go2ExclusionsManager({ excluded, onSetExcluded, onClose }) {
+  const [search, setSearch] = useState("");
+  const excludedList = useMemo(() => {
+    return speciesRepresentatives()
+      .filter((f) => excluded[f.nom])
+      .sort((a, b) => {
+        const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
+        const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
+        return an - bn;
+      });
+  }, [excluded]);
+  const suggestions = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    if (!s) return [];
+    return speciesRepresentatives().filter((f) => !excluded[f.nom] && String(f.nom).toLowerCase().includes(s)).slice(0, 8);
+  }, [search, excluded]);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "80vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 15, color: TXT }}>Gérer les exclusions</div>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "transparent", border: "none", color: MUTED, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>✕</button>
+        </div>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Exclure un autre Pokémon…"
+          style={{ ...inputStyle, width: "100%", marginBottom: 8 }}
+        />
+        {suggestions.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
+            {suggestions.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => { onSetExcluded(f.nom, true); setSearch(""); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, textAlign: "left", background: "transparent", border: `1px solid ${LINE}`, borderRadius: 10, padding: "6px 8px", cursor: "pointer" }}
+              >
+                <Sprite nom={f.nom} forme={f.forme} size={24} />
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT }}>{f.nom}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+          {excludedList.length === 0 ? (
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>Aucune exclusion pour l'instant.</div>
+          ) : excludedList.map((f) => (
+            <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 10, background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 12, padding: "6px 10px" }}>
+              <Sprite nom={f.nom} forme={f.forme} size={28} />
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, flex: 1 }}>{f.nom}</span>
+              <button
+                onClick={() => onSetExcluded(f.nom, false)}
+                title="Réintégrer"
+                style={{ background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8, padding: "4px 8px", color: MUTED, fontSize: 11, cursor: "pointer" }}
+              >Réintégrer</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Go2View({ filterCache }) {
-  const { caught, ready, toggle } = useGo2();
+  const { caught, excluded, ready, toggle, setExcluded } = useGo2();
   const [viewMode, setViewMode] = useCachedState(filterCache, "go2", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "go2", "search", "");
   const [filter, setFilter] = useCachedState(filterCache, "go2", "filter", "all"); // "all" | "caught" | "missing"
@@ -14405,7 +14529,11 @@ function Go2View({ filterCache }) {
   // correctif — Go 2 ne doit pas dupliquer une espèce pour chacune de ses formes). Forme
   // représentative = numéro national le plus bas parmi toutes les formes de l'espèce, comme la
   // vue "Par Pokémon" de Home 2, mais ici c'est la SEULE vue disponible (pas de bascule forme/espèce).
-  const speciesCatalog = useMemo(() => speciesRepresentatives(), []);
+  // Les espèces exclues (§ demande explicite) sont retirées ici, donc absentes de la liste ET des
+  // totaux — voir Go2ExclusionsManager pour les retrouver et les réintégrer.
+  const speciesCatalog = useMemo(() => speciesRepresentatives().filter((f) => !excluded[f.nom]), [excluded]);
+  const [excludeModalTarget, setExcludeModalTarget] = useState(null); // forme représentative ou null
+  const [showExclusionsManager, setShowExclusionsManager] = useState(false);
 
   // Bouton "📋 Familles manquantes" — même principe que Home 2, adapté à un catalogue déjà par
   // espèce (chaque entrée non cochée fait remonter toute sa famille, comme avant).
@@ -14551,27 +14679,55 @@ function Go2View({ filterCache }) {
           {filtered.slice(0, limit).map((f) => {
             const c = isCaught(f);
             return (
-              <button key={f.key} onClick={() => onToggle(f)} style={{
-                display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+              <div key={f.key} style={{
+                display: "flex", alignItems: "center", gap: 10,
                 background: c ? "rgba(144,202,249,0.14)" : PANEL2,
                 border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "7px 12px", cursor: "pointer",
+                borderRadius: 18, padding: "7px 12px",
               }}>
-                <Sprite nom={f.nom} forme={f.forme} size={32} />
-                <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
-                <div style={{ overflow: "hidden" }}>
+                <button
+                  onClick={() => onToggle(f)}
+                  title={c ? "Marquer comme non capturé" : "Marquer comme capturé"}
+                  style={{
+                    width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
+                    border: `2px solid ${c ? LIGHTBLUE : MUTED}`,
+                    background: c ? LIGHTBLUE : "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
+                  }}
+                >{c ? "✓" : ""}</button>
+                <div
+                  onClick={() => setExcludeModalTarget(f)}
+                  title="Ouvrir la fiche (exclure ce Pokémon)"
+                  style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}
+                >
+                  <Sprite nom={f.nom} forme={f.forme} size={32} />
+                  <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
                   <div style={{
                     fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
                     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                   }}>{f.nom}</div>
                 </div>
-                <div style={{ marginLeft: "auto", flexShrink: 0, color: c ? LIGHTBLUE : MUTED, fontSize: 16, fontWeight: 900 }}>
-                  {c ? "✓" : ""}
-                </div>
-              </button>
+              </div>
             );
           })}
         </div>
+      )}
+
+      {excludeModalTarget && (
+        <Go2ExcludeModal
+          nom={excludeModalTarget.nom} forme={excludeModalTarget.forme} nat={excludeModalTarget.n}
+          excluded={!!excluded[excludeModalTarget.nom]}
+          onSetExcluded={(nom, want) => setExcluded(nom, want)}
+          onClose={() => setExcludeModalTarget(null)}
+        />
+      )}
+      {showExclusionsManager && (
+        <Go2ExclusionsManager
+          excluded={excluded}
+          onSetExcluded={(nom, want) => setExcluded(nom, want)}
+          onClose={() => setShowExclusionsManager(false)}
+        />
       )}
 
       {filtered.length > limit && (
@@ -14598,6 +14754,10 @@ function Go2View({ filterCache }) {
                     <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
                   </div>
                 )}
+                <button
+                  onClick={() => { setShowExclusionsManager(true); close(); }}
+                  style={{ ...btnGhost, alignSelf: "flex-start" }}
+                >🚫 Gérer les exclusions{Object.keys(excluded).length > 0 ? ` (${Object.keys(excluded).length})` : ""}</button>
               </div>
             ),
           },
