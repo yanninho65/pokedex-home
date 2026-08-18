@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.14.30";
+const APP_VERSION = "2026.8.17.16.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -337,6 +337,26 @@ const JEU_VIDEO_DEFS = [
 function jeuVideoFor(nom, forme) {
   return (DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")]) || {};
 }
+// Valeur d'un champ "Jeu vidéo" (`jv[key]`) : `true`/`false` (disponibilité simple) ou une chaîne
+// libre non vide — note de disponibilité CONDITIONNELLE (§ demande explicite, ex. Insolourdo
+// attrapable en Cristal mais qui n'évolue en Deusolourdo qu'à partir d'Écarlate/Violet : la fiche
+// de Deusolourdo peut porter "JV cristal" = "9G+" plutôt qu'un simple 0/1). Traitée comme
+// "disponible" (vraie) partout où le code teste juste la troncature (`jv[k]`/`jv[k] !== false`,
+// permissif comme le reste de cette fonctionnalité) ; seule `jeuOnlyFormsFor` (inclusion stricte
+// d'un Pokémon hors marque) exige `=== true` et ignore donc les notes texte, volontairement.
+function isJvTextNote(v) {
+  return typeof v === "string" && v !== "";
+}
+// Parse une cellule Excel de colonne "JV_<clé>" : "1"/"0" (ou vide) → booléen classique, toute
+// autre valeur texte → conservée telle quelle comme note de disponibilité conditionnelle.
+function parseJvCell(raw) {
+  if (raw === undefined || raw === null) return undefined;
+  const s = String(raw).trim();
+  if (s === "") return undefined;
+  if (s === "0") return false;
+  if (s === "1") return true;
+  return s;
+}
 function goSortiFor(nom, forme) {
   return !!jeuVideoFor(nom, forme).go;
 }
@@ -393,17 +413,19 @@ function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
         {games.map((g) => {
           const on = g.key === "home" ? isInMarque() : jv[g.key] !== false;
+          const note = g.key !== "home" && isJvTextNote(jv[g.key]) ? jv[g.key] : null;
           return (
             <button
               key={g.key}
               type="button"
               onClick={() => toggle(g)}
+              title={note ? `Note de disponibilité conditionnelle : ${note} (éditable depuis le Catalogue)` : undefined}
               style={{
                 ...btnGhost, padding: "5px 10px", fontSize: 12,
                 background: on ? OK : "transparent", color: on ? "#fff" : MUTED,
                 border: `1px solid ${on ? OK : LINE}`,
               }}
-            >{g.label}</button>
+            >{g.label}{note ? ` (${note})` : ""}</button>
           );
         })}
       </div>
@@ -3290,6 +3312,38 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     () => (allMarqueGames.length > 0 ? [{ key: "home", label: "Home" }, ...allMarqueGames] : []),
     [allMarqueGames]
   );
+  // Notes de disponibilité conditionnelle (texte libre, § voir isJvTextNote) trouvées sur l'un
+  // des jeux de cette marque, toutes formes du Pokédex confondues — alimente les options
+  // supplémentaires du filtre "Disponibilité" (ex. "9G+"), en plus de Home/X/Y/Saphir Alpha/
+  // Rubis Oméga. Vide si aucune note texte n'a encore été saisie pour cette marque.
+  const dispoTags = useMemo(() => {
+    if (!allMarqueGames.length) return [];
+    const keys = allMarqueGames.map((g) => g.key);
+    const s = new Set();
+    NAT_ALL_FORMS.forEach((f) => {
+      const jv = jeuVideoFor(f.nom, f.forme);
+      keys.forEach((k) => { if (isJvTextNote(jv[k])) s.add(jv[k]); });
+    });
+    return Array.from(s).sort();
+  }, [allMarqueGames, jeuVideoVersion]);
+  const dispoFilterOptions = useMemo(
+    () => [...marqueGamesWithHome.map((g) => [g.key, g.label]), ...dispoTags.map((t) => ["tag:" + t, t])],
+    [marqueGamesWithHome, dispoTags]
+  );
+  const matchesDispoFilter = (nom, forme) => {
+    if (!dispoFilter) return true;
+    if (dispoFilter.size === 0) return false;
+    const jv = jeuVideoFor(nom, forme);
+    const key = nom + "|" + (forme || "");
+    return Array.from(dispoFilter).some((v) => {
+      if (v === "home") return !!(DATA.gameIndex[gameKey] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[gameKey], key));
+      if (v.startsWith("tag:")) {
+        const tag = v.slice(4);
+        return allMarqueGames.some((g) => jv[g.key] === tag);
+      }
+      return jv[v] !== false; // permissif tant que non renseigné, comme partout ailleurs
+    });
+  };
   // Pour la marque "Go" uniquement (§ demande explicite) : "Go 1" s'ajoute comme option de ce
   // même bouton flottant "Mode" (comme "Home + jeu"/"Home"/"Saphir Alpha" pour les autres
   // marques) — pas de bascule séparée en haut de page. Une fois "Go 1" sélectionné, le même
@@ -3460,11 +3514,18 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [showJeu, setShowJeu] = useState(false); // options d'affichage : Jeu - DO sous le nom
   const [boxGroupFilter, setBoxGroupFilter] = useState(null); // null = tous, ou Set de groupes cochés
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, gameKey, "jeuFilter", null); // null = tous, ou Set de valeurs Jeu - DO cochées
+  // Filtre "Disponibilité" (§ demande explicite) : uniquement pour les marques avec au moins une
+  // vue Jeu configurée (voir marqueGamesWithHome plus bas). Options = "home" (appartenance à la
+  // marque elle-même) + un jeu précis de chaque vue (ex. X, Y, Saphir Alpha, Rubis Oméga pour VI)
+  // + toute note de disponibilité conditionnelle texte trouvée dans DATA.jeuVideo pour ces jeux
+  // (préfixe "tag:", ex. "9G+" — cas Insolourdo/Deusolourdo : attrapable en Cristal, mais
+  // n'évolue qu'à partir d'Écarlate/Violet). Sélection multiple = union (au moins une correspond).
+  const [dispoFilter, setDispoFilter] = useCachedState(filterCache, gameKey, "dispoFilter", null);
   // "Sorti" (§ nouveau, onglet Go uniquement) : Pokémon GO ne sort pas tous ses Pokémon d'un coup,
   // contrairement aux jeux Switch/3DS. Renseigné depuis la fiche catalogue (bloc "Jeu vidéo").
   const isGoGame = gameKey === "Go";
   const [sortiFilter, setSortiFilter] = useCachedState(filterCache, gameKey, "sortiFilter", null); // null = tous, ou Set { "oui", "non" }
-  const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || boxGroupFilter !== null || jeuFilter !== null || sortiFilter !== null;
+  const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || boxGroupFilter !== null || jeuFilter !== null || sortiFilter !== null || dispoFilter !== null;
 
   const toggleAlpha = async (i) => {
     const r = rows[i];
@@ -3551,7 +3612,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   };
   const regionWidth = useMemo(() => charWidth("Région", regions), [regions]);
 
-  useEffect(() => { setLimit(150); }, [search, filter, region, alphaFilter, boxGroupFilter, jeuFilter, gameKey]);
+  useEffect(() => { setLimit(150); }, [search, filter, region, alphaFilter, boxGroupFilter, jeuFilter, dispoFilter, gameKey]);
 
   useEffect(() => {
     if (ready && flags === null) {
@@ -3572,6 +3633,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     setBoxGroupFilter(null);
     setJeuFilter(null);
     setSortiFilter(null);
+    setDispoFilter(null);
   };
 
   const filtered = useMemo(() => {
@@ -3592,6 +3654,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         if (!matchesMulti(region, r.region)) return false;
         if (!matchesMulti(boxGroupFilter, baseBoxInfo[r.i] && baseBoxInfo[r.i].groupe)) return false;
         if (!matchesMulti(jeuFilter, (jeuOverrides && jeuOverrides[boxGroupKeyFor(r.nom, r.forme)]) || "__none__")) return false;
+        if (!matchesDispoFilter(r.nom, r.forme)) return false;
         if (isGoGame && !matchesMulti(sortiFilter, goSortiFor(r.nom, r.forme) ? "oui" : "non")) return false;
         if (isAlphaGame && alphaFilter !== null) {
           if (!canBeAlpha(r.nom, r.forme)) return false;
@@ -3600,7 +3663,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         }
         return true;
       });
-  }, [rows, sortOrder, boxInfo, extendedRows, extendedSortOrder, extendedBoxInfo, showJeuMerge, search, filter, region, alphaFilter, alphaMap, displayEffective, isAlphaGame, boxGroupFilter, jeuFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
+  }, [rows, sortOrder, boxInfo, extendedRows, extendedSortOrder, extendedBoxInfo, showJeuMerge, search, filter, region, alphaFilter, alphaMap, displayEffective, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
 
   // Filtrage des entrées Shiny/Event additionnelles : mêmes critères recherche/région que la liste
   // normale ; le groupe de boîte et la taille Alpha n'ont pas de sens pour elles (exclues si actifs) ;
@@ -3608,6 +3671,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const matchesExtraRow = (it) => {
     if (boxGroupFilter !== null) return false;
     if (jeuFilter !== null) return false;
+    if (dispoFilter !== null) return false;
     if (isGoGame && sortiFilter !== null) return false;
     if (isAlphaGame && alphaFilter !== null) return false;
     if (!matchesMulti(region, it.region)) return false;
@@ -3621,7 +3685,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (!matchesExtraRow(it)) return false;
       return true;
     });
-  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, alphaFilter, isAlphaGame, isGoGame, sortiFilter]);
+  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, dispoFilter, alphaFilter, isAlphaGame, isGoGame, sortiFilter]);
 
   useInfiniteScroll(viewMode !== "box" && (filtered.length + extraFiltered.length) > limit, () => setLimit((l) => l + 200));
 
@@ -3648,6 +3712,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (!matchesMulti(region, r[4])) return;
       if (!matchesMulti(boxGroupFilter, baseBoxInfo[i] && baseBoxInfo[i].groupe)) return;
       if (!matchesMulti(jeuFilter, (jeuOverrides && jeuOverrides[boxGroupKeyFor(r[1], r[2])]) || "__none__")) return;
+      if (!matchesDispoFilter(r[1], r[2])) return;
       if (isGoGame && !matchesMulti(sortiFilter, goSortiFor(r[1], r[2]) ? "oui" : "non")) return;
       if (isAlphaGame && alphaFilter !== null) {
         if (!canBeAlpha(r[1], r[2])) return;
@@ -3659,7 +3724,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (filter === "missing") { if (!c) matchedCount++; } else { if (c) matchedCount++; }
     });
     return { matchedTotal, matchedCount };
-  }, [rows, extendedRows, boxInfo, extendedBoxInfo, showJeuMerge, search, region, alphaFilter, alphaMap, displayEffective, filter, isAlphaGame, boxGroupFilter, jeuFilter, jeuOverrides, isGoGame, sortiFilter]);
+  }, [rows, extendedRows, boxInfo, extendedBoxInfo, showJeuMerge, search, region, alphaFilter, alphaMap, displayEffective, filter, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
   // Les extras Shiny/Event ne comptent jamais dans les 2 premiers cercles (total/caught, basés sur
   // rows/effective, inchangés ci-dessus) — seulement ajoutés au 3e cercle (compte filtré).
   const combinedStats = {
@@ -4167,6 +4232,9 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                 <MultiSelectFilter label="Région" options={regions} selected={region} onChange={setRegion} width="100%" />
                 <MultiSelectFilter label="Groupe de boîte" options={boxGroupsAvailable} selected={boxGroupFilter} onChange={setBoxGroupFilter} width="100%" />
                 <MultiSelectFilter label="Jeu - DO" options={[["__none__", "Jeu non indiqué"], ...jeuValuesAvailable.map((j) => [j, j])]} selected={jeuFilter} onChange={setJeuFilter} width="100%" />
+                {dispoFilterOptions.length > 0 && (
+                  <MultiSelectFilter label="Disponibilité" options={dispoFilterOptions} selected={dispoFilter} onChange={setDispoFilter} width="100%" />
+                )}
                 {isGoGame && (
                   <MultiSelectFilter
                     label="Sorti"
@@ -8024,16 +8092,33 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
               <div key={gen} style={{ marginBottom: 6 }}>
                 <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>{gen}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                  {JEU_VIDEO_DEFS.filter((jv) => jv.gen === gen).map((jv) => (
-                    <label key={jv.key} style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={!!(draft.jeuVideo || {})[jv.key]}
-                        onChange={(e) => setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jv.key]: e.target.checked } })}
-                      />
-                      {jv.label}
-                    </label>
-                  ))}
+                  {JEU_VIDEO_DEFS.filter((jv) => jv.gen === gen).map((jvDef) => {
+                    const val = (draft.jeuVideo || {})[jvDef.key];
+                    const hasNote = typeof val === "string" && val !== "";
+                    const checked = hasNote ? true : !!val;
+                    return (
+                      <div key={jvDef.key} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jvDef.key]: e.target.checked } })}
+                          />
+                          {jvDef.label}
+                        </label>
+                        <input
+                          value={hasNote ? val : ""}
+                          onChange={(e) => {
+                            const t = e.target.value;
+                            setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jvDef.key]: t !== "" ? t : checked } });
+                          }}
+                          placeholder="note"
+                          title={'Note de disponibilité conditionnelle (ex. "9G+" = famille commencée dans ce jeu, complétée seulement à partir de la 9G) — remplace la case tant que ce champ est rempli.'}
+                          style={{ ...miniInput, width: 52, fontSize: 11, padding: "2px 6px" }}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -11708,7 +11793,10 @@ async function buildNationalSheetRows() {
     }
     row["Forme(manuel)"] = manual["Forme|" + key] ? 1 : 0;
     const jv = jeuVideoFor(nom, forme);
-    JEU_VIDEO_DEFS.forEach((def) => { row["JV_" + def.key] = jv[def.key] ? 1 : 0; });
+    JEU_VIDEO_DEFS.forEach((def) => {
+      const v = jv[def.key];
+      row["JV_" + def.key] = isJvTextNote(v) ? v : (v ? 1 : 0);
+    });
     // ---- Numéros spécifiques par vue Jeu (paires/triples), toutes marques confondues ----
     numeroVueCols.forEach((c) => {
       const ov = ((numberOverridesAll[c.g] || {})[c.viewKey] || {})[key];
@@ -12347,7 +12435,10 @@ async function importNationalSheet(rows, mode) {
       const legacyCol = def.key === "go" ? "GoSorti" : null;
       const cell = row[col] !== "" && row[col] !== undefined ? row[col]
         : (legacyCol && row[legacyCol] !== "" && row[legacyCol] !== undefined ? row[legacyCol] : undefined);
-      if (cell !== undefined) { jvPatch[def.key] = !!Number(cell); hasJvPatch = true; }
+      if (cell !== undefined) {
+        const parsed = parseJvCell(cell);
+        if (parsed !== undefined) { jvPatch[def.key] = parsed; hasJvPatch = true; }
+      }
     });
 
     const fields = { nom, forme: forme || null };
