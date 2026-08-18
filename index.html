@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.16.10";
+const APP_VERSION = "2026.8.17.17.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -340,12 +340,23 @@ function jeuVideoFor(nom, forme) {
 // Valeur d'un champ "Jeu vidéo" (`jv[key]`) : `true`/`false` (disponibilité simple) ou une chaîne
 // libre non vide — note de disponibilité CONDITIONNELLE (§ demande explicite, ex. Insolourdo
 // attrapable en Cristal mais qui n'évolue en Deusolourdo qu'à partir d'Écarlate/Violet : la fiche
-// de Deusolourdo peut porter "JV cristal" = "9G+" plutôt qu'un simple 0/1). Traitée comme
-// "disponible" (vraie) partout où le code teste juste la troncature (`jv[k]`/`jv[k] !== false`,
-// permissif comme le reste de cette fonctionnalité) ; seule `jeuOnlyFormsFor` (inclusion stricte
-// d'un Pokémon hors marque) exige `=== true` et ignore donc les notes texte, volontairement.
+// de Deusolourdo peut porter "JV cristal" = "9G+" plutôt qu'un simple 0/1). Une note texte n'est
+// PAS traitée comme disponible pour l'inclusion dans une vue jeu précis (voir jvAvailable
+// ci-dessous) — seuls le filtre "Disponibilité" (option "tag:<note>", comparaison stricte à la
+// note) et la fiche catalogue/pilules l'exploitent telle quelle.
 function isJvTextNote(v) {
   return typeof v === "string" && v !== "";
+}
+// Disponibilité EFFECTIVE d'un champ "Jeu vidéo" pour les besoins d'inclusion dans une vue précise
+// (rowsForPair/pairStatsFor/filtre Disponibilité) : `true` = disponible, une note texte est
+// volontairement traitée comme INDISPONIBLE ici (§ demande explicite, cas Insolourdo/Deusolourdo :
+// la note "9G+" sur Cristal documente une restriction, elle ne doit jamais faire apparaître le
+// Pokémon comme disponible dans une vue jeu précis — Saphir Alpha, X, etc. — sur la seule base de
+// cette note). `undefined` reste permissif (disponible par défaut, comme partout ailleurs). Seules
+// Home (appartenance à la marque, indépendante de jeuVideo) et Home + jeu (qui inclut tout membre
+// de la marque quel que soit le contenu de jeuVideo) restent donc concernées par ce Pokémon.
+function jvAvailable(v) {
+  return v === undefined || v === true;
 }
 // Parse une cellule Excel de colonne "JV_<clé>" : "1"/"0" (ou vide) → booléen classique, toute
 // autre valeur texte → conservée telle quelle comme note de disponibilité conditionnelle.
@@ -402,7 +413,10 @@ function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
     if (g.key === "home") {
       await patchMarqueMembership(nom, forme, marque, !isInMarque());
     } else {
-      const next = jv[g.key] === false; // était explicitement à false → repasse disponible ; sinon → indisponible
+      // Bascule binaire simple : une note texte compte comme "éteinte" (voir jvAvailable) et est
+      // donc remplacée par `true` au premier clic, comme n'importe quel état éteint — l'édition
+      // fine de la note reste réservée au Catalogue (§21bis).
+      const next = !jvAvailable(jv[g.key]);
       await patchJeuVideo(nom, forme, { [g.key]: next });
     }
     onChanged();
@@ -412,7 +426,7 @@ function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
       <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Disponible dans</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
         {games.map((g) => {
-          const on = g.key === "home" ? isInMarque() : jv[g.key] !== false;
+          const on = g.key === "home" ? isInMarque() : jvAvailable(jv[g.key]);
           const note = g.key !== "home" && isJvTextNote(jv[g.key]) ? jv[g.key] : null;
           return (
             <button
@@ -3263,7 +3277,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     marquePairs.forEach((pair) => {
       const gk = pair.jeuKeys || [];
       const anySet = gk.some((k) => jv[k] !== undefined);
-      const applicable = !anySet || gk.some((k) => jv[k]);
+      const applicable = !anySet || gk.some((k) => jv[k] === true);
       if (!applicable) return;
       max++;
       if (sources.includes(pair.key)) count++;
@@ -3282,7 +3296,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       const jv = jeuVideoFor(r[1], r[2]);
       const anySet = gk.some((k) => jv[k] !== undefined);
       if (!anySet) return true;
-      return gk.some((k) => jv[k]);
+      return gk.some((k) => jv[k] === true);
     });
     return [...inMarque, ...jeuOnlyFormsFor(gameKey, gk)];
   };
@@ -3341,7 +3355,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         const tag = v.slice(4);
         return allMarqueGames.some((g) => jv[g.key] === tag);
       }
-      return jv[v] !== false; // permissif tant que non renseigné, comme partout ailleurs
+      return jvAvailable(jv[v]); // permissif tant que non renseigné ; une note texte compte comme indisponible ici
     });
   };
   // Pour la marque "Go" uniquement (§ demande explicite) : "Go 1" s'ajoute comme option de ce
