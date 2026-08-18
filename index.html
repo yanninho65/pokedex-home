@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.17.05";
+const APP_VERSION = "2026.8.17.17.40";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -12143,14 +12143,18 @@ async function importShinySheet(rows, mode) {
   await window.storage.set("shiny_catches", JSON.stringify(next), false);
 }
 
-// Feuille "Home 2" (§ demande explicite) : une ligne par forme du catalogue Home 2 (disponibles
-// sur Pokémon Home, § jeuVideoFor(...).home, + ajouts manuels via le bouton "+") — Attrape (0/1)
-// reflète le flag propre à cet onglet (indépendant de Home 1/National/Shiny), Extra (0/1) marque
-// les formes ajoutées manuellement (à réimporter sinon perdues si leur pilule Home n'est pas cochée).
+// Feuille "Home 2" (§ demande explicite) : une ligne par forme du catalogue Home 2 (marquées
+// "Pokédex Home" — `DATA.homeDex[key]`, § même source que l'onglet en app, voir formeCatalog —
+// + ajouts manuels via le bouton "+"). BUG CORRIGÉ : utilisait auparavant `jeuVideoFor(...).home`,
+// une clé jamais écrite nulle part (absente de JEU_VIDEO_DEFS, aucune UI pour la renseigner), ce
+// qui rendait cette feuille systématiquement vide même quand l'onglet Home 2 de l'app affichait
+// des entrées. Attrape (0/1) reflète le flag propre à cet onglet (indépendant de Home 1/National/
+// Shiny), Extra (0/1) marque les formes ajoutées manuellement (à réimporter sinon perdues si leur
+// case "Pokédex Home" n'est pas cochée).
 async function buildHome2SheetRows() {
   const h2 = await storageGetJSON("home2", { caught: {}, extra: [] });
   const extraSet = new Set(h2.extra || []);
-  const catalog = NAT_ALL_FORMS.filter((f) => !!jeuVideoFor(f.nom, f.forme).home || extraSet.has(f.key));
+  const catalog = NAT_ALL_FORMS.filter((f) => !!(DATA.homeDex && DATA.homeDex[f.key]) || extraSet.has(f.key));
   return catalog
     .slice()
     .sort((a, b) => {
@@ -13839,12 +13843,12 @@ function initialsOfDO(v) {
 
 // ---- Onglet "Home 2" (§ demande explicite) --------------------------------------------------
 // Suivi de complétion du Pokédex Home 2 (second stockage Pokémon Home) : liste tous les Pokémon
-// marqués disponibles sur Pokémon Home (pilule "Home" des fiches de capture, `jeuVideoFor(...).home`
-// — même clé spéciale que celle utilisée pour la vue "Home + jeu" des onglets marque), plus ceux
-// ajoutés manuellement via le bouton "+" (`extra`, pour couvrir les cas où la pilule Home n'a pas
-// encore été renseignée pour un Pokémon qu'on possède déjà dans ce second stockage). Attrapé/
-// manquant est un flag INDÉPENDANT de tout autre onglet (Home 1, National, Shiny...), propre à
-// cette collection. Stockage unique `home2` = { caught: {"nom|forme": 1}, extra: ["nom|forme"] }.
+// marqués "Pokédex Home" (`DATA.homeDex[key]`, coché depuis la fiche Pokémon du Catalogue — § même
+// correctif que formeCatalog plus bas, PAS la pilule "Home" du bloc Jeu vidéo, qui est un attribut
+// différent), plus ceux ajoutés manuellement via le bouton "+" (`extra`, pour couvrir les cas où
+// "Pokédex Home" n'a pas encore été coché pour un Pokémon qu'on possède déjà dans ce second
+// stockage). Attrapé/manquant est un flag INDÉPENDANT de tout autre onglet (Home 1, National,
+// Shiny...), propre à cette collection. Stockage unique `home2` = { caught: {"nom|forme": 1}, extra: ["nom|forme"] }.
 const HOME2_VIEW_OPTIONS = [["list", "Liste"], ["grille", "Grille"]];
 const HOME2_MODE_OPTIONS = [["forme", "Par forme"], ["espece", "Par Pokémon"]];
 
