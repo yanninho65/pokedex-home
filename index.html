@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.23.10";
+const APP_VERSION = "2026.8.19.17.35";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -291,12 +291,12 @@ function natInfoFor(nom, forme) {
 // Excel "JV_<key>") ; `go` reprend la clé de l'ancien "Go déjà sorti" pour ne pas perdre les
 // données déjà saisies.
 const JEU_VIDEO_DEFS = [
-  { key: "rouge", label: "Rouge", gen: "1G-2G" },
-  { key: "bleu", label: "Bleu", gen: "1G-2G" },
-  { key: "jaune", label: "Jaune", gen: "1G-2G" },
-  { key: "or", label: "Or", gen: "1G-2G" },
-  { key: "argent", label: "Argent", gen: "1G-2G" },
-  { key: "cristal", label: "Cristal", gen: "1G-2G" },
+  { key: "rouge", label: "Rouge", gen: "1G" },
+  { key: "bleu", label: "Bleu", gen: "1G" },
+  { key: "jaune", label: "Jaune", gen: "1G" },
+  { key: "or", label: "Or", gen: "2G" },
+  { key: "argent", label: "Argent", gen: "2G" },
+  { key: "cristal", label: "Cristal", gen: "2G" },
   { key: "rubis", label: "Rubis", gen: "3G" },
   { key: "saphir", label: "Saphir", gen: "3G" },
   { key: "emeraude", label: "Émeraude", gen: "3G" },
@@ -319,6 +319,10 @@ const JEU_VIDEO_DEFS = [
   { key: "ultralune", label: "Ultra-Lune", gen: "7G" },
   { key: "bouclier", label: "Bouclier", gen: "8G" },
   { key: "epee", label: "Épée", gen: "8G" },
+  // § demande explicite : Diamant Étincelant/Perle Scintillante rangés dans le bloc 8G (remakes
+  // sortis dans l'ère 8G malgré leur contenu 4G).
+  { key: "diamantetincelant", label: "Diamant Étincelant", gen: "8G" },
+  { key: "perlescintillante", label: "Perle Scintillante", gen: "8G" },
   { key: "arceus", label: "Arceus", gen: "Legends" },
   { key: "za", label: "Z-A", gen: "Legends" },
   { key: "ecarlate", label: "Écarlate", gen: "9G" },
@@ -334,6 +338,45 @@ const JEU_VIDEO_DEFS = [
   { key: "vents", label: "Vents", gen: "10G" },
   { key: "vagues", label: "Vagues", gen: "10G" },
 ];
+// Regroupement visuel par paire/triple (§ demande explicite : alignement des pilules "Jeu vidéo"
+// et lignes du bloc "Numéro spécifique par jeu vidéo") — un item = une ligne affichée ensemble.
+// `pairKey` = clé de stockage pour le numéro partagé de la paire (jointure des clés triée pour
+// rester stable même si l'ordre ci-dessous change), voir `draft.jeuVideoNumbers`. `sharedNumber`
+// (true par défaut) : les jeux du groupe partagent le même numéro nat/spécifique (vraie paire de
+// même Pokédex) — mis à `false` pour Arceus/Z-A (§ demande explicite : alignés sur la même ligne
+// pour "Jeu vidéo" mais PAS une vraie paire, numérotation toujours saisie séparément).
+const JEU_VIDEO_PAIRS = [
+  ["rouge", "bleu", "jaune"],
+  ["or", "argent", "cristal"],
+  ["rubis", "saphir"],
+  ["emeraude"],
+  ["rougefeu", "vertfeuille"],
+  ["diamant", "perle"],
+  ["platine"],
+  ["noir", "blanc"],
+  ["noir2", "blanc2"],
+  ["x", "y"],
+  ["saphiralpha", "rubisomega"],
+  ["soleil", "lune"],
+  ["ultrasoleil", "ultralune"],
+  ["epee", "bouclier"],
+  ["diamantetincelant", "perlescintillante"],
+  { keys: ["arceus", "za"], sharedNumber: false },
+  ["ecarlate", "violet"],
+  ["go"],
+  ["lgpikachu", "lgevoli"],
+  ["rougefeuswitch", "vertfeuilleswitch"],
+  ["vents", "vagues"],
+].map((entry) => {
+  const keys = Array.isArray(entry) ? entry : entry.keys;
+  const sharedNumber = Array.isArray(entry) ? true : entry.sharedNumber !== false;
+  return { keys, sharedNumber, pairKey: keys.slice().sort().join("_") };
+});
+function jeuVideoPairKeyFor(keys) {
+  const sorted = (keys || []).slice().sort().join("|");
+  const found = JEU_VIDEO_PAIRS.find((g) => g.keys.slice().sort().join("|") === sorted);
+  return (found && found.sharedNumber) ? found.pairKey : null;
+}
 function jeuVideoFor(nom, forme) {
   return (DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")]) || {};
 }
@@ -7834,6 +7877,46 @@ async function applyCatalogCustomizations() {
   // aussi §21bis pour l'historique de la migration hors des clés positionnelles "nat#<index>".
   DATA.nat.forEach((row) => { row.__baseKey = pokemonIdentityKey(row[1], row[2]); });
 
+  // Migration ponctuelle (§ demande explicite : le bloc "Numéro spécifique par jeu vidéo" de la
+  // fiche Catalogue remplace le bloc "Vues Jeu" de Paramètres pour l'édition des numéros par jeu
+  // précis) — fusionne une fois les numéros déjà saisis dans `game_view_number_overrides` (par
+  // marque + vue configurée dans `custom_jeu_views`) vers `catalog_overrides`/`catalog_additions`
+  // (clé `jeuVideoNumbers`, indexée par paire JEU_VIDEO_PAIRS) quand une vue correspond
+  // EXACTEMENT aux jeux d'une paire/triple connue (jeuKeys identiques, ordre indifférent).
+  // Idempotent (flag `jeuVideoNumbers_migrated`) — ne touche jamais `game_view_number_overrides`
+  // lui-même (compatibilité descendante conservée pour l'export Excel "NumeroVue_<jeu>_<vue>").
+  let additionsChangedByMigration = false;
+  try {
+    const migRes = await window.storage.get("jeuVideoNumbers_migrated", false);
+    if (!migRes || !migRes.value) {
+      const jeuViewsAll = await readJSON("custom_jeu_views", {});
+      const numberOverridesAll = await readJSON("game_view_number_overrides", {});
+      Object.keys(jeuViewsAll).forEach((marque) => {
+        (jeuViewsAll[marque] || []).forEach((vue) => {
+          const pairKey = jeuVideoPairKeyFor(vue.jeuKeys);
+          if (!pairKey) return;
+          const numbers = (numberOverridesAll[marque] || {})[vue.key];
+          if (!numbers) return;
+          Object.keys(numbers).forEach((pokemonKey) => {
+            const num = numbers[pokemonKey];
+            if (num === undefined || num === null || num === "") return;
+            const addIdx = additions.findIndex((a) => !a.deleted && pokemonIdentityKey(a.nom, a.forme || null) === pokemonKey);
+            if (addIdx >= 0) {
+              const a = additions[addIdx];
+              additions[addIdx] = { ...a, jeuVideoNumbers: { ...(a.jeuVideoNumbers || {}), [pairKey]: num } };
+              additionsChangedByMigration = true;
+            } else {
+              overrides[pokemonKey] = { ...(overrides[pokemonKey] || {}), jeuVideoNumbers: { ...((overrides[pokemonKey] || {}).jeuVideoNumbers || {}), [pairKey]: num } };
+              overridesChanged = true;
+            }
+          });
+        });
+      });
+      if (additionsChangedByMigration) { try { await window.storage.set("catalog_additions", JSON.stringify(additions), false); } catch (e) {} }
+      try { await window.storage.set("jeuVideoNumbers_migrated", "1", false); } catch (e) {}
+    }
+  } catch (e) {}
+
   // Migration : anciennes clés positionnelles "nat#<index>" (avant cette refonte) vers les
   // nouvelles clés stables. Idempotent — ne s'exécute qu'une fois, puis se sauvegarde.
   Object.keys(overrides).forEach((id) => {
@@ -7873,6 +7956,7 @@ async function applyCatalogCustomizations() {
     DATA.evolutionMode[key] = add.evolution || "-";
     DATA.alphaCapable[key] = { LA: add.alphaLA ? 1 : 0, LZA: add.alphaLZA ? 1 : 0 };
     if (add.jeuVideo) { if (!DATA.jeuVideo) DATA.jeuVideo = {}; DATA.jeuVideo[key] = { ...(DATA.jeuVideo[key] || {}), ...add.jeuVideo }; }
+    if (add.jeuVideoNumbers) { if (!DATA.jeuVideoNumbers) DATA.jeuVideoNumbers = {}; DATA.jeuVideoNumbers[key] = { ...(DATA.jeuVideoNumbers[key] || {}), ...add.jeuVideoNumbers }; }
     if (add.inHomeDex) { if (!DATA.homeDex) DATA.homeDex = {}; DATA.homeDex[key] = 1; }
     (add.games || []).forEach((g) => {
       if (!DATA.games[g] || !DATA.gameIndex[g]) return;
@@ -7937,6 +8021,10 @@ async function applyCatalogCustomizations() {
     if (ov.jeuVideo) {
       if (!DATA.jeuVideo) DATA.jeuVideo = {};
       DATA.jeuVideo[key] = { ...(DATA.jeuVideo[key] || {}), ...ov.jeuVideo };
+    }
+    if (ov.jeuVideoNumbers) {
+      if (!DATA.jeuVideoNumbers) DATA.jeuVideoNumbers = {};
+      DATA.jeuVideoNumbers[key] = { ...(DATA.jeuVideoNumbers[key] || {}), ...ov.jeuVideoNumbers };
     }
     if (ov.inHomeDex !== undefined) {
       if (!DATA.homeDex) DATA.homeDex = {};
@@ -8053,11 +8141,15 @@ function computeNatSortOrder(additionIdxById) {
 // Formulaire d'édition/ajout, utilisé en modale par CatalogEditor.
 function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Regroupement/dégroupement (§ demande explicite) des sections "Numéro spécifique par jeu" et
-  // "Jeu vidéo", qui peuvent devenir longues (un jeu par marque cochée, un item par génération) —
-  // repliées par défaut à l'ouverture de la fiche.
+  // Regroupement/dégroupement (§ demande explicite) des sections "Numéro spécifique par marque",
+  // "Jeu vidéo" et "Numéro spécifique par jeu vidéo", qui peuvent devenir longues (un jeu par
+  // marque cochée, un item par génération) — repliées par défaut à l'ouverture de la fiche.
   const [gameNumbersOpen, setGameNumbersOpen] = useState(false);
   const [jeuVideoOpen, setJeuVideoOpen] = useState(false);
+  const [jeuVideoNumbersOpen, setJeuVideoNumbersOpen] = useState(false);
+  // Clés JEU_VIDEO_DEFS pour lesquelles le champ note est actuellement ouvert (§ demande
+  // explicite : petit bouton "+" au lieu d'un champ note toujours visible).
+  const [openNoteKeys, setOpenNoteKeys] = useState(() => new Set());
   const toggleGame = (g) => {
     const games = draft.games || [];
     const gameNumbers = { ...(draft.gameNumbers || {}) };
@@ -8069,6 +8161,7 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
     }
   };
   const setGameNumber = (g, v) => setDraft({ ...draft, gameNumbers: { ...(draft.gameNumbers || {}), [g]: v } });
+  const setJeuVideoNumber = (pairKey, v) => setDraft({ ...draft, jeuVideoNumbers: { ...(draft.jeuVideoNumbers || {}), [pairKey]: v } });
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
@@ -8076,14 +8169,16 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
           {isNew ? "Ajouter un Pokémon" : "Modifier ce Pokémon"}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Nom
-            <input value={draft.nom} onChange={(e) => setDraft({ ...draft, nom: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
-          </label>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Forme (laisser vide pour la forme normale)
-            <input value={draft.forme} onChange={(e) => setDraft({ ...draft, forme: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
-          </label>
+          <div style={{ display: "flex", gap: 10 }}>
+            <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+              Nom
+              <input value={draft.nom} onChange={(e) => setDraft({ ...draft, nom: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
+            </label>
+            <label style={{ flex: 1.8, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+              Forme
+              <input value={draft.forme} onChange={(e) => setDraft({ ...draft, forme: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
+            </label>
+          </div>
           <div style={{ display: "flex", gap: 10 }}>
             <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
               Numéro national
@@ -8101,24 +8196,39 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
               />
             </label>
           </div>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Méthode d'évolution
-            <input value={draft.evolution} onChange={(e) => setDraft({ ...draft, evolution: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
-          </label>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Famille (numéro de ligne d'évolution)
-            <input value={draft.famille || ""} onChange={(e) => setDraft({ ...draft, famille: e.target.value.replace(/[^0-9]/g, "") })} placeholder="ex. 1" style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
-          </label>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-              <input type="checkbox" checked={!!draft.alphaLA} onChange={(e) => setDraft({ ...draft, alphaLA: e.target.checked })} /> α possible (LA)
+          <div style={{ display: "flex", gap: 10 }}>
+            <label style={{ flex: 3, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+              Méthode d'évolution
+              <input value={draft.evolution} onChange={(e) => setDraft({ ...draft, evolution: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-              <input type="checkbox" checked={!!draft.alphaLZA} onChange={(e) => setDraft({ ...draft, alphaLZA: e.target.checked })} /> α possible (LZA)
+            <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+              Famille
+              <input value={draft.famille || ""} onChange={(e) => setDraft({ ...draft, famille: e.target.value.replace(/[^0-9]/g, "").slice(0, 4) })} placeholder="ex. 1" style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-              <input type="checkbox" checked={!!draft.inHomeDex} onChange={(e) => setDraft({ ...draft, inHomeDex: e.target.checked })} /> Dans le Pokédex Home
-            </label>
+          </div>
+          <div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Pokédex Home &amp; Alpha</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {[
+                { key: "inHomeDex", label: "Pokédex Home" },
+                { key: "alphaLA", label: "α (LA)" },
+                { key: "alphaLZA", label: "α (LZA)" },
+              ].map((opt) => {
+                const active = !!draft[opt.key];
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setDraft({ ...draft, [opt.key]: !active })}
+                    style={{
+                      border: "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer",
+                      fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: active ? 700 : 500,
+                      background: active ? ACCENT : PANEL, color: active ? "#fff" : MUTED,
+                    }}
+                  >{opt.label}</button>
+                );
+              })}
+            </div>
           </div>
           <div>
             <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Marques possibles</div>
@@ -8152,18 +8262,19 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
                 }}
               >
                 <span style={{ fontSize: 10, transform: gameNumbersOpen ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform 0.15s" }}>▶</span>
-                Numéro spécifique par jeu (si différent du numéro national — laisser vide sinon)
+                Numéros spécifiques par marque
               </button>
               {gameNumbersOpen && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
                   {(draft.games || []).map((g) => (
                     <div key={g} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ width: 60, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{g}</span>
+                      <span style={{ width: 50, flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{g}</span>
                       <input
                         value={(draft.gameNumbers || {})[g] || ""}
                         onChange={(e) => setGameNumber(g, e.target.value)}
                         placeholder={String(draft.nat || "")}
-                        style={{ ...miniInput, flex: 1, boxSizing: "border-box" }}
+                        maxLength={8}
+                        style={{ ...miniInput, width: 60, flexShrink: 0, boxSizing: "border-box" }}
                       />
                     </div>
                   ))}
@@ -8182,38 +8293,118 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
               }}
             >
               <span style={{ fontSize: 10, transform: jeuVideoOpen ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform 0.15s" }}>▶</span>
-              Jeu vidéo <span style={{ fontWeight: 400 }}>(distinct de la marque — précise dans quel jeu précis ce Pokémon est disponible)</span>
+              Jeu vidéo
             </button>
             {jeuVideoOpen && Array.from(new Set(JEU_VIDEO_DEFS.map((jv) => jv.gen))).map((gen) => (
               <div key={gen} style={{ marginBottom: 6 }}>
                 <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>{gen}</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                  {JEU_VIDEO_DEFS.filter((jv) => jv.gen === gen).map((jvDef) => {
-                    const val = (draft.jeuVideo || {})[jvDef.key];
-                    const hasNote = typeof val === "string" && val !== "";
-                    const checked = hasNote ? true : !!val;
-                    return (
-                      <div key={jvDef.key} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {JEU_VIDEO_PAIRS.filter((grp) => grp.keys.some((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).gen === gen)).map((grp) => (
+                    <div key={grp.pairKey} style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                      {grp.keys.map((k) => {
+                        const jvDef = JEU_VIDEO_DEFS.find((d) => d.key === k);
+                        if (!jvDef || jvDef.gen !== gen) return null;
+                        const val = (draft.jeuVideo || {})[jvDef.key];
+                        const hasNote = typeof val === "string" && val !== "";
+                        const active = hasNote ? true : !!val;
+                        const noteOpen = hasNote || openNoteKeys.has(jvDef.key);
+                        return (
+                          <div key={jvDef.key} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <button
+                              type="button"
+                              onClick={() => setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jvDef.key]: !active } })}
+                              style={{
+                                border: "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer",
+                                fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: active ? 700 : 500,
+                                background: active ? ACCENT : PANEL, color: active ? "#fff" : MUTED,
+                              }}
+                            >{jvDef.label}</button>
+                            {noteOpen ? (
+                              <input
+                                value={hasNote ? val : ""}
+                                onChange={(e) => {
+                                  const t = e.target.value;
+                                  setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jvDef.key]: t !== "" ? t : active } });
+                                }}
+                                onBlur={() => {
+                                  if (!hasNote) setOpenNoteKeys((s) => { const n = new Set(s); n.delete(jvDef.key); return n; });
+                                }}
+                                autoFocus={!hasNote}
+                                placeholder="note"
+                                title={'Note de disponibilité conditionnelle (ex. "9G+" = famille commencée dans ce jeu, complétée seulement à partir de la 9G) — remplace la pilule tant que ce champ est rempli.'}
+                                style={{ ...miniInput, width: 52, fontSize: 11, padding: "2px 6px" }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setOpenNoteKeys((s) => new Set(s).add(jvDef.key))}
+                                title="Ajouter une note de disponibilité conditionnelle"
+                                style={{
+                                  width: 20, height: 20, borderRadius: 999, border: `1px solid ${LINE}`, background: "transparent",
+                                  color: MUTED, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 0, flexShrink: 0,
+                                }}
+                              >+</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => setJeuVideoNumbersOpen((o) => !o)}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
+                background: "transparent", border: "none", cursor: "pointer", padding: 0, marginBottom: 6,
+                fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED,
+              }}
+            >
+              <span style={{ fontSize: 10, transform: jeuVideoNumbersOpen ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform 0.15s" }}>▶</span>
+              Numéro spécifique par jeu vidéo
+            </button>
+            {jeuVideoNumbersOpen && Array.from(new Set(JEU_VIDEO_DEFS.map((jv) => jv.gen))).map((gen) => (
+              <div key={gen} style={{ marginBottom: 6 }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>{gen}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {JEU_VIDEO_PAIRS.filter((grp) => grp.keys.some((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).gen === gen)).map((grp) => {
+                    if (grp.sharedNumber) {
+                      const label = grp.keys.map((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).label).filter(Boolean).join(" / ");
+                      return (
+                        <div key={grp.pairKey} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{label}</span>
                           <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jvDef.key]: e.target.checked } })}
+                            value={(draft.jeuVideoNumbers || {})[grp.pairKey] || ""}
+                            onChange={(e) => setJeuVideoNumber(grp.pairKey, e.target.value)}
+                            placeholder={String(draft.nat || "")}
+                            maxLength={8}
+                            style={{ ...miniInput, width: 60, flexShrink: 0, boxSizing: "border-box" }}
                           />
-                          {jvDef.label}
-                        </label>
-                        <input
-                          value={hasNote ? val : ""}
-                          onChange={(e) => {
-                            const t = e.target.value;
-                            setDraft({ ...draft, jeuVideo: { ...(draft.jeuVideo || {}), [jvDef.key]: t !== "" ? t : checked } });
-                          }}
-                          placeholder="note"
-                          title={'Note de disponibilité conditionnelle (ex. "9G+" = famille commencée dans ce jeu, complétée seulement à partir de la 9G) — remplace la case tant que ce champ est rempli.'}
-                          style={{ ...miniInput, width: 52, fontSize: 11, padding: "2px 6px" }}
-                        />
-                      </div>
-                    );
+                        </div>
+                      );
+                    }
+                    // Pas une vraie paire (§ demande explicite, ex. Arceus/Z-A) : un champ numéro
+                    // distinct par jeu, malgré l'alignement commun côté pilules "Jeu vidéo".
+                    return grp.keys.map((k) => {
+                      const jvDef = JEU_VIDEO_DEFS.find((d) => d.key === k);
+                      if (!jvDef) return null;
+                      return (
+                        <div key={k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{jvDef.label}</span>
+                          <input
+                            value={(draft.jeuVideoNumbers || {})[k] || ""}
+                            onChange={(e) => setJeuVideoNumber(k, e.target.value)}
+                            placeholder={String(draft.nat || "")}
+                            maxLength={8}
+                            style={{ ...miniInput, width: 60, flexShrink: 0, boxSizing: "border-box" }}
+                          />
+                        </div>
+                      );
+                    });
                   })}
                 </div>
               </div>
@@ -8273,6 +8464,7 @@ function buildFullCatalogOverrides() {
     // chaque export JSON ET de chaque synchro Gist (les deux passent par cette fonction).
     // `jeuVideo` (disponibilité par jeu précis, §5ter/§4) avait été oublié à sa création.
     const jv = DATA.jeuVideo && DATA.jeuVideo[key];
+    const jvn = DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key];
     out[row.__baseKey] = {
       nom: row[1], forme: row[2] || null, nat: row[0], region: row[3] || undefined,
       evolution: DATA.evolutionMode[key] || "-",
@@ -8281,6 +8473,7 @@ function buildFullCatalogOverrides() {
       inHomeDex: !!(DATA.homeDex && DATA.homeDex[key]),
       games, gameNumbers,
       jeuVideo: (jv && Object.keys(jv).length > 0) ? jv : undefined,
+      jeuVideoNumbers: (jvn && Object.keys(jvn).length > 0) ? jvn : undefined,
       storageKey: key, // déjà à jour, aucun renommage en attente pour cette entrée
     };
   });
@@ -8334,7 +8527,7 @@ async function persistCatalogEdit(idx, d) {
     evolution: d.evolution, alphaLA: !!d.alphaLA, alphaLZA: !!d.alphaLZA,
     famille: d.famille !== undefined && String(d.famille).trim() !== "" ? Number(d.famille) : null,
     inHomeDex: !!d.inHomeDex, games: d.games || [], gameNumbers: d.gameNumbers || {},
-    jeuVideo: d.jeuVideo || {},
+    jeuVideo: d.jeuVideo || {}, jeuVideoNumbers: d.jeuVideoNumbers || {},
   };
   if (row.__additionId) {
     const arr = await readJSON("catalog_additions", []);
@@ -8396,6 +8589,9 @@ function catalogDraftForRow(idx) {
     // JEU_VIDEO_DEFS — conçu pour accueillir plus tard d'autres jeux précis (ex. distinguer
     // Écarlate/Violet au sein de la marque Paldea), rangés par génération.
     jeuVideo: (DATA.jeuVideo && DATA.jeuVideo[key]) ? { ...DATA.jeuVideo[key] } : {},
+    // "Numéro spécifique par jeu vidéo" (§ nouveau) — un numéro par paire/triple JEU_VIDEO_PAIRS,
+    // remplace le bloc "Vues Jeu" de Paramètres pour l'édition (voir migration ci-dessus).
+    jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
   };
 }
 
@@ -8539,6 +8735,7 @@ function CatalogEditor({ onSaveStateChange }) {
         inHomeDex: !!(DATA.homeDex && DATA.homeDex[key]),
         games, gameNumbers,
         jeuVideo: (DATA.jeuVideo && DATA.jeuVideo[key]) ? { ...DATA.jeuVideo[key] } : {},
+        jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
       },
     };
   };
@@ -8559,7 +8756,7 @@ function CatalogEditor({ onSaveStateChange }) {
   const openAdd = async () => {
     setEditing({
       idx: null, isNew: true, addId: null,
-      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {}, jeuVideo: {} },
+      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {}, jeuVideo: {}, jeuVideoNumbers: {} },
     });
   };
 
@@ -8591,7 +8788,7 @@ function CatalogEditor({ onSaveStateChange }) {
         evolution: d.evolution || "-", alphaLA: !!d.alphaLA, alphaLZA: !!d.alphaLZA,
         famille: d.famille !== undefined && String(d.famille).trim() !== "" ? Number(d.famille) : null,
         inHomeDex: !!d.inHomeDex, games: d.games || [], gameNumbers: d.gameNumbers || {},
-        jeuVideo: d.jeuVideo || {},
+        jeuVideo: d.jeuVideo || {}, jeuVideoNumbers: d.jeuVideoNumbers || {},
       });
       await writeJSON("catalog_additions", arr);
     } else {
@@ -9576,8 +9773,6 @@ function SettingsView({
         </React.Fragment>
         )}
       </div>
-
-      <NumeroVueSection collapsedVal={collapsed.numerovue} onToggle={() => toggleSection("numerovue")} />
 
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
         <button
@@ -10677,8 +10872,8 @@ function GameDetailTable({ gameKey, rows, onOpen, onOpenShiny, onBack }) {
           </div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
             {shinyMode
-              ? `${totalUnique}/${totalAll} formes shiny — ${pct(totalUnique, totalAll)}% · ${totalCaught} capture${totalCaught > 1 ? "s" : ""}`
-              : `${totalCaught}/${totalAll} attrapés — ${pct(totalCaught, totalAll)}%`}
+              ? `${totalUnique}/${totalAll} - ${pct(totalUnique, totalAll)}% · ${totalCaught} capture${totalCaught > 1 ? "s" : ""}`
+              : `${totalCaught}/${totalAll} - ${pct(totalCaught, totalAll)}%`}
           </div>
         </div>
         <div style={{ marginLeft: "auto" }}>
@@ -10779,7 +10974,7 @@ function ShinyDetailTable({ onOpen, onBack }) {
         <div>
           <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 16, color: GOLD }}>Shiny ✦</div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-            {totalCaught}/{totalAll} attrapés — {pct(totalCaught, totalAll)}% · {totalDoublons} doublon{totalDoublons > 1 ? "s" : ""} (non comptés)
+            {totalCaught}/{totalAll} - {pct(totalCaught, totalAll)}% · {totalDoublons} doublon{totalDoublons > 1 ? "s" : ""} (non comptés)
           </div>
         </div>
       </div>
@@ -11030,10 +11225,10 @@ function NationalDetailTable({ onOpenNational, onOpenShiny, onOpenEvent, onOpenD
         <Ring value={pct(grandTotal.national.caught, grandTotal.national.total)} size={46} stroke={5} color={shinyMode ? GOLD : ACCENT} />
         <div>
           <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 16, color: shinyMode ? GOLD : TXT }}>
-            🌐 National{shinyMode ? " ✦" : ""}
+            National{shinyMode ? " ✦" : ""}
           </div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-            {grandTotal.national.caught}/{grandTotal.national.total} formes — {pct(grandTotal.national.caught, grandTotal.national.total)}%
+            {grandTotal.national.caught}/{grandTotal.national.total} formes - {pct(grandTotal.national.caught, grandTotal.national.total)}%
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -11175,6 +11370,7 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
   const [showShinyDetail, setShowShinyDetail] = useState(false);
   const [showNationalDetail, setShowNationalDetail] = useState(false);
   const [showDoList, setShowDoList] = useState(false);
+  const doSectionRef = useRef(null);
   const [doMarqueFilter, setDoMarqueFilter] = useState(null); // null = toutes, ou Set de marques cochées
   // Popup de répartition par onglet (§ nouveau) — DO actuellement affiché dans le popup, ou null.
   const [doBreakdownFor, setDoBreakdownFor] = useState(null);
@@ -11498,19 +11694,19 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
         paddingBottom: 8, marginBottom: 2, borderBottom: `1px solid ${LINE}`,
       }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <button onClick={() => setShowNationalDetail(true)} style={{ ...overviewCard, gap: 10, padding: "18px 14px", minHeight: 64 }}>
-            <Ring value={pct(nationalCaught, nationalTotal)} size={44} stroke={5} />
+          <button onClick={() => setShowNationalDetail(true)} style={{ ...overviewCard, gap: 8, padding: "10px 14px", minHeight: 44 }}>
+            <Ring value={pct(nationalCaught, nationalTotal)} size={36} stroke={4} />
             <div>
-              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: TXT }}>🌐 National</div>
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{nationalCaught}/{nationalTotal}</div>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: TXT }}>National</div>
+              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{nationalCaught}/{nationalTotal} - {pct(nationalCaught, nationalTotal)}%</div>
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, fontWeight: 700 }}>Total Home : {homeGrandTotal}</div>
             </div>
           </button>
-          <button onClick={() => setShowShinyDetail(true)} style={{ ...overviewCard, gap: 10, padding: "18px 14px", minHeight: 64, border: `1px solid ${GOLD}55` }}>
-            <Ring value={pct(shinyCaught, shinyTotal)} size={44} stroke={5} color={GOLD} />
+          <button onClick={() => setShowShinyDetail(true)} style={{ ...overviewCard, gap: 8, padding: "10px 14px", minHeight: 44, border: `1px solid ${GOLD}55` }}>
+            <Ring value={pct(shinyCaught, shinyTotal)} size={36} stroke={4} color={GOLD} />
             <div>
               <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: GOLD }}>Shiny ✦</div>
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{shinyCaught}/{shinyTotal}</div>
+              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{shinyCaught}/{shinyTotal} - {pct(shinyCaught, shinyTotal)}%</div>
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, fontWeight: 700 }}>Total Home : {shinyHomeCaptures}</div>
             </div>
           </button>
@@ -11536,17 +11732,18 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8 }}>
-        <div style={{ ...overviewGridCell, cursor: "default" }} title="Toutes marques + Shiny confondus — le total max donne une idée du stockage nécessaire pour tout avoir">
-          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>Total</div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{allMarquesAndShinyCaught}/{marqueTotalPossible + shinyTotal}</div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{pct(allMarquesAndShinyCaught, marqueTotalPossible + shinyTotal)}%</div>
+        <div
+          style={{ ...overviewGridCell, cursor: "default", background: `${ACCENT}22`, border: `2px solid ${ACCENT}`, boxShadow: `0 0 0 1px ${ACCENT}55` }}
+          title="Toutes marques + Shiny confondus — le total max donne une idée du stockage nécessaire pour tout avoir"
+        >
+          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 13, color: ACCENT }}>Total</div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{allMarquesAndShinyCaught}/{marqueTotalPossible + shinyTotal} - {pct(allMarquesAndShinyCaught, marqueTotalPossible + shinyTotal)}%</div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT }}>Total : {storageMaxTotal}</div>
         </div>
         {cards.map((c) => (
           <button key={c.key} onClick={() => setSelectedGame(c.key)} style={overviewGridCell}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>{c.key}</div>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{c.caught}/{c.total}</div>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{pct(c.caught, c.total)}%</div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{c.caught}/{c.total} - {pct(c.caught, c.total)}%</div>
             <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT }}>Total : {c.totalPokemon}</div>
           </button>
         ))}
@@ -11572,13 +11769,27 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
           <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: LIGHTBLUE }}>Gmax</div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{gmaxTotal}</div>
         </div>
-        <button onClick={() => setShowDoList((s) => !s)} style={overviewGridCell} title="Total de Pokémon avec un Jeu - DO renseigné, et nombre de DO distincts utilisés">
+        <button
+          onClick={() => {
+            setShowDoList((s) => {
+              const next = !s;
+              if (next) {
+                setTimeout(() => {
+                  if (doSectionRef.current) doSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 0);
+              }
+              return next;
+            });
+          }}
+          style={overviewGridCell}
+          title="Total de Pokémon avec un Jeu - DO renseigné, et nombre de DO distincts utilisés"
+        >
           <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>Jeu - DO {showDoList ? "▲" : "▼"}</div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT }}>{totalPokemonWithDO + doEventOnly} ({doStatsVisible.length} DO)</div>
         </button>
       </div>
       {showDoList && (
-        <div style={{ marginTop: 8, background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div ref={doSectionRef} style={{ marginTop: 8, background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 10, display: "flex", flexDirection: "column", gap: 8, scrollMarginTop: 12 }}>
           <MultiSelectFilter label="Marque" options={GAME_ORDER} selected={doMarqueFilter} onChange={setDoMarqueFilter} width="100%" />
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {doStatsVisible.length === 0 && (
@@ -15318,18 +15529,14 @@ function App() {
             }}>
               <div style={{ width: 11, height: 11, borderRadius: "50%", background: "#4A9DE0", border: "2px solid #fff" }} />
             </div>
-            <span
-              title={modCount > 0 ? `${modCount} modification${modCount > 1 ? "s" : ""} non exportée${modCount > 1 ? "s" : ""}` : "Aucune modification depuis le dernier export"}
-              style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: modCount > 0 ? "#FFA726" : OK }}
-            />
-            <div style={{ fontFamily: "'Onest', 'SamsungOne', sans-serif", fontWeight: 800, fontSize: 17, color: ACCENT }}>
-              Pokédex
-            </div>
-            {tab === "settings" && (
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: "#fff", whiteSpace: "nowrap" }}>
-                v{APP_VERSION}
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div style={{ fontFamily: "'Onest', 'SamsungOne', sans-serif", fontWeight: 800, fontSize: 17, color: ACCENT, lineHeight: 1.15 }}>
+                Pokédex
+              </div>
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 9, color: MUTED, whiteSpace: "nowrap", lineHeight: 1.1 }}>
+                {APP_VERSION}
               </span>
-            )}
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto" }}>
             {ioMsg && <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, whiteSpace: "nowrap" }}>{ioMsg}</span>}
