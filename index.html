@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.17.21.10";
+const APP_VERSION = "2026.8.17.23.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2124,10 +2124,19 @@ const BarIcon = {
 // Regrouper ces boutons ici (plutôt que dans une barre de filtres fixée en haut de chaque
 // onglet) libère de la place à l'écran et centralise tous les réglages d'affichage au même
 // endroit, facilement accessible au pouce.
-function FloatingActionBar({ search, setSearch, searchPlaceholder, add, menus }) {
+function FloatingActionBar({ search, setSearch, searchPlaceholder, add, menus, autoOpenKey }) {
   const [openPanel, setOpenPanel] = useState(null); // null | "search" | "add" | menu.key
   const [addQuery, setAddQuery] = useState("");
   const suggestions = openPanel === "add" && add ? add.getSuggestions(addQuery) : [];
+
+  // Ouverture automatique d'un panneau au montage (§ demande explicite : cliquer sur une marque
+  // doit directement ouvrir le choix du jeu/vue, cliquer sur "Go 1" doit directement ouvrir ses
+  // sous-modes) — une seule fois par montage de la barre, jamais en réaction aux changements de
+  // props suivants (sinon le panneau se rouvrirait tout seul après chaque interaction).
+  useEffect(() => {
+    if (autoOpenKey) setOpenPanel(autoOpenKey);
+    // eslint-disable-next-line
+  }, []);
 
   // Remonte la page en haut à chaque changement du texte de recherche (saisie ou effacement),
   // pour voir les résultats sans avoir à scroller manuellement. Placé en useEffect (déclenché
@@ -2720,7 +2729,7 @@ function PairModeBlock({
   boxOverrides, setBoxGroup, boxGroupOptions, boxGroupRank,
   boxSize, boxPrefix, saveBoxSettings,
   gameSourcesDict, setSource, setAllSources, modeMenuItem,
-  marqueGames, onAvailabilityChanged,
+  marqueGames, onAvailabilityChanged, autoOpenKey,
 }) {
   const bucketKey = gameKey + "_" + pair.key;
   const [viewMode, setViewMode] = useCachedState(filterCache, bucketKey, "viewMode", "list");
@@ -3025,6 +3034,7 @@ function PairModeBlock({
         search={search}
         setSearch={setSearch}
         searchPlaceholder={`Rechercher dans ${pair.label}…`}
+        autoOpenKey={autoOpenKey}
         menus={[
           ...(modeMenuItem ? [modeMenuItem] : []),
           {
@@ -3244,12 +3254,14 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
   );
 }
 
-function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
+function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache, cameFromMarqueSwitch }) {
   const { flags, setFlags, ready, persist, saveState } = useCollection(gameKey, rows.length);
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
   // "Go 1" (suivi Pokémon GO avancé : Pokédex/Shiny/Chanceux/Parfait/Purifié/Obscur/XXS/XXL)
   // intégré dans l'onglet Go, à côté de Home (§ demande explicite) — uniquement pertinent pour
-  // gameKey === "Go" ; sans effet pour les autres marques.
+  // gameKey === "Go" ; sans effet pour les autres marques. Persisté (§ demande explicite : garder
+  // le même jeu ouvert en revenant sur une marque) — voir cameFromMarqueSwitch/hasUserInteractedRef
+  // ci-dessous pour la logique d'ouverture automatique du menu de sélection.
   const [goSubView, setGoSubView] = useCachedState(filterCache, gameKey, "goSubView", "home"); // "home" | "go1" | "go2"
   const [viewMode, setViewMode] = useCachedState(filterCache, gameKey, "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, gameKey, "search", "");
@@ -3294,7 +3306,11 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const marquePairs = jeuViews || [];
   const hasJeuPairs = marquePairs.length > 0;
   // Vue active : "home_jeu" | "home" | clé d'une vue précise (ex. "sa_ro"). Sans effet pour une
-  // marque sans vue configurée (currentPair reste alors toujours null).
+  // marque sans vue configurée (currentPair reste alors toujours null). Persisté (§ demande
+  // explicite : "revenir sur la précédente [marque], laisse le même jeu ouvert" — corrige un essai
+  // précédent qui réinitialisait systématiquement à "home_jeu", ce qui n'était pas le comportement
+  // voulu). Voir cameFromMarqueSwitch/hasUserInteractedRef ci-dessous pour l'ouverture automatique
+  // du menu de sélection, qui elle NE doit PAS être mémorisée de la même façon.
   const [viMode, setViMode] = useCachedState(filterCache, gameKey, "viMode", "home_jeu");
   const currentPair = marquePairs.find((p) => p.key === viMode) || null;
   // Vue "Home + jeu" uniquement : combine Home et "en jeu" pour l'affichage/les filtres/les stats.
@@ -3407,6 +3423,19 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const isGoMarque = gameKey === "Go";
   const [go1Mode, setGo1Mode] = useCachedState(filterCache, "go1", "mode", "pokedex");
   const goModeOptions = isGoMarque ? [{ key: "home", label: "Home" }, { key: "go1", label: "Go 1" }, { key: "go2", label: "Go 2" }] : [];
+  // Ouverture automatique du menu "Mode" (§ demande explicite, affinée en plusieurs temps) :
+  // - en arrivant sur cette marque DEPUIS UNE AUTRE MARQUE (cameFromMarqueSwitch, prop reçue de
+  //   App) → le jeu déjà choisi reste ouvert (viMode/goSubView sont persistés, voir plus haut),
+  //   mais le menu de sélection s'ouvre quand même pour en changer facilement si besoin ;
+  // - en arrivant DEPUIS UN AUTRE ONGLET QUE LES MARQUES (National, Progression, etc.) → même jeu
+  //   ouvert, mais le menu ne s'ouvre PAS tout seul (cameFromMarqueSwitch vaut alors false) ;
+  // - à tout moment, un clic EXPLICITE sur un bouton de ce menu (jeu précis, Go 1/Go 2, sous-mode
+  //   Go 1) doit rouvrir le menu correspondant dans la vue qui vient de s'afficher, quelle qu'ait
+  //   été l'origine de la navigation — d'où `hasUserInteractedRef`, mis à jour AVANT chaque
+  //   changement de vue déclenché par un clic dans ce menu, et qui l'emporte alors sur
+  //   cameFromMarqueSwitch (qui ne reflète que l'origine du montage initial de cet onglet).
+  const hasUserInteractedRef = useRef(false);
+  const effectiveAutoOpenMode = cameFromMarqueSwitch || hasUserInteractedRef.current;
   const modeMenuItem = {
     key: "vimode", title: "Mode", icon: BarIcon.dex,
     active: isGoMarque ? (goSubView === "go1" || goSubView === "go2") : (hasJeuPairs && viMode !== "home_jeu"),
@@ -3417,7 +3446,14 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             ? goModeOptions.map((m) => (
                 <button
                   key={m.key}
-                  onClick={() => setGoSubView(m.key)}
+                  onClick={() => {
+                    // § demande explicite : ne rouvrir automatiquement le menu qu'en sélectionnant
+                    // "Go 1" (pour révéler ses sous-modes) — "Home" et "Go 2" sont des choix finaux,
+                    // le menu doit se fermer normalement, pas se rouvrir tout seul sur la vue suivante.
+                    if (m.key === "go1") hasUserInteractedRef.current = true;
+                    setGoSubView(m.key);
+                    close();
+                  }}
                   style={{
                     ...btnGhost, padding: "7px 12px",
                     background: goSubView === m.key ? PURPLE : "transparent",
@@ -3824,7 +3860,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   }
 
   if (gameKey === "Go" && goSubView === "go1") {
-    return <Go1View filterCache={filterCache} mode={go1Mode} setMode={setGo1Mode} modeMenuItem={modeMenuItem} />;
+    return <Go1View filterCache={filterCache} mode={go1Mode} setMode={setGo1Mode} modeMenuItem={modeMenuItem} autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined} />;
   }
   if (gameKey === "Go" && goSubView === "go2") {
     return <Go2View filterCache={filterCache} />;
@@ -3854,6 +3890,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           modeMenuItem={modeMenuItem}
           marqueGames={marqueGamesWithHome}
           onAvailabilityChanged={bumpJeuVideoVersion}
+          autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined}
         />
         {jeuViewsSettingsOpen && (
           <JeuViewsSettingsModal
@@ -4234,6 +4271,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
+        autoOpenKey={(effectiveAutoOpenMode && (isGoMarque || hasJeuPairs)) ? "vimode" : undefined}
         menus={[
           ...(modeMenuItem ? [modeMenuItem] : []),
           {
@@ -13430,7 +13468,7 @@ function Go1Body({ items, color, viewMode, showForme, groupByRegion, gridCols, o
 // Vue principale de l'onglet Go 1 — un seul composant pour les 8 modes (Pokédex/Shiny avec
 // sous-vue toutes formes/forme unique, + les 6 modes forme unique), barre flottante avec 4
 // menus (Pokédex = sélecteur de mode, Affichage, Filtres, +) + recherche.
-function Go1View({ filterCache, mode, setMode, modeMenuItem }) {
+function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
   const [subView, setSubView] = useCachedState(filterCache, "go1", "subView", "forms"); // "forms" | "unique" (Pokédex/Shiny)
   const [viewMode, setViewMode] = useCachedState(filterCache, "go1", "viewMode", "list"); // "list" | "grid"
   const [groupByRegion, setGroupByRegion] = useCachedState(filterCache, "go1", "groupByRegion", true);
@@ -13616,6 +13654,7 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem }) {
         search={search}
         setSearch={setSearch}
         searchPlaceholder="Rechercher…"
+        autoOpenKey={autoOpenKey}
         add={{
           title: "Rechercher un Pokémon à marquer capturé",
           placeholder: "Rechercher un Pokémon…",
@@ -14209,17 +14248,13 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
           {filtered.slice(0, limit).map((f) => {
             const c = isCaught(f);
             return (
-              <button key={f.key} onClick={() => onToggle(f)} style={{
+              <button key={f.key} onClick={() => onToggle(f)} title={f.nom} style={{
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
                 background: c ? "rgba(144,202,249,0.14)" : PANEL2,
                 border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "6px 2px", cursor: "pointer",
+                borderRadius: 18, padding: "3px 2px", cursor: "pointer",
               }}>
-                <Sprite nom={f.nom} forme={f.forme} size={40} />
-                <div style={{
-                  fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, whiteSpace: "nowrap",
-                  overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%",
-                }}>{f.nom}</div>
+                <Sprite nom={f.nom} forme={f.forme} size={32} />
               </button>
             );
           })}
@@ -14657,17 +14692,13 @@ function Go2View({ filterCache }) {
           {filtered.slice(0, limit).map((f) => {
             const c = isCaught(f);
             return (
-              <button key={f.key} onClick={() => onToggle(f)} style={{
+              <button key={f.key} onClick={() => onToggle(f)} title={f.nom} style={{
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
                 background: c ? "rgba(144,202,249,0.14)" : PANEL2,
                 border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "6px 2px", cursor: "pointer",
+                borderRadius: 18, padding: "3px 2px", cursor: "pointer",
               }}>
-                <Sprite nom={f.nom} forme={f.forme} size={40} />
-                <div style={{
-                  fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, whiteSpace: "nowrap",
-                  overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%",
-                }}>{f.nom}</div>
+                <Sprite nom={f.nom} forme={f.forme} size={32} />
               </button>
             );
           })}
@@ -14981,6 +15012,14 @@ function App() {
   // réinjectées au remontage, via le hook useCachedState.
   const filterCache = useRef({});
   const prevTabRef = useRef(tab);
+  // Origine de la navigation vers l'onglet courant (§ demande explicite) : distingue "je viens de
+  // changer de marque" (menu Home : une marque vers une autre) de "je reviens d'un autre onglet"
+  // (National, Progression, etc.) — seul le premier cas doit rouvrir automatiquement le menu de
+  // sélection du jeu dans GameView, le second doit laisser la vue telle quelle sans rien ouvrir.
+  // Lu ICI, avant que l'effet ci-dessous ne mette prevTabRef.current à jour — reste donc la valeur
+  // du tab précédent pendant tout ce rendu (réutilise le ref existant, servant déjà à restaurer le
+  // défilement, plutôt que d'en déclarer un second en double).
+  const cameFromMarqueSwitch = GAME_ORDER.includes(tab) && GAME_ORDER.includes(prevTabRef.current) && prevTabRef.current !== tab;
   useEffect(() => {
     const prevTab = prevTabRef.current;
     if (prevTab !== tab) {
@@ -15481,6 +15520,7 @@ function App() {
             onConsumeFilter={() => setPendingFilter(null)}
             onOpenProgress={openProgressTable}
             onSaveStateChange={setGlobalSaveState}
+            cameFromMarqueSwitch={cameFromMarqueSwitch}
           />
         )}
         {tab === "shiny" && (
