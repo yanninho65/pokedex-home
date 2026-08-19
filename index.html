@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.19.17.35";
+const APP_VERSION = "2026.8.19.18.02";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -8165,9 +8165,29 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 12 }}>
-          {isNew ? "Ajouter un Pokémon" : "Modifier ce Pokémon"}
-        </div>
+        {isNew && (
+          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 12 }}>
+            Ajouter un Pokémon
+          </div>
+        )}
+        {!isNew && draft.nom && (
+          <React.Fragment>
+            <div style={{
+              display: "flex", justifyContent: "center", alignItems: "center",
+              background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
+              padding: 14, marginBottom: 8,
+            }}>
+              <Sprite nom={draft.nom} forme={draft.forme || null} size={96} />
+            </div>
+            <div style={{ textAlign: "center", marginBottom: 12 }}>
+              <a
+                href={`https://www.pokepedia.fr/${encodeURIComponent(draft.nom.replace(/ /g, "_"))}`}
+                target="_blank" rel="noopener noreferrer"
+                style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT, textDecoration: "none" }}
+              >Voir sur Poképédia ↗</a>
+            </div>
+          </React.Fragment>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", gap: 10 }}>
             <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
