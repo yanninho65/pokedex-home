@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.26.21.27";
+const APP_VERSION = "2026.8.26.21.55";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -575,7 +575,7 @@ async function patchHomeDex(nom, forme, want) {
 // vues"). Cochée = disponible (permissif tant que non renseigné, comme partout ailleurs dans
 // cette fonctionnalité) ; cliquer coche/décoche IMMÉDIATEMENT (pas de bouton Enregistrer séparé,
 // § "que ça affecte les paramètres") et édite directement la donnée Catalogue → Jeu vidéo.
-function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
+function AvailabilityPills({ nom, forme, marque, games, onChanged, jeuValue, onJeuChange, jeuOptions }) {
   if (!games || games.length === 0) return null;
   const jv = jeuVideoFor(nom, forme);
   const key = nom + "|" + (forme || "");
@@ -614,7 +614,12 @@ function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
   }, [nom, forme]);
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Disponible dans</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 10 }}>
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Disponible dans</span>
+        {jeuOptions && (
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Jeu - DO</span>
+        )}
+      </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {games.map((g) => {
           const on = g.key === "home" ? isInMarque() : jvAvailable(jv[g.key]);
@@ -622,6 +627,12 @@ function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
           const versionSlug = g.key !== "home" ? JEU_VIDEO_KEY_TO_POKEAPI_VERSION[g.key] : null;
           const showLoc = on && versionSlug;
           const locText = !showLoc ? null : (locations === null && !locFailed ? "…" : ((locations && locations[versionSlug]) || (locFailed ? "" : "—")));
+          // Jeu-DO se glisse sur la ligne Home (§ demande explicite : "a l'air perdu tout seul" —
+          // Home est la seule ligne sans localisation, donc l'espace libre à droite lui revient).
+          // Son titre est monté dans l'en-tête, aligné avec "Disponible dans" ; seul le champ
+          // reste ici, aligné avec Home, dans la même colonne que les localisations des autres
+          // lignes (§ demande explicite).
+          const showJeuDo = g.key === "home" && jeuOptions;
           return (
             <div key={g.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <button
@@ -638,6 +649,19 @@ function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
                 <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, textAlign: "right", flex: 1 }}>
                   {locText}
                 </span>
+              )}
+              {showJeuDo && (
+                <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "flex-end" }}>
+                  <Picker
+                    value={jeuValue}
+                    onChange={onJeuChange}
+                    options={jeuOptions || []}
+                    placeholder="-"
+                    buttonStyle={{ ...plainPickerStyle, width: "auto", justifyContent: "flex-end" }}
+                    panelWidth={200}
+                    align="right"
+                  />
+                </div>
               )}
             </div>
           );
@@ -1298,7 +1322,7 @@ function LocationBadge({ label, style }) {
 // "OK"/"Terminé" à valider, ce qui ajoute une étape inutile pour un choix simple. Ici, le choix
 // s'applique dès l'appui sur une option, sans confirmation supplémentaire (voir aussi
 // GameNavSelect, qui suit déjà ce même principe pour le sélecteur de jeu de l'onglet Home).
-function Picker({ value, onChange, options, placeholder, buttonStyle, panelWidth }) {
+function Picker({ value, onChange, options, placeholder, buttonStyle, panelWidth, align }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -1315,7 +1339,13 @@ function Picker({ value, onChange, options, placeholder, buttonStyle, panelWidth
       </button>
       {open && (
         <div style={{
-          position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 30,
+          position: "absolute", top: "100%", marginTop: 4, zIndex: 30,
+          // Ancré à droite (§ demande explicite) pour les boutons collés au bord droit de la
+          // fenêtre (Jeu-DO sur la ligne Home, Groupe de boîte à côté de No) : le panneau s'ouvre
+          // vers la gauche depuis le bord droit du bouton, pour ne jamais déborder de la fenêtre
+          // quel que soit l'endroit où le bouton se trouve. Comportement par défaut (ancré à
+          // gauche) inchangé partout ailleurs.
+          ...(align === "right" ? { right: 0 } : { left: 0 }),
           background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 8, padding: 6,
           minWidth: panelWidth || 160, maxHeight: 260, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
         }}>
@@ -2843,6 +2873,43 @@ const numeroFieldStyle = {
   fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, cursor: "text", outline: "none",
   padding: "2px 0", width: 60, boxSizing: "border-box", textAlign: "left",
 };
+// No + Groupe de boîte sur une même ligne (§ demande explicite) — No reste étroit (4 chiffres) à
+// gauche, Groupe de boîte prend le reste de la largeur à droite. `showNumber` permet à
+// BoxGroupModal de n'afficher No qu'en vue jeu précis ; JeuMultiSourceModal l'affiche toujours
+// (valeur par défaut).
+function NumeroGroupeRow({ showNumber = true, numero, setNumero, numberPlaceholder, groupValue, setGroupValue, groupOptions }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+      {showNumber && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>No</span>
+          <input
+            className="pkdx-numero-input"
+            value={numero}
+            onChange={(e) => setNumero(e.target.value)}
+            maxLength={4}
+            placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
+            style={numeroFieldStyle}
+          />
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, flexShrink: 0 }}>Groupe de boîte</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Picker
+            value={groupValue}
+            onChange={setGroupValue}
+            options={groupOptions || []}
+            placeholder="— choisir —"
+            buttonStyle={plainPickerStyle}
+            panelWidth={220}
+            align="right"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
@@ -2872,54 +2939,36 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
           </div>
           <CatalogQuickEditButton nom={nom} forme={forme} label />
         </div>
-        {lien && (
-          <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 12, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-            Voir sur Poképédia ↗
-          </a>
-        )}
-        {evoLabel && (
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, marginBottom: 10, fontWeight: 600 }}>
-            Évolution : {evoLabel}
+        {(lien || evoLabel) && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            {lien && (
+              <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+                Voir sur Poképédia ↗
+              </a>
+            )}
+            {evoLabel && (
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, fontWeight: 600 }}>
+                Évolution : {evoLabel}
+              </span>
+            )}
           </div>
         )}
-        {showNumber && (
-          <FieldRow label="No">
-            <input
-              className="pkdx-numero-input"
-              value={numero}
-              onChange={(e) => setNumero(e.target.value)}
-              maxLength={4}
-              placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
-              style={numeroFieldStyle}
-            />
-          </FieldRow>
-        )}
-        <FieldRow label="Groupe de boîte">
-          <Picker
-            value={value}
-            onChange={setValue}
-            options={options || []}
-            placeholder="— choisir —"
-            buttonStyle={plainPickerStyle}
-            panelWidth={220}
-          />
-        </FieldRow>
+        <NumeroGroupeRow
+          showNumber={showNumber}
+          numero={numero}
+          setNumero={setNumero}
+          numberPlaceholder={numberPlaceholder}
+          groupValue={value}
+          setGroupValue={setValue}
+          groupOptions={options}
+        />
         {marqueGames && marqueGames.length > 0 && (
           <AvailabilityPills
             nom={nom} forme={forme} marque={marque} games={marqueGames}
             onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
+            jeuValue={jeu} onJeuChange={setJeuValue} jeuOptions={jeuOptions}
           />
         )}
-        <FieldRow label="Jeu - DO">
-          <Picker
-            value={jeu}
-            onChange={setJeuValue}
-            options={jeuOptions || []}
-            placeholder="-"
-            buttonStyle={plainPickerStyle}
-            panelWidth={220}
-          />
-        </FieldRow>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
           <button onClick={onCancel} style={btnGhost}>Annuler</button>
           <button onClick={() => onSave(value, jeu, numero)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
@@ -14346,56 +14395,37 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
           <CatalogQuickEditButton nom={nom} forme={forme} label />
         </div>
 
-        {lien && (
-          <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 12, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-            Voir sur Poképédia ↗
-          </a>
-        )}
-        {evoLabel && (
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, marginBottom: 10, fontWeight: 600 }}>
-            Évolution : {evoLabel}
+        {(lien || evoLabel) && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            {lien && (
+              <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+                Voir sur Poképédia ↗
+              </a>
+            )}
+            {evoLabel && (
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, fontWeight: 600 }}>
+                Évolution : {evoLabel}
+              </span>
+            )}
           </div>
         )}
 
-        <FieldRow label="No">
-          <input
-            className="pkdx-numero-input"
-            value={numero}
-            onChange={(e) => setNumero(e.target.value)}
-            maxLength={4}
-            placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
-            style={numeroFieldStyle}
-          />
-        </FieldRow>
-
-        <FieldRow label="Groupe de boîte">
-          <Picker
-            value={group}
-            onChange={setGroup}
-            options={options || []}
-            placeholder="— choisir —"
-            buttonStyle={plainPickerStyle}
-            panelWidth={220}
-          />
-        </FieldRow>
+        <NumeroGroupeRow
+          numero={numero}
+          setNumero={setNumero}
+          numberPlaceholder={numberPlaceholder}
+          groupValue={group}
+          setGroupValue={setGroup}
+          groupOptions={options}
+        />
 
         {marqueGames && marqueGames.length > 0 && (
           <AvailabilityPills
             nom={nom} forme={forme} marque={marque} games={marqueGames}
             onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
+            jeuValue={jeu} onJeuChange={setJeuValue} jeuOptions={jeuOptions}
           />
         )}
-
-        <FieldRow label="Jeu - DO">
-          <Picker
-            value={jeu}
-            onChange={setJeuValue}
-            options={jeuOptions || []}
-            placeholder="-"
-            buttonStyle={plainPickerStyle}
-            panelWidth={220}
-          />
-        </FieldRow>
 
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Attrapé dans</div>
