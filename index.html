@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.26.21.18";
+const APP_VERSION = "2026.8.26.21.27";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2833,15 +2833,15 @@ const plainPickerStyle = {
   padding: "2px 0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
   width: "100%", boxSizing: "border-box",
 };
-// Style du champ "No" (numéro dans cette vue) — juste assez large pour 4 chiffres (§ demande
-// explicite). Le texte fantôme (marque non renseignée) doit rester lisible en blanc — voir la
-// classe pkdx-numero-input (::placeholder) plus bas, une couleur de placeholder ne se fixe pas en
-// style inline.
+// Champ "No" (numéro dans cette vue) — même format que Jeu-DO/Groupe de boîte (§ demande
+// explicite) : plus de cadre, juste un soulignement en tirets. Reste étroit (4 chiffres) plutôt
+// que pleine largeur, un nombre n'a pas besoin de tout l'espace. Le texte fantôme (marque non
+// renseignée) doit rester lisible en blanc — voir la classe pkdx-numero-input (::placeholder)
+// plus bas, une couleur de placeholder ne se fixe pas en style inline.
 const numeroFieldStyle = {
-  width: 44, boxSizing: "border-box",
-  background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10,
-  padding: "5px 4px", color: TXT, fontFamily: "Inter, sans-serif", fontSize: 12.5,
-  outline: "none", textAlign: "center",
+  background: "transparent", border: "none", borderBottom: `1px dashed ${LINE}`,
+  fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, cursor: "text", outline: "none",
+  padding: "2px 0", width: 60, boxSizing: "border-box", textAlign: "left",
 };
 function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave }) {
   const [value, setValue] = useState(currentGroup || "");
@@ -2853,9 +2853,15 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
-          <Sprite nom={nom} forme={forme} size={40} />
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{
+          display: "flex", justifyContent: "center", alignItems: "center",
+          background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
+          padding: 14, marginBottom: 10,
+        }}>
+          <Sprite nom={nom} forme={forme} size={96} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
               {nom}
@@ -2864,20 +2870,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
             )}
           </div>
-          {showNumber && (
-            <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>No</span>
-              <input
-                className="pkdx-numero-input"
-                value={numero}
-                onChange={(e) => setNumero(e.target.value)}
-                maxLength={4}
-                placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
-                style={numeroFieldStyle}
-              />
-            </div>
-          )}
-          {showCatalogEdit && <CatalogQuickEditButton nom={nom} forme={forme} />}
+          <CatalogQuickEditButton nom={nom} forme={forme} label />
         </div>
         {lien && (
           <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 12, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
@@ -2888,6 +2881,18 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, marginBottom: 10, fontWeight: 600 }}>
             Évolution : {evoLabel}
           </div>
+        )}
+        {showNumber && (
+          <FieldRow label="No">
+            <input
+              className="pkdx-numero-input"
+              value={numero}
+              onChange={(e) => setNumero(e.target.value)}
+              maxLength={4}
+              placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
+              style={numeroFieldStyle}
+            />
+          </FieldRow>
         )}
         <FieldRow label="Groupe de boîte">
           <Picker
@@ -14321,9 +14326,15 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
-          <Sprite nom={nom} forme={forme} size={40} />
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{
+          display: "flex", justifyContent: "center", alignItems: "center",
+          background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
+          padding: 14, marginBottom: 10,
+        }}>
+          <Sprite nom={nom} forme={forme} size={96} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
               {nom}
@@ -14332,17 +14343,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
             )}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>No</span>
-            <input
-              className="pkdx-numero-input"
-              value={numero}
-              onChange={(e) => setNumero(e.target.value)}
-              maxLength={4}
-              placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
-              style={numeroFieldStyle}
-            />
-          </div>
+          <CatalogQuickEditButton nom={nom} forme={forme} label />
         </div>
 
         {lien && (
@@ -14355,6 +14356,17 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
             Évolution : {evoLabel}
           </div>
         )}
+
+        <FieldRow label="No">
+          <input
+            className="pkdx-numero-input"
+            value={numero}
+            onChange={(e) => setNumero(e.target.value)}
+            maxLength={4}
+            placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
+            style={numeroFieldStyle}
+          />
+        </FieldRow>
 
         <FieldRow label="Groupe de boîte">
           <Picker
