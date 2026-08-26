@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.19.18.02";
+const APP_VERSION = "2026.8.26.16.29";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -283,6 +283,148 @@ const NAT_LOOKUP = (() => {
 })();
 function natInfoFor(nom, forme) {
   return NAT_LOOKUP[nom + "|" + (forme || "")] || { n: 999999, region: "", lien: "", famille: null, avail: [] };
+}
+// Correspondance marque -> génération Poképédia (uniquement les marques mappables sans ambiguïté
+// à une génération précise sur le site ; les autres gardent le lien Poképédia simple, inchangé).
+const MARQUE_POKEPEDIA_GEN = { VI: 6, Alola: 7, DEPS: 8, Galar: 8, LA: 8, Paldea: 9 };
+const GEN_ORDINAL_FR = ["", "Première", "Deuxième", "Troisième", "Quatrième", "Cinquième", "Sixième", "Septième", "Huitième", "Neuvième", "Dixième"];
+// Essaie de renvoyer vers la section "Localisations" de la génération correspondant à la marque
+// affichée (ex. marque VI -> Génération 6) : sous-page dédiée pour les génération 1-7 (Poképédia
+// les a scindées du corps de l'article principal), ancre directe sur la page principale au-delà
+// (générations encore intégrées à l'article). Retombe sur le lien simple si la marque n'est pas
+// mappée (ex. National, Home, Go, GB, LG, GBA, VV...).
+function pokepediaLienPourMarque(lien, marque) {
+  if (!lien) return lien;
+  const gen = marque ? MARQUE_POKEPEDIA_GEN[marque] : null;
+  if (!gen) return lien;
+  if (gen <= 7) return `${lien}/Génération_${gen}#Localisations`;
+  return `${lien}#${GEN_ORDINAL_FR[gen]}_génération`;
+}
+// Cache mémoire (non persisté) des réponses PokeAPI déjà récupérées durant la session, pour éviter
+// de refaire les mêmes appels réseau à chaque réouverture de fiche.
+const POKEAPI_ENCOUNTERS_CACHE = {};
+const POKEAPI_AREA_NAME_CACHE = {};
+// Correspondance slug de version PokeAPI (anglais) -> libellé français, alignée sur les libellés
+// déjà utilisés ailleurs dans l'app (JEU_VIDEO_DEFS) pour rester cohérente.
+const POKEAPI_VERSION_LABELS = {
+  red: "Rouge", blue: "Bleu", yellow: "Jaune",
+  gold: "Or", silver: "Argent", crystal: "Cristal",
+  ruby: "Rubis", sapphire: "Saphir", emerald: "Émeraude",
+  firered: "Rouge Feu", leafgreen: "Vert Feuille",
+  diamond: "Diamant", pearl: "Perle", platinum: "Platine",
+  heartgold: "Or HeartGold", soulsilver: "Argent SoulSilver",
+  black: "Noir", white: "Blanc", "black-2": "Noir 2", "white-2": "Blanc 2",
+  x: "X", y: "Y", "omega-ruby": "Rubis Oméga", "alpha-sapphire": "Saphir Alpha",
+  sun: "Soleil", moon: "Lune", "ultra-sun": "Ultra-Soleil", "ultra-moon": "Ultra-Lune",
+  "lets-go-pikachu": "Let's Go Pikachu", "lets-go-eevee": "Let's Go Évoli",
+  sword: "Épée", shield: "Bouclier",
+  "brilliant-diamond": "Diamant Étincelant", "shining-pearl": "Perle Scintillante",
+  "legends-arceus": "Arceus", "legends-z-a": "Z-A",
+  scarlet: "Écarlate", violet: "Violet",
+};
+const POKEAPI_VERSION_ORDER = Object.keys(POKEAPI_VERSION_LABELS);
+// Numéro national "vrai" (entier, sans préfixe régional) d'une forme, seul identifiant fiable pour
+// interroger PokeAPI (encounters) — une forme sans entrée numérique simple (rare) n'a pas de repli.
+function nationalDexIdFor(nom, forme) {
+  const n = natInfoFor(nom, forme).n;
+  return typeof n === "number" ? n : null;
+}
+function humanizeLocationSlug(slug) {
+  return String(slug || "").replace(/-area$/, "").split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+// Nom localisé (français si possible) d'une zone de rencontre PokeAPI : d'abord la zone elle-même,
+// puis le lieu parent (souvent mieux traduit), puis repli sur une version lisible du slug anglais.
+async function fetchLocationAreaFrenchName(areaName) {
+  if (POKEAPI_AREA_NAME_CACHE[areaName]) return POKEAPI_AREA_NAME_CACHE[areaName];
+  const fallback = humanizeLocationSlug(areaName);
+  try {
+    const res = await fetch(`https://pokeapi.co/api/v2/location-area/${areaName}`);
+    if (!res.ok) throw new Error("area fetch failed");
+    const data = await res.json();
+    const fr = (data.names || []).find((n) => n.language && n.language.name === "fr");
+    if (fr && fr.name) { POKEAPI_AREA_NAME_CACHE[areaName] = fr.name; return fr.name; }
+    if (data.location && data.location.url) {
+      const locRes = await fetch(data.location.url);
+      if (locRes.ok) {
+        const locData = await locRes.json();
+        const locFr = (locData.names || []).find((n) => n.language && n.language.name === "fr");
+        if (locFr && locFr.name) { POKEAPI_AREA_NAME_CACHE[areaName] = locFr.name; return locFr.name; }
+      }
+    }
+  } catch (e) {}
+  POKEAPI_AREA_NAME_CACHE[areaName] = fallback;
+  return fallback;
+}
+// Section "Emplacements" (PokeAPI) des fiches de capture (jeux/marques) : une ligne par jeu où le
+// Pokémon a des rencontres sauvages connues, avec la ou les localisations en face (§ demande
+// explicite). N'affiche rien si aucune donnée n'est disponible (formes sans ID nat simple, échec
+// réseau, ou espèce jamais rencontrable dans la nature).
+function PokeApiLocationsSection({ nom, forme }) {
+  const [rows, setRows] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    setFailed(false);
+    const natId = nationalDexIdFor(nom, forme);
+    if (!natId) { setRows([]); return; }
+    (async () => {
+      try {
+        let encounters = POKEAPI_ENCOUNTERS_CACHE[natId];
+        if (!encounters) {
+          const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${natId}/encounters`);
+          if (!res.ok) throw new Error("encounters fetch failed");
+          encounters = await res.json();
+          POKEAPI_ENCOUNTERS_CACHE[natId] = encounters;
+        }
+        const byVersion = {};
+        (encounters || []).forEach((enc) => {
+          const areaSlug = enc.location_area && enc.location_area.name;
+          if (!areaSlug) return;
+          (enc.version_details || []).forEach((vd) => {
+            const vName = vd.version && vd.version.name;
+            if (!vName) return;
+            if (!byVersion[vName]) byVersion[vName] = new Set();
+            byVersion[vName].add(areaSlug);
+          });
+        });
+        const areaSlugs = Array.from(new Set(Object.values(byVersion).flatMap((s) => Array.from(s))));
+        const names = {};
+        await Promise.all(areaSlugs.map(async (slug) => { names[slug] = await fetchLocationAreaFrenchName(slug); }));
+        if (cancelled) return;
+        const versionKeys = Object.keys(byVersion).sort((a, b) => {
+          const ia = POKEAPI_VERSION_ORDER.indexOf(a); const ib = POKEAPI_VERSION_ORDER.indexOf(b);
+          return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+        });
+        setRows(versionKeys.map((v) => ({
+          key: v,
+          label: POKEAPI_VERSION_LABELS[v] || v,
+          locations: Array.from(byVersion[v]).map((s) => names[s]).sort().join(", "),
+        })));
+      } catch (e) {
+        if (!cancelled) setFailed(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [nom, forme]);
+  if (rows === null && !failed) {
+    return <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, marginBottom: 12 }}>Emplacements… (chargement)</div>;
+  }
+  if (failed || !rows || rows.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Emplacements</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {rows.map((r) => (
+          <div key={r.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 12 }}>
+            <span style={{ color: TXT, fontWeight: 600, flexShrink: 0 }}>{r.label}</span>
+            <span style={{ color: MUTED, textAlign: "right" }}>{r.locations}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 // "Jeu vidéo" (§ demande explicite) — bloc distinct de "Marques possibles" dans la fiche
 // catalogue : précise dans quel(s) jeu(x) précis (au sein d'une marque, ex. Écarlate/Violet tous
@@ -2680,15 +2822,17 @@ function useJeuViews(marque) {
   return { views, addView, removeView, updateView };
 }
 
-function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave }) {
+function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
   const [, forceRefresh] = useState(0);
+  const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
+  const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 4 }}>
           <Sprite nom={nom} forme={forme} size={40} />
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
@@ -2696,29 +2840,41 @@ function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptio
             </div>
             <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>Fiche de capture</div>
           </div>
+          {showNumber && (
+            <label style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED, textAlign: "right", flexShrink: 0 }}>
+              Numéro
+              <input
+                value={numero}
+                onChange={(e) => setNumero(e.target.value)}
+                placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
+                style={{
+                  display: "block", width: 60, boxSizing: "border-box", marginTop: 3,
+                  background: BG, border: `1px solid ${LINE}`, borderRadius: 8,
+                  padding: "5px 6px", color: TXT, fontFamily: "Inter, sans-serif", fontSize: 12.5,
+                  outline: "none", textAlign: "right",
+                }}
+              />
+            </label>
+          )}
           {showCatalogEdit && <CatalogQuickEditButton nom={nom} forme={forme} />}
         </div>
+        {lien && (
+          <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 12, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+            Voir sur Poképédia ↗
+          </a>
+        )}
+        {evoLabel && (
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, marginBottom: 10, fontWeight: 600 }}>
+            Évolution : {evoLabel}
+          </div>
+        )}
         {marqueGames && marqueGames.length > 0 && (
           <AvailabilityPills
-            nom={nom} forme={forme} games={marqueGames}
+            nom={nom} forme={forme} marque={marque} games={marqueGames}
             onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
           />
         )}
-        {showNumber && (
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block", marginBottom: 10 }}>
-            Numéro dans cette vue
-            <input
-              value={numero}
-              onChange={(e) => setNumero(e.target.value)}
-              placeholder={numberPlaceholder != null ? `${numberPlaceholder} (marque)` : "—"}
-              style={{
-                display: "block", width: "100%", boxSizing: "border-box", marginTop: 4,
-                background: BG, border: `1px solid ${LINE}`, borderRadius: 10,
-                padding: "7px 10px", color: TXT, fontFamily: "Inter, sans-serif", fontSize: 13, outline: "none",
-              }}
-            />
-          </label>
-        )}
+        <PokeApiLocationsSection nom={nom} forme={forme} />
         <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block", marginBottom: 10 }}>
           Jeu - DO
           <AddableSelect
@@ -2740,15 +2896,6 @@ function BoxGroupModal({ nom, forme, currentGroup, options, currentJeu, jeuOptio
             panelWidth={220}
           />
         </label>
-        {(() => {
-          const lien = natInfoFor(nom, forme).lien;
-          if (!lien) return null;
-          return (
-            <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 10, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-              Voir sur Poképédia ↗
-            </a>
-          );
-        })()}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
           <button onClick={onCancel} style={btnGhost}>Annuler</button>
           <button onClick={() => onSave(value, jeu, numero)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
@@ -2939,6 +3086,7 @@ function PairModeBlock({
           <BoxGroupModal
             nom={nom}
             forme={forme}
+            marque={gameKey}
             currentGroup={currentGroupEffective}
             options={boxGroupOptions}
             currentJeu={(jeuOverrides && jeuOverrides[multiDetailKey]) || ""}
@@ -3991,6 +4139,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         <BoxGroupModal
           nom={rows[groupEditTarget][1]}
           forme={rows[groupEditTarget][2]}
+          marque={gameKey}
           currentGroup={(boxInfo[groupEditTarget] && effectiveBoxGroup(gameKey, groupEditTarget, rows[groupEditTarget], boxOverrides || {})) || ""}
           options={boxGroupOptions}
           currentJeu={(jeuOverrides && jeuOverrides[boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2])]) || ""}
@@ -4016,6 +4165,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           <JeuMultiSourceModal
             nom={nom}
             forme={forme}
+            marque={gameKey}
             currentGroup={(boxOverrides && boxOverrides[multiDetailKey]) || ""}
             options={boxGroupOptions}
             currentJeu={(jeuOverrides && jeuOverrides[multiDetailKey]) || ""}
@@ -14099,12 +14249,14 @@ async function importGo1Sheet(rows, mode) {
 // marque toutes paires confondues) et en vue jeu précis (showHome=false, uniquement les jeux de
 // la paire affichée). C'est le seul endroit où Home peut être coché — jamais depuis une vue jeu
 // précis (§ demande explicite : ne pas mélanger les deux).
-function JeuMultiSourceModal({ nom, forme, currentGroup, options, currentJeu, jeuOptions, showHome, homeChecked, games, checkedGames, marqueGames, onAvailabilityChanged, onCancel, onSave }) {
+function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showHome, homeChecked, games, checkedGames, marqueGames, onAvailabilityChanged, onCancel, onSave }) {
   const [group, setGroup] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [home, setHome] = useState(!!homeChecked);
   const [checked, setChecked] = useState(() => new Set(checkedGames || []));
   const [, forceRefresh] = useState(0);
+  const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
+  const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
   const toggleGame = (k) => {
     setChecked((prev) => {
       const next = new Set(prev);
@@ -14144,12 +14296,24 @@ function JeuMultiSourceModal({ nom, forme, currentGroup, options, currentJeu, je
           </div>
         </div>
 
+        {lien && (
+          <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 12, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+            Voir sur Poképédia ↗
+          </a>
+        )}
+        {evoLabel && (
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, marginBottom: 10, fontWeight: 600 }}>
+            Évolution : {evoLabel}
+          </div>
+        )}
+
         {marqueGames && marqueGames.length > 0 && (
           <AvailabilityPills
-            nom={nom} forme={forme} games={marqueGames}
+            nom={nom} forme={forme} marque={marque} games={marqueGames}
             onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
           />
         )}
+        <PokeApiLocationsSection nom={nom} forme={forme} />
 
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Attrapé dans</div>
@@ -14172,15 +14336,6 @@ function JeuMultiSourceModal({ nom, forme, currentGroup, options, currentJeu, je
             panelWidth={220}
           />
         </label>
-        {(() => {
-          const lien = natInfoFor(nom, forme).lien;
-          if (!lien) return null;
-          return (
-            <a href={lien} target="_blank" rel="noreferrer" style={{ display: "block", marginTop: 10, fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-              Voir sur Poképédia ↗
-            </a>
-          );
-        })()}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
           <button onClick={onCancel} style={btnGhost}>Annuler</button>
           <button onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked) })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
