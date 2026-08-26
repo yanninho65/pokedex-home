@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.26.16.29";
+const APP_VERSION = "2026.8.26.18.44";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -304,25 +304,25 @@ function pokepediaLienPourMarque(lien, marque) {
 // de refaire les mêmes appels réseau à chaque réouverture de fiche.
 const POKEAPI_ENCOUNTERS_CACHE = {};
 const POKEAPI_AREA_NAME_CACHE = {};
-// Correspondance slug de version PokeAPI (anglais) -> libellé français, alignée sur les libellés
-// déjà utilisés ailleurs dans l'app (JEU_VIDEO_DEFS) pour rester cohérente.
-const POKEAPI_VERSION_LABELS = {
-  red: "Rouge", blue: "Bleu", yellow: "Jaune",
-  gold: "Or", silver: "Argent", crystal: "Cristal",
-  ruby: "Rubis", sapphire: "Saphir", emerald: "Émeraude",
-  firered: "Rouge Feu", leafgreen: "Vert Feuille",
-  diamond: "Diamant", pearl: "Perle", platinum: "Platine",
-  heartgold: "Or HeartGold", soulsilver: "Argent SoulSilver",
-  black: "Noir", white: "Blanc", "black-2": "Noir 2", "white-2": "Blanc 2",
-  x: "X", y: "Y", "omega-ruby": "Rubis Oméga", "alpha-sapphire": "Saphir Alpha",
-  sun: "Soleil", moon: "Lune", "ultra-sun": "Ultra-Soleil", "ultra-moon": "Ultra-Lune",
-  "lets-go-pikachu": "Let's Go Pikachu", "lets-go-eevee": "Let's Go Évoli",
-  sword: "Épée", shield: "Bouclier",
-  "brilliant-diamond": "Diamant Étincelant", "shining-pearl": "Perle Scintillante",
-  "legends-arceus": "Arceus", "legends-z-a": "Z-A",
-  scarlet: "Écarlate", violet: "Violet",
+// Correspondance clé interne "Jeu vidéo" (JEU_VIDEO_DEFS) -> slug de version PokeAPI (anglais) —
+// seule la clé change de forme, le libellé français affiché reste toujours celui de JEU_VIDEO_DEFS
+// (jamais celui de PokeAPI) pour rester cohérent avec le reste de l'app. Les marques fictives de ce
+// projet (GBA, VV) n'ont pas d'équivalent réel sur PokeAPI et restent volontairement absentes.
+const JEU_VIDEO_KEY_TO_POKEAPI_VERSION = {
+  rouge: "red", bleu: "blue", jaune: "yellow",
+  or: "gold", argent: "silver", cristal: "crystal",
+  rubis: "ruby", saphir: "sapphire", emeraude: "emerald",
+  rougefeu: "firered", vertfeuille: "leafgreen",
+  diamant: "diamond", perle: "pearl", platine: "platinum",
+  noir: "black", blanc: "white", noir2: "black-2", blanc2: "white-2",
+  x: "x", y: "y", saphiralpha: "alpha-sapphire", rubisomega: "omega-ruby",
+  soleil: "sun", lune: "moon", ultrasoleil: "ultra-sun", ultralune: "ultra-moon",
+  bouclier: "shield", epee: "sword",
+  diamantetincelant: "brilliant-diamond", perlescintillante: "shining-pearl",
+  arceus: "legends-arceus", za: "legends-z-a",
+  ecarlate: "scarlet", violet: "violet",
+  lgpikachu: "lets-go-pikachu", lgevoli: "lets-go-eevee",
 };
-const POKEAPI_VERSION_ORDER = Object.keys(POKEAPI_VERSION_LABELS);
 // Numéro national "vrai" (entier, sans préfixe régional) d'une forme, seul identifiant fiable pour
 // interroger PokeAPI (encounters) — une forme sans entrée numérique simple (rare) n'a pas de repli.
 function nationalDexIdFor(nom, forme) {
@@ -356,75 +356,35 @@ async function fetchLocationAreaFrenchName(areaName) {
   POKEAPI_AREA_NAME_CACHE[areaName] = fallback;
   return fallback;
 }
-// Section "Emplacements" (PokeAPI) des fiches de capture (jeux/marques) : une ligne par jeu où le
-// Pokémon a des rencontres sauvages connues, avec la ou les localisations en face (§ demande
-// explicite). N'affiche rien si aucune donnée n'est disponible (formes sans ID nat simple, échec
-// réseau, ou espèce jamais rencontrable dans la nature).
-function PokeApiLocationsSection({ nom, forme }) {
-  const [rows, setRows] = useState(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    setRows(null);
-    setFailed(false);
-    const natId = nationalDexIdFor(nom, forme);
-    if (!natId) { setRows([]); return; }
-    (async () => {
-      try {
-        let encounters = POKEAPI_ENCOUNTERS_CACHE[natId];
-        if (!encounters) {
-          const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${natId}/encounters`);
-          if (!res.ok) throw new Error("encounters fetch failed");
-          encounters = await res.json();
-          POKEAPI_ENCOUNTERS_CACHE[natId] = encounters;
-        }
-        const byVersion = {};
-        (encounters || []).forEach((enc) => {
-          const areaSlug = enc.location_area && enc.location_area.name;
-          if (!areaSlug) return;
-          (enc.version_details || []).forEach((vd) => {
-            const vName = vd.version && vd.version.name;
-            if (!vName) return;
-            if (!byVersion[vName]) byVersion[vName] = new Set();
-            byVersion[vName].add(areaSlug);
-          });
-        });
-        const areaSlugs = Array.from(new Set(Object.values(byVersion).flatMap((s) => Array.from(s))));
-        const names = {};
-        await Promise.all(areaSlugs.map(async (slug) => { names[slug] = await fetchLocationAreaFrenchName(slug); }));
-        if (cancelled) return;
-        const versionKeys = Object.keys(byVersion).sort((a, b) => {
-          const ia = POKEAPI_VERSION_ORDER.indexOf(a); const ib = POKEAPI_VERSION_ORDER.indexOf(b);
-          return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-        });
-        setRows(versionKeys.map((v) => ({
-          key: v,
-          label: POKEAPI_VERSION_LABELS[v] || v,
-          locations: Array.from(byVersion[v]).map((s) => names[s]).sort().join(", "),
-        })));
-      } catch (e) {
-        if (!cancelled) setFailed(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [nom, forme]);
-  if (rows === null && !failed) {
-    return <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, marginBottom: 12 }}>Emplacements… (chargement)</div>;
+// Un seul appel PokeAPI ramène TOUS les jeux d'un coup (pas de filtre par jeu côté API) : on
+// regroupe donc ici par slug de version, pour ensuite ne piocher que celui demandé par l'appelant.
+async function fetchEncountersByVersion(natId) {
+  let encounters = POKEAPI_ENCOUNTERS_CACHE[natId];
+  if (!encounters) {
+    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${natId}/encounters`);
+    if (!res.ok) throw new Error("encounters fetch failed");
+    encounters = await res.json();
+    POKEAPI_ENCOUNTERS_CACHE[natId] = encounters;
   }
-  if (failed || !rows || rows.length === 0) return null;
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Emplacements</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {rows.map((r) => (
-          <div key={r.key} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "Inter, sans-serif", fontSize: 12 }}>
-            <span style={{ color: TXT, fontWeight: 600, flexShrink: 0 }}>{r.label}</span>
-            <span style={{ color: MUTED, textAlign: "right" }}>{r.locations}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  const byVersion = {};
+  (encounters || []).forEach((enc) => {
+    const areaSlug = enc.location_area && enc.location_area.name;
+    if (!areaSlug) return;
+    (enc.version_details || []).forEach((vd) => {
+      const vName = vd.version && vd.version.name;
+      if (!vName) return;
+      if (!byVersion[vName]) byVersion[vName] = new Set();
+      byVersion[vName].add(areaSlug);
+    });
+  });
+  const areaSlugs = Array.from(new Set(Object.values(byVersion).flatMap((s) => Array.from(s))));
+  const names = {};
+  await Promise.all(areaSlugs.map(async (slug) => { names[slug] = await fetchLocationAreaFrenchName(slug); }));
+  const byVersionNames = {};
+  Object.keys(byVersion).forEach((v) => {
+    byVersionNames[v] = Array.from(byVersion[v]).map((s) => names[s]).sort().join(", ");
+  });
+  return byVersionNames;
 }
 // "Jeu vidéo" (§ demande explicite) — bloc distinct de "Marques possibles" dans la fiche
 // catalogue : précise dans quel(s) jeu(x) précis (au sein d'une marque, ex. Écarlate/Violet tous
@@ -632,25 +592,54 @@ function AvailabilityPills({ nom, forme, marque, games, onChanged }) {
     }
     onChanged();
   };
+  // Emplacements PokeAPI (§ demande explicite) : un seul appel pour tous les jeux, puis on ne
+  // pioche que la version demandée par chaque ligne — jamais de requête par jeu séparée.
+  const [locations, setLocations] = useState(null);
+  const [locFailed, setLocFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setLocations(null);
+    setLocFailed(false);
+    const natId = nationalDexIdFor(nom, forme);
+    if (!natId) { setLocations({}); return; }
+    (async () => {
+      try {
+        const byVersion = await fetchEncountersByVersion(natId);
+        if (!cancelled) setLocations(byVersion);
+      } catch (e) {
+        if (!cancelled) setLocFailed(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [nom, forme]);
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Disponible dans</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {games.map((g) => {
           const on = g.key === "home" ? isInMarque() : jvAvailable(jv[g.key]);
           const note = g.key !== "home" && isJvTextNote(jv[g.key]) ? jv[g.key] : null;
+          const versionSlug = g.key !== "home" ? JEU_VIDEO_KEY_TO_POKEAPI_VERSION[g.key] : null;
+          const showLoc = on && versionSlug;
+          const locText = !showLoc ? null : (locations === null && !locFailed ? "…" : ((locations && locations[versionSlug]) || (locFailed ? "" : "—")));
           return (
-            <button
-              key={g.key}
-              type="button"
-              onClick={() => toggle(g)}
-              title={note ? `Note de disponibilité conditionnelle : ${note} (éditable depuis le Catalogue)` : undefined}
-              style={{
-                ...btnGhost, padding: "5px 10px", fontSize: 12,
-                background: on ? OK : "transparent", color: on ? "#fff" : MUTED,
-                border: `1px solid ${on ? OK : LINE}`,
-              }}
-            >{g.label}{note ? ` (${note})` : ""}</button>
+            <div key={g.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => toggle(g)}
+                title={note ? `Note de disponibilité conditionnelle : ${note} (éditable depuis le Catalogue)` : undefined}
+                style={{
+                  ...btnGhost, padding: "5px 10px", fontSize: 12, flexShrink: 0,
+                  background: on ? OK : "transparent", color: on ? "#fff" : MUTED,
+                  border: `1px solid ${on ? OK : LINE}`,
+                }}
+              >{g.label}{note ? ` (${note})` : ""}</button>
+              {locText !== null && (
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, textAlign: "right", flex: 1 }}>
+                  {locText}
+                </span>
+              )}
+            </div>
           );
         })}
       </div>
@@ -2874,7 +2863,6 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
             onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
           />
         )}
-        <PokeApiLocationsSection nom={nom} forme={forme} />
         <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block", marginBottom: 10 }}>
           Jeu - DO
           <AddableSelect
@@ -14313,7 +14301,6 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
             onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
           />
         )}
-        <PokeApiLocationsSection nom={nom} forme={forme} />
 
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Attrapé dans</div>
