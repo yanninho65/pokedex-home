@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.26.18.44";
+const APP_VERSION = "2026.8.26.20.52";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2811,6 +2811,26 @@ function useJeuViews(marque) {
   return { views, addView, removeView, updateView };
 }
 
+// Ligne compacte "titre à gauche + champ à droite, sur la même ligne" (§ demande explicite :
+// Jeu-DO / Groupe de boîte / No dans les fiches de capture) — remplace l'ancien empilement
+// label au-dessus / champ pleine largeur en dessous, pour gagner de la place verticale.
+function FieldRow({ label, children }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, flexShrink: 0 }}>{label}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+    </div>
+  );
+}
+// Style du champ "No" (numéro dans cette vue) — même famille visuelle que Jeu-DO/Groupe de boîte
+// (fond PANEL2, pas BG qui tranchait trop fort sur le panneau) et juste assez large pour 4
+// chiffres (§ demande explicite).
+const numeroFieldStyle = {
+  width: 44, boxSizing: "border-box",
+  background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10,
+  padding: "5px 4px", color: TXT, fontFamily: "Inter, sans-serif", fontSize: 12.5,
+  outline: "none", textAlign: "center",
+};
 function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
@@ -2821,29 +2841,27 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
           <Sprite nom={nom} forme={forme} size={40} />
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
-              {nom}{forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {forme}</span> : null}
+              {nom}
             </div>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>Fiche de capture</div>
+            {forme && (
+              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
+            )}
           </div>
           {showNumber && (
-            <label style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED, textAlign: "right", flexShrink: 0 }}>
-              Numéro
+            <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>No</span>
               <input
                 value={numero}
                 onChange={(e) => setNumero(e.target.value)}
+                maxLength={4}
                 placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
-                style={{
-                  display: "block", width: 60, boxSizing: "border-box", marginTop: 3,
-                  background: BG, border: `1px solid ${LINE}`, borderRadius: 8,
-                  padding: "5px 6px", color: TXT, fontFamily: "Inter, sans-serif", fontSize: 12.5,
-                  outline: "none", textAlign: "right",
-                }}
+                style={numeroFieldStyle}
               />
-            </label>
+            </div>
           )}
           {showCatalogEdit && <CatalogQuickEditButton nom={nom} forme={forme} />}
         </div>
@@ -2857,33 +2875,32 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
             Évolution : {evoLabel}
           </div>
         )}
-        {marqueGames && marqueGames.length > 0 && (
-          <AvailabilityPills
-            nom={nom} forme={forme} marque={marque} games={marqueGames}
-            onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
-          />
-        )}
-        <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block", marginBottom: 10 }}>
-          Jeu - DO
+        <FieldRow label="Jeu - DO">
           <AddableSelect
             value={jeu}
             onChange={setJeuValue}
             options={jeuOptions || []}
             hideAdd
             placeholder="-"
+            width={150}
           />
-        </label>
-        <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-          Groupe de boîte
+        </FieldRow>
+        <FieldRow label="Groupe de boîte">
           <Picker
             value={value}
             onChange={setValue}
             options={options || []}
             placeholder="— choisir —"
-            buttonStyle={{ ...selectStyle, width: "100%", marginTop: 4, display: "block", textAlign: "left", boxSizing: "border-box" }}
+            buttonStyle={{ ...selectStyle, width: 150, display: "block", textAlign: "left", boxSizing: "border-box" }}
             panelWidth={220}
           />
-        </label>
+        </FieldRow>
+        {marqueGames && marqueGames.length > 0 && (
+          <AvailabilityPills
+            nom={nom} forme={forme} marque={marque} games={marqueGames}
+            onChanged={() => { forceRefresh((n) => n + 1); if (onAvailabilityChanged) onAvailabilityChanged(); }}
+          />
+        )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
           <button onClick={onCancel} style={btnGhost}>Annuler</button>
           <button onClick={() => onSave(value, jeu, numero)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
@@ -3436,6 +3453,11 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
 function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache, cameFromMarqueSwitch }) {
   const { flags, setFlags, ready, persist, saveState } = useCollection(gameKey, rows.length);
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
+  // Numéro dans cette vue, pour les fiches de capture en vue Home / Home + jeu (§ demande
+  // explicite : "afficher aussi le numéro" hors vue jeu précis) — réutilise le même mécanisme que
+  // PairModeBlock (useGameViewNumberOverrides), avec une clé de vue dédiée "__home__" pour ne
+  // jamais entrer en conflit avec les overrides propres à chaque vue jeu précise.
+  const { dict: numberOverridesHome, setNumber: setViewNumberHome } = useGameViewNumberOverrides(gameKey, "__home__");
   // "Go 1" (suivi Pokémon GO avancé : Pokédex/Shiny/Chanceux/Parfait/Purifié/Obscur/XXS/XXL)
   // intégré dans l'onglet Go, à côté de Home (§ demande explicite) — uniquement pertinent pour
   // gameKey === "Go" ; sans effet pour les autres marques. Persisté (§ demande explicite : garder
@@ -4135,11 +4157,15 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           showCatalogEdit={isGoGame}
           marqueGames={marqueGamesWithHome}
           onAvailabilityChanged={bumpJeuVideoVersion}
+          showNumber
+          currentNumber={numberOverridesHome && numberOverridesHome[boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2])]}
+          numberPlaceholder={rows[groupEditTarget][0]}
           onCancel={() => setGroupEditTarget(null)}
-          onSave={(v, jeuVal) => {
+          onSave={(v, jeuVal, numero) => {
             const k = boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2]);
             setBoxGroup(k, v);
             setJeu(k, jeuVal);
+            setViewNumberHome(k, numero);
             setGroupEditTarget(null);
           }}
         />
@@ -4167,8 +4193,13 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             checkedGames={(gameSourcesDict && gameSourcesDict[multiDetailKey]) || []}
             marqueGames={marqueGamesWithHome}
             onAvailabilityChanged={bumpJeuVideoVersion}
+            currentNumber={numberOverridesHome && numberOverridesHome[multiDetailKey]}
+            numberPlaceholder={(() => {
+              const idx = rows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
+              return idx !== -1 ? rows[idx][0] : null;
+            })()}
             onCancel={() => setMultiDetailKey(null)}
-            onSave={({ group, jeu, home, gameKeys }) => {
+            onSave={({ group, jeu, home, gameKeys, numero }) => {
               const idx = rows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
               if (idx !== -1) {
                 const next = effective.slice();
@@ -4179,6 +4210,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
               setBoxGroup(multiDetailKey, group);
               setJeu(multiDetailKey, jeu);
               setAllSources(multiDetailKey, gameKeys);
+              setViewNumberHome(multiDetailKey, numero);
               setMultiDetailKey(null);
             }}
           />
@@ -14237,11 +14269,12 @@ async function importGo1Sheet(rows, mode) {
 // marque toutes paires confondues) et en vue jeu précis (showHome=false, uniquement les jeux de
 // la paire affichée). C'est le seul endroit où Home peut être coché — jamais depuis une vue jeu
 // précis (§ demande explicite : ne pas mélanger les deux).
-function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showHome, homeChecked, games, checkedGames, marqueGames, onAvailabilityChanged, onCancel, onSave }) {
+function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showHome, homeChecked, games, checkedGames, marqueGames, onAvailabilityChanged, currentNumber, numberPlaceholder, onCancel, onSave }) {
   const [group, setGroup] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [home, setHome] = useState(!!homeChecked);
   const [checked, setChecked] = useState(() => new Set(checkedGames || []));
+  const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
   const [, forceRefresh] = useState(0);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
   const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
@@ -14274,13 +14307,25 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12 }}>
           <Sprite nom={nom} forme={forme} size={40} />
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
-              {nom}{forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {forme}</span> : null}
+              {nom}
             </div>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>Fiche de capture</div>
+            {forme && (
+              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>No</span>
+            <input
+              value={numero}
+              onChange={(e) => setNumero(e.target.value)}
+              maxLength={4}
+              placeholder={numberPlaceholder != null ? String(numberPlaceholder) : "—"}
+              style={numeroFieldStyle}
+            />
           </div>
         </div>
 
@@ -14295,6 +14340,20 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
           </div>
         )}
 
+        <FieldRow label="Jeu - DO">
+          <AddableSelect value={jeu} onChange={setJeuValue} options={jeuOptions || []} hideAdd placeholder="-" width={150} />
+        </FieldRow>
+        <FieldRow label="Groupe de boîte">
+          <Picker
+            value={group}
+            onChange={setGroup}
+            options={options || []}
+            placeholder="— choisir —"
+            buttonStyle={{ ...selectStyle, width: 150, display: "block", textAlign: "left", boxSizing: "border-box" }}
+            panelWidth={220}
+          />
+        </FieldRow>
+
         {marqueGames && marqueGames.length > 0 && (
           <AvailabilityPills
             nom={nom} forme={forme} marque={marque} games={marqueGames}
@@ -14308,24 +14367,9 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
           {games.map((g) => checkRow(g.label, checked.has(g.key), () => toggleGame(g.key), PURPLE))}
         </div>
 
-        <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, display: "block", marginBottom: 10 }}>
-          Jeu - DO
-          <AddableSelect value={jeu} onChange={setJeuValue} options={jeuOptions || []} hideAdd placeholder="-" />
-        </label>
-        <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-          Groupe de boîte
-          <Picker
-            value={group}
-            onChange={setGroup}
-            options={options || []}
-            placeholder="— choisir —"
-            buttonStyle={{ ...selectStyle, width: "100%", marginTop: 4, display: "block", textAlign: "left", boxSizing: "border-box" }}
-            panelWidth={220}
-          />
-        </label>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
           <button onClick={onCancel} style={btnGhost}>Annuler</button>
-          <button onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked) })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
+          <button onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked), numero })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
         </div>
       </div>
     </div>
