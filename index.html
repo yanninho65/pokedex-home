@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.26.21.55";
+const APP_VERSION = "2026.8.26.20.19";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1941,6 +1941,343 @@ function formatEvolution(raw) {
   return raw.replace(/-/g, " · ");
 }
 
+// --- Fenêtre "Chaîne d'évolution" (§ demande explicite) ------------------------------------
+// Ouverte en cliquant la méthode d'évolution (National, Home, jeux) : reconstruit la lignée
+// complète du Pokémon, forme de base en haut puis dernière évolution en bas, avec les mêmes
+// visuels (`Sprite`) que le reste de l'app.
+// - Topologie (qui évolue en quoi) + méthode d'évolution : PokeAPI (pokemon-species -> evolution-chain).
+// - Forme à afficher à chaque étage (Kanto/Alola/Galar/Hisui/Paldea) : résolue localement via
+//   `NAT_ALL_FORMS` (jamais via le nom de variété PokeAPI) — un embranchement (ex. Miaouss ->
+//   Persian OU Perrserker) est tranché en préférant l'enfant dont au moins une forme locale
+//   correspond à la région de la forme de départ, sinon l'enfant "par défaut" (sans étiquette
+//   régionale locale).
+// - Méga-évolution / Gigantamax (absents de /evolution-chain) : ajoutés à part depuis
+//   `NAT_ALL_FORMS` pour chaque étage (toute forme du même nom contenant "méga"/"gmax"),
+//   affichés en branche latérale avec un libellé purement local (pas PokeAPI).
+const EVOLUTION_CHAIN_CACHE = {}; // numéro national -> lignée déjà résolue (session uniquement)
+
+function regionTagOf(forme) {
+  if (!forme) return null;
+  const f = String(forme).toLowerCase();
+  for (const r of ["alola", "galar", "hisui", "paldea"]) {
+    if (f.includes(r)) return r;
+  }
+  return null;
+}
+function isMegaOrGmaxForme(forme) {
+  if (!forme) return false;
+  const f = String(forme).toLowerCase();
+  return f.includes("méga") || f.includes("mega") || f.includes("gmax");
+}
+function localFormsForNat(nat) {
+  return NAT_ALL_FORMS.filter((f) => f.n === nat && !isMegaOrGmaxForme(f.forme));
+}
+// Forme locale à afficher pour un numéro national + une région cible (ou null = par défaut) :
+// correspondance régionale exacte en priorité, sinon une forme sans étiquette régionale connue,
+// sinon la première forme disponible. Retourne null si le Pokémon n'est pas dans le catalogue.
+function pickLocalForm(nat, regionTag) {
+  const forms = localFormsForNat(nat);
+  if (forms.length === 0) return null;
+  if (regionTag) {
+    const match = forms.find((f) => regionTagOf(f.forme) === regionTag);
+    if (match) return match;
+  }
+  return forms.find((f) => !regionTagOf(f.forme)) || forms[0];
+}
+function pokeApiIdFromUrl(url) {
+  const m = String(url || "").match(/\/(\d+)\/?$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+function humanizeSlugFr(slug) {
+  return String(slug || "").split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+const EVOLUTION_ITEM_FR = {
+  "fire-stone": "Pierre Feu", "water-stone": "Pierre Eau", "thunder-stone": "Pierre Foudre",
+  "leaf-stone": "Pierre Plante", "moon-stone": "Pierre Lune", "sun-stone": "Pierre Soleil",
+  "shiny-stone": "Pierre Éclat", "dusk-stone": "Pierre Nuit", "dawn-stone": "Pierre Aube",
+  "ice-stone": "Pierre Givre", "oval-stone": "Pierre Ovale", "sweet-apple": "Pomme Sucrée",
+  "tart-apple": "Pomme Acidulée", "syrupy-apple": "Pomme Sirupeuse", "upgrade": "Améliorator",
+  "dubious-disc": "Disque Bizarre", "protector": "Protecteur", "electirizer": "Électrisateur",
+  "magmarizer": "Magmatiseur", "reaper-cloth": "Linceul", "prism-scale": "Écaille Prisme",
+  "whipped-dream": "Douce Mousse", "sachet": "Sachet Senteur", "strawberry-sweet": "Bonbon Fraise",
+  "love-sweet": "Bonbon Cœur", "berry-sweet": "Bonbon Baie", "clover-sweet": "Bonbon Trèfle",
+  "flower-sweet": "Bonbon Fleur", "star-sweet": "Bonbon Étoile", "ribbon-sweet": "Bonbon Ruban",
+  "galarica-cuff": "Bracelet Galarica", "galarica-wreath": "Couronne Galarica",
+  "black-augurite": "Augite Noire", "peat-block": "Bloc de Tourbe",
+  "auspicious-armor": "Armure Faste", "malicious-armor": "Armure Maléfique",
+  "linking-cord": "Câble Liaison", "metal-coat": "Métal Coat", "kings-rock": "Roche Royale",
+  "deep-sea-tooth": "Dent Cascade", "deep-sea-scale": "Écaille Cascade", "razor-claw": "Griffe Affûtée",
+  "razor-fang": "Croc Affûté",
+};
+function frItemName(name) {
+  if (!name) return "";
+  return EVOLUTION_ITEM_FR[name] || humanizeSlugFr(name);
+}
+function translateOneEvolutionDetail(d) {
+  const trig = d.trigger ? d.trigger.name : null;
+  const parts = [];
+  if (trig === "level-up") {
+    if (d.min_level) parts.push("Niveau " + d.min_level);
+    else if (d.min_happiness) parts.push("Bonheur élevé");
+    else if (d.min_affection) parts.push("Affection élevée");
+    else if (d.min_beauty) parts.push("Beauté élevée");
+    else if (d.known_move) parts.push("Connaît " + humanizeSlugFr(d.known_move.name));
+    else if (d.known_move_type) parts.push("Connaît une capacité de type " + humanizeSlugFr(d.known_move_type.name));
+    else if (d.location) parts.push("À " + humanizeLocationSlug(d.location.name));
+    else if (d.party_species) parts.push("Avec " + humanizeSlugFr(d.party_species.name) + " dans l'équipe");
+    else if (d.party_type) parts.push("Avec un type " + humanizeSlugFr(d.party_type.name) + " dans l'équipe");
+    else if (d.relative_physical_stats === 1) parts.push("Attaque > Défense");
+    else if (d.relative_physical_stats === -1) parts.push("Défense > Attaque");
+    else if (d.relative_physical_stats === 0) parts.push("Attaque = Défense");
+    else if (d.needs_overworld_rain) parts.push("Sous la pluie");
+    else if (d.turn_upside_down) parts.push("Console retournée");
+    else parts.push("Montée de niveau");
+    if (d.time_of_day) parts.push(d.time_of_day === "day" ? "le jour" : d.time_of_day === "night" ? "la nuit" : d.time_of_day);
+    if (d.gender === 1) parts.push("(femelle)");
+    if (d.gender === 2) parts.push("(mâle)");
+  } else if (trig === "trade") {
+    parts.push("Échange");
+    if (d.trade_species) parts.push("contre " + humanizeSlugFr(d.trade_species.name));
+    if (d.held_item) parts.push("tenant " + frItemName(d.held_item.name));
+  } else if (trig === "use-item") {
+    parts.push(frItemName(d.item ? d.item.name : ""));
+  } else if (trig === "shed") {
+    parts.push("Place libre dans l'équipe + Poké Ball libre");
+  } else if (trig === "three-critical-hits") {
+    parts.push("3 coups critiques dans un combat");
+  } else if (trig === "take-damage") {
+    parts.push("Subir des dégâts" + (d.location ? " à " + humanizeLocationSlug(d.location.name) : ""));
+  } else if (trig === "recoil-damage") {
+    parts.push("Dégâts de recul");
+  } else if (trig === "agile-style-move") {
+    parts.push("Capacité en Style Agile");
+  } else if (trig === "strong-style-move") {
+    parts.push("Capacité en Style Fort");
+  } else if (trig === "other") {
+    parts.push("Condition spéciale");
+  } else if (trig) {
+    parts.push(humanizeSlugFr(trig));
+  }
+  if (d.item && trig !== "use-item") parts.push("(" + frItemName(d.item.name) + ")");
+  if (d.held_item && trig !== "trade") parts.push("tenant " + frItemName(d.held_item.name));
+  if (d.min_level && trig !== "level-up") parts.push("Niveau " + d.min_level);
+  return parts.filter(Boolean).join(" ");
+}
+function translateEvolutionDetails(list) {
+  if (!list || list.length === 0) return "Évolution";
+  const labels = [...new Set(list.map(translateOneEvolutionDetail).filter(Boolean))];
+  return labels.join(" ou ") || "Évolution";
+}
+// Résout la lignée complète (bas -> haut) de (nom, forme) : national -> espèce -> chaîne
+// d'évolution PokeAPI, embranchements tranchés selon la région de départ, formes/sprites 100%
+// locaux. Lève une erreur si le Pokémon n'a pas de vrai numéro national exploitable ou si
+// l'appel réseau échoue (fiche indisponible hors-ligne, etc.).
+// Nom français d'une espèce via PokeAPI (`pokemon-species.names`, langue "fr") — utilisé
+// uniquement en repli quand le Pokémon n'a pas de correspondance dans le catalogue local
+// (`localForm` absent) ; à défaut de nom français trouvé, retombe sur le slug anglais mis en forme.
+async function fetchFrenchSpeciesName(url, fallbackSlug) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("species-name-fetch-failed");
+    const data = await res.json();
+    const frEntry = (data.names || []).find((n) => n.language && n.language.name === "fr");
+    return frEntry ? frEntry.name : humanizeSlugFr(fallbackSlug);
+  } catch (e) {
+    return humanizeSlugFr(fallbackSlug);
+  }
+}
+async function resolveEvolutionChain(nom, forme) {
+  const nat = nationalDexIdFor(nom, forme);
+  if (typeof nat !== "number") throw new Error("no-nat");
+  if (EVOLUTION_CHAIN_CACHE[nat]) return EVOLUTION_CHAIN_CACHE[nat];
+
+  const regionTag = regionTagOf(forme);
+  const speciesRes = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${nat}/`);
+  if (!speciesRes.ok) throw new Error("species-fetch-failed");
+  const species = await speciesRes.json();
+  const chainUrl = species.evolution_chain && species.evolution_chain.url;
+  if (!chainUrl) throw new Error("no-chain");
+  const chainRes = await fetch(chainUrl);
+  if (!chainRes.ok) throw new Error("chain-fetch-failed");
+  const chainData = await chainRes.json();
+
+  function findNode(node, targetId, path) {
+    const id = pokeApiIdFromUrl(node.species.url);
+    const nextPath = [...path, node];
+    if (id === targetId) return nextPath;
+    for (const child of node.evolves_to || []) {
+      const found = findNode(child, targetId, nextPath);
+      if (found) return found;
+    }
+    return null;
+  }
+  const ancestorPath = findNode(chainData.chain, nat, []);
+  if (!ancestorPath) throw new Error("species-not-in-chain");
+
+  function descend(node) {
+    const children = node.evolves_to || [];
+    if (children.length === 0) return [];
+    let chosen = null;
+    if (regionTag) {
+      chosen = children.find((c) => {
+        const cid = pokeApiIdFromUrl(c.species.url);
+        return localFormsForNat(cid).some((f) => regionTagOf(f.forme) === regionTag);
+      });
+    }
+    if (!chosen) {
+      chosen = children.find((c) => {
+        const cid = pokeApiIdFromUrl(c.species.url);
+        return localFormsForNat(cid).every((f) => !regionTagOf(f.forme));
+      }) || children[0];
+    }
+    return [chosen, ...descend(chosen)];
+  }
+  const fullPath = [...ancestorPath, ...descend(ancestorPath[ancestorPath.length - 1])];
+
+  const stages = await Promise.all(fullPath.map(async (node, i) => {
+    const id = pokeApiIdFromUrl(node.species.url);
+    const localForm = pickLocalForm(id, regionTag);
+    const methodLabel = i === 0 ? null : translateEvolutionDetails(node.evolution_details);
+    const extra = localForm
+      ? NAT_ALL_FORMS.filter((f) => f.nom === localForm.nom && f.forme !== localForm.forme && isMegaOrGmaxForme(f.forme))
+      : [];
+    const nom = localForm ? localForm.nom : await fetchFrenchSpeciesName(node.species.url, node.species.name);
+    return {
+      nat: id,
+      nom,
+      forme: localForm ? localForm.forme : null,
+      isFallback: !localForm,
+      methodLabel,
+      extra,
+    };
+  }));
+  EVOLUTION_CHAIN_CACHE[nat] = stages;
+  return stages;
+}
+
+function EvolutionChainStageBox({ nom, forme, nat, isFallback, size = 68, badge }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, width: size + 16 }}>
+      <div style={{
+        background: PANEL, border: `1px solid ${LINE}`, borderRadius: 14,
+        padding: 6, display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        {isFallback ? (
+          <img
+            src={ARTWORK_BASE + nat + ".png"} width={size} height={size} alt={nom}
+            style={{ objectFit: "contain" }} loading="lazy"
+          />
+        ) : (
+          <Sprite nom={nom} forme={forme} size={size} />
+        )}
+      </div>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: TXT, fontWeight: 600, textAlign: "center" }}>
+        {nom}
+      </div>
+      {forme && (
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 9, color: MUTED, textAlign: "center" }}>{forme}</div>
+      )}
+      {badge && (
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 8.5, color: INFO, fontWeight: 700, textAlign: "center" }}>{badge}</div>
+      )}
+    </div>
+  );
+}
+function EvolutionChainStageRow({ stage }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
+      <EvolutionChainStageBox nom={stage.nom} forme={stage.forme} nat={stage.nat} isFallback={stage.isFallback} size={68} />
+      {(stage.extra || []).map((ex) => (
+        <EvolutionChainStageBox
+          key={ex.key}
+          nom={ex.nom} forme={ex.forme} nat={stage.nat} size={52}
+          badge={ex.forme && ex.forme.toLowerCase().includes("gmax") ? "Gigantamax" : "Méga-évolution"}
+        />
+      ))}
+    </div>
+  );
+}
+// Fenêtre modale : lignée complète de haut (forme de base) vers le bas (dernière évolution), une
+// flèche + méthode d'évolution (PokeAPI, traduite) entre chaque étage. `zIndex` volontairement
+// au-dessus des fiches de capture (BoxGroupModal/JeuMultiSourceModal, 100) pour s'empiler dessus.
+function EvolutionChainModal({ nom, forme, onClose }) {
+  const [state, setState] = useState({ loading: true, error: false, stages: null });
+  useEffect(() => {
+    let cancelled = false;
+    setState({ loading: true, error: false, stages: null });
+    resolveEvolutionChain(nom, forme)
+      .then((stages) => { if (!cancelled) setState({ loading: false, error: false, stages }); })
+      .catch(() => { if (!cancelled) setState({ loading: false, error: true, stages: null }); });
+    return () => { cancelled = true; };
+  }, [nom, forme]);
+  const displayStages = state.stages; // forme de base en haut, dernière évolution en bas
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 380, width: "100%", maxHeight: "85vh", overflowY: "auto" }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>Chaîne d'évolution</div>
+          <button onClick={onClose} style={{ background: "transparent", border: "none", color: MUTED, fontSize: 22, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+        </div>
+        {state.loading && (
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED, textAlign: "center", padding: "24px 0" }}>Chargement…</div>
+        )}
+        {!state.loading && state.error && (
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED, textAlign: "center", padding: "24px 0" }}>
+            Chaîne d'évolution indisponible pour ce Pokémon.
+          </div>
+        )}
+        {!state.loading && !state.error && displayStages && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            {displayStages.map((stage, i) => (
+              <React.Fragment key={stage.nat + "|" + (stage.forme || "") + "|" + i}>
+                <EvolutionChainStageRow stage={stage} />
+                {i < displayStages.length - 1 && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "4px 0" }}>
+                    <span style={{ fontSize: 20, color: MUTED, lineHeight: 1 }}>↓</span>
+                    {displayStages[i + 1].methodLabel && (
+                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: INFO, fontWeight: 600, textAlign: "center", maxWidth: 260 }}>
+                        {displayStages[i + 1].methodLabel}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+// Libellé "Évolution : ..." rendu cliquable (National, Home, jeux) pour ouvrir la fenêtre
+// "Chaîne d'évolution" — même apparence que l'ancien texte statique, juste un curseur pointeur
+// et un léger soulignement au survol pour signaler que c'est actionnable.
+function EvolutionLabelButton({ label, onClick, style }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Voir la chaîne d'évolution"
+      style={{
+        fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, fontWeight: 600,
+        background: "transparent", border: "none", padding: 0, cursor: "pointer",
+        textDecoration: "underline", textDecorationColor: "transparent",
+        ...style,
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.textDecorationColor = INFO; }}
+      onMouseLeave={(e) => { e.currentTarget.style.textDecorationColor = "transparent"; }}
+    >
+      Évolution : {label}
+    </button>
+  );
+}
+
 function buildAlphaBaseline() {
   // DATA.nat rows: [..., alphaCapableLA(10), alphaCapableLZA(11), alphaCaughtLA(12), alphaCaughtLZA(13)]
   const base = {};
@@ -2915,6 +3252,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
   const [, forceRefresh] = useState(0);
+  const [showEvoChain, setShowEvoChain] = useState(false);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
   const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
   return (
@@ -2947,9 +3285,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
               </a>
             )}
             {evoLabel && (
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, fontWeight: 600 }}>
-                Évolution : {evoLabel}
-              </span>
+              <EvolutionLabelButton label={evoLabel} onClick={() => setShowEvoChain(true)} />
             )}
           </div>
         )}
@@ -2974,6 +3310,9 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
           <button onClick={() => onSave(value, jeu, numero)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
         </div>
       </div>
+      {showEvoChain && (
+        <EvolutionChainModal nom={nom} forme={forme} onClose={() => setShowEvoChain(false)} />
+      )}
     </div>
   );
 }
@@ -10283,6 +10622,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [limit, setLimit] = useState(150);
   const [onlyFormKey, setOnlyFormKey] = useState(null);
   const [selectedNom, setSelectedNom] = useState(null);
+  const [evoChainTarget, setEvoChainTarget] = useState(null); // { nom, forme } | null
   // Carte de forme affichée (parmi plusieurs formes d'une même espèce, ex. Zarbi, Motisma) —
   // navigation "Précédent/Suivant" au lieu du défilement horizontal (même patron que Shiny/Double).
   const [cardPos, setCardPos] = useState(0);
@@ -10769,8 +11109,11 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                   const evoLabel = formatEvolution(evoRaw);
                   if (!evoLabel) return null;
                   return (
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, marginBottom: 6, fontWeight: 600 }}>
-                      Évolution : {evoLabel}
+                    <div style={{ marginBottom: 6 }}>
+                      <EvolutionLabelButton
+                        label={evoLabel}
+                        onClick={() => setEvoChainTarget({ nom: f[1], forme: f[2] || null })}
+                      />
                     </div>
                   );
                 })()}
@@ -11061,6 +11404,14 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           },
         ]}
       />
+
+      {evoChainTarget && (
+        <EvolutionChainModal
+          nom={evoChainTarget.nom}
+          forme={evoChainTarget.forme}
+          onClose={() => setEvoChainTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -14344,6 +14695,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
   const [checked, setChecked] = useState(() => new Set(checkedGames || []));
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
   const [, forceRefresh] = useState(0);
+  const [showEvoChain, setShowEvoChain] = useState(false);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
   const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
   const toggleGame = (k) => {
@@ -14403,9 +14755,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
               </a>
             )}
             {evoLabel && (
-              <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INFO, fontWeight: 600 }}>
-                Évolution : {evoLabel}
-              </span>
+              <EvolutionLabelButton label={evoLabel} onClick={() => setShowEvoChain(true)} />
             )}
           </div>
         )}
@@ -14438,6 +14788,9 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
           <button onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked), numero })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
         </div>
       </div>
+      {showEvoChain && (
+        <EvolutionChainModal nom={nom} forme={forme} onClose={() => setShowEvoChain(false)} />
+      )}
     </div>
   );
 }
