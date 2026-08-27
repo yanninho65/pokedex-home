@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.26.20.19";
+const APP_VERSION = "2026.8.26.21.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1954,7 +1954,7 @@ function formatEvolution(raw) {
 // - Méga-évolution / Gigantamax (absents de /evolution-chain) : ajoutés à part depuis
 //   `NAT_ALL_FORMS` pour chaque étage (toute forme du même nom contenant "méga"/"gmax"),
 //   affichés en branche latérale avec un libellé purement local (pas PokeAPI).
-const EVOLUTION_CHAIN_CACHE = {}; // numéro national -> lignée déjà résolue (session uniquement)
+const EVOLUTION_CHAIN_CACHE = {}; // "nat|regionTag" -> arbre natif PokeAPI déjà résolu (session uniquement)
 
 function regionTagOf(forme) {
   if (!forme) return null;
@@ -1988,6 +1988,21 @@ function pokeApiIdFromUrl(url) {
   const m = String(url || "").match(/\/(\d+)\/?$/);
   return m ? parseInt(m[1], 10) : null;
 }
+// Formes connues (non vides) d'un nom d'espèce, et liste dédupliquée de tous les noms — utilisés
+// par le sélecteur "Ajouter une évolution" (§ édition manuelle de la chaîne) pour proposer un
+// nom puis, s'il en a plusieurs, une forme.
+function formesForNom(nom) {
+  if (!nom) return [];
+  const set = new Set();
+  NAT_ALL_FORMS.forEach((f) => { if (f.nom === nom && f.forme) set.add(f.forme); });
+  return Array.from(set);
+}
+const ALL_POKEMON_NAMES_SORTED = (() => {
+  const seen = new Set();
+  const list = [];
+  NAT_ALL_FORMS.forEach((f) => { if (!seen.has(f.nom)) { seen.add(f.nom); list.push(f.nom); } });
+  return list;
+})();
 function humanizeSlugFr(slug) {
   return String(slug || "").split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
@@ -2068,9 +2083,9 @@ function translateEvolutionDetails(list) {
   const labels = [...new Set(list.map(translateOneEvolutionDetail).filter(Boolean))];
   return labels.join(" ou ") || "Évolution";
 }
-// Résout la lignée complète (bas -> haut) de (nom, forme) : national -> espèce -> chaîne
-// d'évolution PokeAPI, embranchements tranchés selon la région de départ, formes/sprites 100%
-// locaux. Lève une erreur si le Pokémon n'a pas de vrai numéro national exploitable ou si
+// Résout l'arbre complet (multi-branches, § demande explicite : plusieurs évolutions comme
+// Évoli) de (nom, forme) : national -> espèce -> chaîne d'évolution PokeAPI, formes/sprites
+// 100% locaux. Lève une erreur si le Pokémon n'a pas de vrai numéro national exploitable ou si
 // l'appel réseau échoue (fiche indisponible hors-ligne, etc.).
 // Nom français d'une espèce via PokeAPI (`pokemon-species.names`, langue "fr") — utilisé
 // uniquement en repli quand le Pokémon n'a pas de correspondance dans le catalogue local
@@ -2086,12 +2101,55 @@ async function fetchFrenchSpeciesName(url, fallbackSlug) {
     return humanizeSlugFr(fallbackSlug);
   }
 }
+// Enfants à afficher à un embranchement : filtre par région de départ UNIQUEMENT quand ça
+// discrimine vraiment (ex. Miaouss d'Alola -> Persian d'Alola seul, jamais Perrserker ni Persian
+// Kanto) — sinon (aucun enfant régional trouvé, ex. Évoli dont aucune évolution n'a de forme
+// régionale) on affiche TOUTES les branches (§ demande explicite : multi-évolution).
+function childrenToShow(children, regionTag) {
+  if (!children || children.length <= 1) return children || [];
+  if (!regionTag) return children;
+  const withRegion = children.filter((c) => {
+    const cid = pokeApiIdFromUrl(c.species.url);
+    return localFormsForNat(cid).some((f) => regionTagOf(f.forme) === regionTag);
+  });
+  return withRegion.length > 0 ? withRegion : children;
+}
+// Clé stable d'un noeud de chaîne, même convention que partout ailleurs dans l'app (`nom|forme`).
+function evoNodeKey(nom, forme) { return nom + "|" + (forme || ""); }
+// Construit récursivement l'arbre NATIF (PokeAPI, avant fusion des ajouts/overrides manuels —
+// voir applyChainOverrides) à partir d'un noeud `evolution-chain`. `isRoot` : pas de méthode
+// d'évolution affichée (rien avant la forme de base). Toutes les branches d'un même embranchement
+// sont conservées (§ multi-évolution), pas une seule choisie arbitrairement.
+async function buildNativeEvolutionTree(node, regionTag, isRoot) {
+  const id = pokeApiIdFromUrl(node.species.url);
+  const localForm = pickLocalForm(id, regionTag);
+  const methodLabel = isRoot ? null : translateEvolutionDetails(node.evolution_details);
+  const extra = localForm
+    ? NAT_ALL_FORMS.filter((f) => f.nom === localForm.nom && f.forme !== localForm.forme && isMegaOrGmaxForme(f.forme))
+    : [];
+  const nom = localForm ? localForm.nom : await fetchFrenchSpeciesName(node.species.url, node.species.name);
+  const forme = localForm ? localForm.forme : null;
+  const rawChildren = childrenToShow(node.evolves_to, regionTag);
+  const children = await Promise.all(rawChildren.map((c) => buildNativeEvolutionTree(c, regionTag, false)));
+  return {
+    key: evoNodeKey(nom, forme),
+    nat: id,
+    nom,
+    forme,
+    isFallback: !localForm,
+    extra,
+    methodLabel,
+    native: true,
+    children,
+  };
+}
 async function resolveEvolutionChain(nom, forme) {
   const nat = nationalDexIdFor(nom, forme);
   if (typeof nat !== "number") throw new Error("no-nat");
-  if (EVOLUTION_CHAIN_CACHE[nat]) return EVOLUTION_CHAIN_CACHE[nat];
-
   const regionTag = regionTagOf(forme);
+  const cacheKey = nat + "|" + (regionTag || "");
+  if (EVOLUTION_CHAIN_CACHE[cacheKey]) return EVOLUTION_CHAIN_CACHE[cacheKey];
+
   const speciesRes = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${nat}/`);
   if (!speciesRes.ok) throw new Error("species-fetch-failed");
   const species = await speciesRes.json();
@@ -2101,58 +2159,67 @@ async function resolveEvolutionChain(nom, forme) {
   if (!chainRes.ok) throw new Error("chain-fetch-failed");
   const chainData = await chainRes.json();
 
-  function findNode(node, targetId, path) {
-    const id = pokeApiIdFromUrl(node.species.url);
-    const nextPath = [...path, node];
-    if (id === targetId) return nextPath;
-    for (const child of node.evolves_to || []) {
-      const found = findNode(child, targetId, nextPath);
-      if (found) return found;
-    }
-    return null;
-  }
-  const ancestorPath = findNode(chainData.chain, nat, []);
-  if (!ancestorPath) throw new Error("species-not-in-chain");
+  const tree = await buildNativeEvolutionTree(chainData.chain, regionTag, true);
+  const idFromUrl = pokeApiIdFromUrl(chainUrl);
+  const chainId = String(idFromUrl != null ? idFromUrl : (chainData.id != null ? chainData.id : nat));
+  const result = { chainId, tree };
+  EVOLUTION_CHAIN_CACHE[cacheKey] = result;
+  return result;
+}
 
-  function descend(node) {
-    const children = node.evolves_to || [];
-    if (children.length === 0) return [];
-    let chosen = null;
-    if (regionTag) {
-      chosen = children.find((c) => {
-        const cid = pokeApiIdFromUrl(c.species.url);
-        return localFormsForNat(cid).some((f) => regionTagOf(f.forme) === regionTag);
-      });
-    }
-    if (!chosen) {
-      chosen = children.find((c) => {
-        const cid = pokeApiIdFromUrl(c.species.url);
-        return localFormsForNat(cid).every((f) => !regionTagOf(f.forme));
-      }) || children[0];
-    }
-    return [chosen, ...descend(chosen)];
-  }
-  const fullPath = [...ancestorPath, ...descend(ancestorPath[ancestorPath.length - 1])];
+// Fusionne les ajouts manuels et les overrides de lien (stockage `evolution_chain_overrides`,
+// § édition manuelle de la chaîne) par-dessus l'arbre natif PokeAPI :
+// - un lien natif masqué (`hidden`) retire toute la branche (et sa descendance) de l'affichage ;
+// - un lien natif avec une méthode surchargée affiche ce texte à la place de celui de PokeAPI ;
+// - chaque entrée `added` est greffée sous son `parentKey` — rattachement répété jusqu'à
+//   stabilité pour qu'un ajout puisse lui-même servir de parent à un autre ajout, quel que soit
+//   leur ordre dans le tableau. Un ajout dont le parent reste introuvable (branche masquée,
+//   parent supprimé…) n'est simplement pas affiché, sans erreur.
+function applyChainOverrides(nativeTree, overridesForChain) {
+  const linkOverrides = (overridesForChain && overridesForChain.linkOverrides) || {};
+  const added = (overridesForChain && overridesForChain.added) || [];
 
-  const stages = await Promise.all(fullPath.map(async (node, i) => {
-    const id = pokeApiIdFromUrl(node.species.url);
-    const localForm = pickLocalForm(id, regionTag);
-    const methodLabel = i === 0 ? null : translateEvolutionDetails(node.evolution_details);
-    const extra = localForm
-      ? NAT_ALL_FORMS.filter((f) => f.nom === localForm.nom && f.forme !== localForm.forme && isMegaOrGmaxForme(f.forme))
-      : [];
-    const nom = localForm ? localForm.nom : await fetchFrenchSpeciesName(node.species.url, node.species.name);
-    return {
-      nat: id,
-      nom,
-      forme: localForm ? localForm.forme : null,
-      isFallback: !localForm,
-      methodLabel,
-      extra,
-    };
-  }));
-  EVOLUTION_CHAIN_CACHE[nat] = stages;
-  return stages;
+  function cloneWithLinkOverrides(node) {
+    const kids = (node.children || [])
+      .map((child) => {
+        const linkKey = node.key + ">>>" + child.key;
+        const ov = linkOverrides[linkKey];
+        if (ov && ov.hidden) return null;
+        const cloned = cloneWithLinkOverrides(child);
+        if (ov && ov.method) cloned.methodLabel = ov.method;
+        cloned.linkKey = linkKey;
+        return cloned;
+      })
+      .filter(Boolean);
+    return { ...node, children: kids };
+  }
+  const base = cloneWithLinkOverrides(nativeTree);
+
+  const byKey = {};
+  (function index(node) { byKey[node.key] = node; (node.children || []).forEach(index); })(base);
+
+  let remaining = added.slice();
+  let progress = true;
+  while (remaining.length > 0 && progress) {
+    progress = false;
+    remaining = remaining.filter((a) => {
+      const parent = byKey[a.parentKey];
+      if (!parent) return true;
+      const natOfAdd = nationalDexIdFor(a.nom, a.forme);
+      const extra = NAT_ALL_FORMS.filter((f) => f.nom === a.nom && f.forme !== (a.forme || null) && isMegaOrGmaxForme(f.forme));
+      const node = {
+        key: a.key, nat: typeof natOfAdd === "number" ? natOfAdd : null, nom: a.nom, forme: a.forme || null,
+        isFallback: false, extra, methodLabel: a.method || "Ajout manuel", native: false,
+        linkKey: a.parentKey + ">>>" + a.key, children: [],
+      };
+      if (!parent.children) parent.children = [];
+      parent.children.push(node);
+      byKey[a.key] = node;
+      progress = true;
+      return false;
+    });
+  }
+  return base;
 }
 
 function EvolutionChainStageBox({ nom, forme, nat, isFallback, size = 68, badge }) {
@@ -2197,20 +2264,284 @@ function EvolutionChainStageRow({ stage }) {
     </div>
   );
 }
-// Fenêtre modale : lignée complète de haut (forme de base) vers le bas (dernière évolution), une
-// flèche + méthode d'évolution (PokeAPI, traduite) entre chaque étage. `zIndex` volontairement
+// Sélecteur nom + forme restreint aux membres de la même famille (numéro "Famille" du Catalogue,
+// §3) — repli sur la liste complète des noms si aucune famille n'est renseignée pour ce Pokémon
+// (incomplet pour les générations récentes, voir familyMembersOf). Exclut les couples nom|forme
+// déjà présents dans la chaîne affichée (`excludeKeys`), forme par forme.
+function EvolutionMemberPicker({ familyNom, excludeKeys, onPick }) {
+  const names = useMemo(() => {
+    const fam = familyMembersOf(familyNom);
+    return fam.length > 0 ? fam : ALL_POKEMON_NAMES_SORTED;
+  }, [familyNom]);
+  const [selNom, setSelNom] = useState(names[0] || "");
+  const formes = useMemo(() => {
+    const list = formesForNom(selNom);
+    return list.length > 0 ? list : [null];
+  }, [selNom]);
+  const availableFormes = formes.filter((f) => !excludeKeys.has(evoNodeKey(selNom, f)));
+  return (
+    <div>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 4 }}>Pokémon (même famille)</div>
+      <Picker value={selNom} onChange={setSelNom} options={names} placeholder="— choisir —" buttonStyle={plainPickerStyle} />
+      {availableFormes.length > 0 ? (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 4 }}>Forme</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {availableFormes.map((f) => (
+              <button key={f || "__none__"} type="button" onClick={() => onPick(selNom, f)} style={{ ...btnGhost, fontSize: 12 }}>
+                {f || "Forme normale"}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginTop: 10 }}>
+          Toutes les formes de ce Pokémon sont déjà dans la chaîne.
+        </div>
+      )}
+    </div>
+  );
+}
+// Fenêtre "Ajouter une évolution" (§ édition manuelle de la chaîne — utile quand PokeAPI ne gère
+// pas une branche, ex. certains Méga/Gigamax ou évolutions maison) : choix du Pokémon (même
+// famille) puis méthode libre, greffé sous `parentLabel` au moment de l'enregistrement.
+function EvolutionAddChildModal({ parentLabel, familyNom, excludeKeys, onCancel, onSave }) {
+  const [picked, setPicked] = useState(null);
+  const [method, setMethod] = useState("");
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 360, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: TXT, marginBottom: 4 }}>Ajouter une évolution</div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 12 }}>Depuis {parentLabel}</div>
+        {!picked ? (
+          <EvolutionMemberPicker familyNom={familyNom} excludeKeys={excludeKeys} onPick={(nomSel, formeSel) => setPicked({ nom: nomSel, forme: formeSel })} />
+        ) : (
+          <>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, fontWeight: 600, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {picked.nom}{picked.forme ? " (" + picked.forme + ")" : ""}
+              <button type="button" onClick={() => setPicked(null)} style={{ ...btnGhost, fontSize: 11, padding: "2px 8px" }}>Changer</button>
+            </div>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 4 }}>Méthode d'évolution (facultatif)</div>
+            <input
+              value={method}
+              onChange={(e) => setMethod(e.target.value)}
+              placeholder="ex. Pierre Lune, Gigamax…"
+              style={{ ...miniInput, width: "100%", boxSizing: "border-box" }}
+            />
+          </>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+          <button onClick={onCancel} style={btnGhost}>Annuler</button>
+          <button
+            disabled={!picked}
+            onClick={() => picked && onSave({ nomSel: picked.nom, formeSel: picked.forme, method })}
+            style={{ ...tabActive, background: picked ? ACCENT : LINE, color: "#fff", opacity: picked ? 1 : 0.6, cursor: picked ? "pointer" : "not-allowed" }}
+          >Ajouter</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+// Fenêtre "Modifier ce lien" : méthode toujours éditable ; un lien natif (PokeAPI) peut être
+// masqué (jamais supprimé — voir "Liens masqués" dans EvolutionChainModal pour le réafficher),
+// un lien ajouté à la main peut lui être supprimé directement (avec sa descendance ajoutée).
+function EvolutionEditLinkModal({ parentLabel, childLabel, initialMethod, onCancel, onSave, onHide, onDelete }) {
+  const [method, setMethod] = useState(initialMethod || "");
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 360, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: TXT, marginBottom: 4 }}>Modifier ce lien</div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 12 }}>{parentLabel} → {childLabel}</div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 4 }}>Méthode d'évolution</div>
+        <input
+          value={method}
+          onChange={(e) => setMethod(e.target.value)}
+          placeholder="ex. Niveau 36, Pierre Feu…"
+          style={{ ...miniInput, width: "100%", boxSizing: "border-box" }}
+        />
+        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", flexWrap: "wrap", marginTop: 16 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            {onHide && <button onClick={onHide} style={{ ...btnGhost, color: ACCENT }}>Masquer ce lien</button>}
+            {onDelete && <button onClick={onDelete} style={{ ...btnGhost, color: ACCENT }}>Supprimer</button>}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onCancel} style={btnGhost}>Annuler</button>
+            <button onClick={() => onSave(method)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+// Un noeud de l'arbre + (récursivement) toutes ses branches en dessous. Chaque enfant affiche sa
+// propre flèche et sa propre méthode juste au-dessus de lui (§ multi-évolution : plusieurs
+// flèches partant d'un même parent, ex. Évoli). En mode édition : bouton "+" sous chaque noeud
+// pour lui greffer une évolution, crayon sur chaque lien pour le modifier.
+function EvolutionTreeNode({ node, editMode, familyNom, existingKeys, onAddChild, onEditLink }) {
+  const nodeLabel = node.nom + (node.forme ? " (" + node.forme + ")" : "");
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <EvolutionChainStageRow stage={node} />
+      {editMode && (
+        <button
+          type="button"
+          onClick={() => onAddChild(node)}
+          title={"Ajouter une évolution depuis " + nodeLabel}
+          style={{
+            fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, color: INFO,
+            background: "transparent", border: `1px dashed ${INFO}`, borderRadius: 8,
+            padding: "2px 8px", cursor: "pointer", marginTop: 4,
+          }}
+        >+ Évolution</button>
+      )}
+      {node.children && node.children.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "flex-start", gap: 16, marginTop: 6 }}>
+          {node.children.map((child) => {
+            const childLabel = child.nom + (child.forme ? " (" + child.forme + ")" : "");
+            return (
+              <div key={child.key} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "2px 0", gap: 2 }}>
+                  <span style={{ fontSize: 18, color: MUTED, lineHeight: 1 }}>↓</span>
+                  {child.methodLabel && (
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: INFO, fontWeight: 600, textAlign: "center", maxWidth: 140 }}>
+                      {child.methodLabel}
+                    </span>
+                  )}
+                  {editMode && (
+                    <button
+                      type="button"
+                      onClick={() => onEditLink(node, child)}
+                      title="Modifier ce lien"
+                      style={{
+                        fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, background: "transparent",
+                        border: `1px solid ${LINE}`, borderRadius: 6, padding: "1px 6px", cursor: "pointer",
+                      }}
+                    >✎ {childLabel}</button>
+                  )}
+                </div>
+                <EvolutionTreeNode
+                  node={child} editMode={editMode} familyNom={familyNom} existingKeys={existingKeys}
+                  onAddChild={onAddChild} onEditLink={onEditLink}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+// Fenêtre modale : arbre complet (multi-branches) de haut (forme de base) vers le bas (dernières
+// évolutions), une flèche + méthode d'évolution (PokeAPI, traduite) sous chaque parent, une par
+// enfant. Bouton "Modifier" (haut droit) : passe en mode édition, permettant d'ajouter des
+// Pokémon (même famille, § demande explicite) et de modifier/masquer les liens existants — ces
+// changements sont persistés dans `evolution_chain_overrides` (couvert par export/import
+// JSON et Excel, voir buildChainesEvoSheetRows/importChainesEvoSheet). `zIndex` volontairement
 // au-dessus des fiches de capture (BoxGroupModal/JeuMultiSourceModal, 100) pour s'empiler dessus.
 function EvolutionChainModal({ nom, forme, onClose }) {
-  const [state, setState] = useState({ loading: true, error: false, stages: null });
+  const [state, setState] = useState({ loading: true, error: false, chainId: null, nativeTree: null });
   useEffect(() => {
     let cancelled = false;
-    setState({ loading: true, error: false, stages: null });
+    setState({ loading: true, error: false, chainId: null, nativeTree: null });
     resolveEvolutionChain(nom, forme)
-      .then((stages) => { if (!cancelled) setState({ loading: false, error: false, stages }); })
-      .catch(() => { if (!cancelled) setState({ loading: false, error: true, stages: null }); });
+      .then(({ chainId, tree }) => { if (!cancelled) setState({ loading: false, error: false, chainId, nativeTree: tree }); })
+      .catch(() => { if (!cancelled) setState({ loading: false, error: true, chainId: null, nativeTree: null }); });
     return () => { cancelled = true; };
   }, [nom, forme]);
-  const displayStages = state.stages; // forme de base en haut, dernière évolution en bas
+
+  const [editMode, setEditMode] = useState(false);
+  const [allOverrides, setAllOverrides] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const v = await storageGetJSON("evolution_chain_overrides", {});
+      if (!cancelled) setAllOverrides(v || {});
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const overridesForChain = (state.chainId && allOverrides && allOverrides[state.chainId]) || { added: [], linkOverrides: {} };
+
+  const mergedTree = useMemo(() => {
+    if (!state.nativeTree) return null;
+    return applyChainOverrides(state.nativeTree, overridesForChain);
+  }, [state.nativeTree, overridesForChain]);
+
+  const existingKeys = useMemo(() => {
+    const set = new Set();
+    (function walk(n) { if (!n) return; set.add(n.key); (n.children || []).forEach(walk); })(mergedTree);
+    return set;
+  }, [mergedTree]);
+
+  const hiddenLinks = useMemo(() => {
+    const list = [];
+    Object.keys(overridesForChain.linkOverrides || {}).forEach((linkKey) => {
+      const ov = overridesForChain.linkOverrides[linkKey];
+      if (!ov || !ov.hidden) return;
+      const idx = linkKey.indexOf(">>>");
+      if (idx === -1) return;
+      const [pn, pf] = splitPokemonKey(linkKey.slice(0, idx));
+      const [cn, cf] = splitPokemonKey(linkKey.slice(idx + 3));
+      list.push({ linkKey, parentLabel: pn + (pf ? " (" + pf + ")" : ""), childLabel: cn + (cf ? " (" + cf + ")" : "") });
+    });
+    return list;
+  }, [overridesForChain]);
+
+  const persistOverridesForChain = async (nextForChain) => {
+    const current = await storageGetJSON("evolution_chain_overrides", {});
+    const next = { ...current, [state.chainId]: nextForChain };
+    setAllOverrides(next);
+    try { await window.storage.set("evolution_chain_overrides", JSON.stringify(next), false); } catch (e) {}
+  };
+
+  const [addTarget, setAddTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
+
+  const handleSaveAdd = async ({ nomSel, formeSel, method }) => {
+    const key = evoNodeKey(nomSel, formeSel);
+    const nextAdded = [...(overridesForChain.added || []), { key, nom: nomSel, forme: formeSel || null, parentKey: addTarget.key, method }];
+    await persistOverridesForChain({ ...overridesForChain, added: nextAdded });
+    setAddTarget(null);
+  };
+  const handleSaveLinkMethod = async (method) => {
+    if (editTarget.child.native) {
+      const linkKey = editTarget.parent.key + ">>>" + editTarget.child.key;
+      const prevOv = (overridesForChain.linkOverrides || {})[linkKey];
+      const nextLinkOverrides = { ...(overridesForChain.linkOverrides || {}), [linkKey]: { ...prevOv, method, hidden: false } };
+      await persistOverridesForChain({ ...overridesForChain, linkOverrides: nextLinkOverrides });
+    } else {
+      const nextAdded = (overridesForChain.added || []).map((a) => (a.key === editTarget.child.key ? { ...a, method } : a));
+      await persistOverridesForChain({ ...overridesForChain, added: nextAdded });
+    }
+    setEditTarget(null);
+  };
+  const handleHideLink = async () => {
+    const linkKey = editTarget.parent.key + ">>>" + editTarget.child.key;
+    const prevOv = (overridesForChain.linkOverrides || {})[linkKey];
+    const nextLinkOverrides = { ...(overridesForChain.linkOverrides || {}), [linkKey]: { ...prevOv, hidden: true } };
+    await persistOverridesForChain({ ...overridesForChain, linkOverrides: nextLinkOverrides });
+    setEditTarget(null);
+  };
+  const handleDeleteAdded = async () => {
+    const removeKeys = new Set([editTarget.child.key]);
+    const addedList = overridesForChain.added || [];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      addedList.forEach((a) => {
+        if (removeKeys.has(a.parentKey) && !removeKeys.has(a.key)) { removeKeys.add(a.key); changed = true; }
+      });
+    }
+    const nextAdded = addedList.filter((a) => !removeKeys.has(a.key));
+    await persistOverridesForChain({ ...overridesForChain, added: nextAdded });
+    setEditTarget(null);
+  };
+  const handleUnhide = async (linkKey) => {
+    const prevOv = (overridesForChain.linkOverrides || {})[linkKey];
+    const nextLinkOverrides = { ...(overridesForChain.linkOverrides || {}), [linkKey]: { ...prevOv, hidden: false } };
+    await persistOverridesForChain({ ...overridesForChain, linkOverrides: nextLinkOverrides });
+  };
+
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
@@ -2218,11 +2549,24 @@ function EvolutionChainModal({ nom, forme, onClose }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 380, width: "100%", maxHeight: "85vh", overflowY: "auto" }}
+        style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 440, width: "100%", maxHeight: "85vh", overflowY: "auto" }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8 }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>Chaîne d'évolution</div>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", color: MUTED, fontSize: 22, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            {!state.loading && !state.error && (
+              <button
+                type="button"
+                onClick={() => setEditMode((v) => !v)}
+                style={{
+                  fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: editMode ? "#fff" : INFO,
+                  background: editMode ? INFO : "transparent", border: `1px solid ${INFO}`, borderRadius: 8,
+                  padding: "4px 10px", cursor: "pointer",
+                }}
+              >{editMode ? "Terminé" : "Modifier"}</button>
+            )}
+            <button onClick={onClose} style={{ background: "transparent", border: "none", color: MUTED, fontSize: 22, cursor: "pointer", lineHeight: 1, padding: 0 }}>×</button>
+          </div>
         </div>
         {state.loading && (
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED, textAlign: "center", padding: "24px 0" }}>Chargement…</div>
@@ -2232,26 +2576,45 @@ function EvolutionChainModal({ nom, forme, onClose }) {
             Chaîne d'évolution indisponible pour ce Pokémon.
           </div>
         )}
-        {!state.loading && !state.error && displayStages && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-            {displayStages.map((stage, i) => (
-              <React.Fragment key={stage.nat + "|" + (stage.forme || "") + "|" + i}>
-                <EvolutionChainStageRow stage={stage} />
-                {i < displayStages.length - 1 && (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "4px 0" }}>
-                    <span style={{ fontSize: 20, color: MUTED, lineHeight: 1 }}>↓</span>
-                    {displayStages[i + 1].methodLabel && (
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: INFO, fontWeight: 600, textAlign: "center", maxWidth: 260 }}>
-                        {displayStages[i + 1].methodLabel}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </React.Fragment>
+        {!state.loading && !state.error && mergedTree && (
+          <EvolutionTreeNode
+            node={mergedTree} editMode={editMode} familyNom={nom} existingKeys={existingKeys}
+            onAddChild={(parentNode) => setAddTarget(parentNode)}
+            onEditLink={(parentNode, childNode) => setEditTarget({ parent: parentNode, child: childNode })}
+          />
+        )}
+        {editMode && hiddenLinks.length > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, marginBottom: 6 }}>Liens masqués</div>
+            {hiddenLinks.map((h) => (
+              <div key={h.linkKey} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT }}>{h.parentLabel} → {h.childLabel}</span>
+                <button onClick={() => handleUnhide(h.linkKey)} style={{ ...btnGhost, fontSize: 11, padding: "2px 8px", flexShrink: 0 }}>Réafficher</button>
+              </div>
             ))}
           </div>
         )}
       </div>
+      {addTarget && (
+        <EvolutionAddChildModal
+          parentLabel={addTarget.nom + (addTarget.forme ? " (" + addTarget.forme + ")" : "")}
+          familyNom={nom}
+          excludeKeys={existingKeys}
+          onCancel={() => setAddTarget(null)}
+          onSave={handleSaveAdd}
+        />
+      )}
+      {editTarget && (
+        <EvolutionEditLinkModal
+          parentLabel={editTarget.parent.nom + (editTarget.parent.forme ? " (" + editTarget.parent.forme + ")" : "")}
+          childLabel={editTarget.child.nom + (editTarget.child.forme ? " (" + editTarget.child.forme + ")" : "")}
+          initialMethod={editTarget.child.methodLabel || ""}
+          onCancel={() => setEditTarget(null)}
+          onSave={handleSaveLinkMethod}
+          onHide={editTarget.child.native ? handleHideLink : null}
+          onDelete={!editTarget.child.native ? handleDeleteAdded : null}
+        />
+      )}
     </div>
   );
 }
@@ -12541,6 +12904,7 @@ const EXCEL_SHEETS = [
   { key: "boitesgroupes", label: "Groupe de boîte" },
   { key: "dispo", label: "Disponibilité" },
   { key: "go1", label: "Go 1" },
+  { key: "chainesevo", label: "Chaînes évolution" },
   ...GAME_ORDER.map((g) => ({ key: "game_" + g, label: g })),
 ];
 
@@ -13134,6 +13498,68 @@ async function importGo2Sheet(rows, mode) {
   await window.storage.set("go2", JSON.stringify({ caught, excluded }), false);
 }
 
+// Chaînes d'évolution personnalisées (ajouts manuels + overrides de lien, § édition manuelle de
+// la chaîne — PokeAPI ne modélise pas de façon fiable certaines branches Méga/Gigamax, ni les
+// corrections ponctuelles de méthode) — une ligne par ajout ou par override de lien, `ChainId`
+// = identifiant de chaîne PokeAPI (stable, indépendant du Pokémon utilisé pour ouvrir la fenêtre).
+async function buildChainesEvoSheetRows() {
+  const all = await storageGetJSON("evolution_chain_overrides", {});
+  const rows = [];
+  Object.keys(all).forEach((chainId) => {
+    const entry = all[chainId] || {};
+    (entry.added || []).forEach((a) => {
+      const [pn, pf] = splitPokemonKey(a.parentKey || "");
+      rows.push({
+        ChainId: chainId, Type: "Ajout",
+        ParentNom: pn, ParentForme: excelForme(pf),
+        Nom: a.nom, Forme: excelForme(a.forme),
+        Methode: a.method || "", Masque: 0,
+      });
+    });
+    Object.keys(entry.linkOverrides || {}).forEach((linkKey) => {
+      const idx = linkKey.indexOf(">>>");
+      if (idx === -1) return;
+      const [pn, pf] = splitPokemonKey(linkKey.slice(0, idx));
+      const [cn, cf] = splitPokemonKey(linkKey.slice(idx + 3));
+      const ov = entry.linkOverrides[linkKey];
+      rows.push({
+        ChainId: chainId, Type: "Lien",
+        ParentNom: pn, ParentForme: excelForme(pf),
+        Nom: cn, Forme: excelForme(cf),
+        Methode: ov.method || "", Masque: ov.hidden ? 1 : 0,
+      });
+    });
+  });
+  return rows;
+}
+// Import symétrique — une chaîne entière (toutes ses lignes "Ajout"/"Lien" dans le fichier)
+// remplace intégralement ses overrides existants, que le mode soit "add" ou "replace" (une
+// chaîne est un tout cohérent : fusionner ligne à ligne risquerait des doublons d'ajout ou des
+// overrides de lien incohérents) ; les chaînes absentes du fichier restent inchangées en mode
+// "add", toutes supprimées en mode "replace".
+async function importChainesEvoSheet(rows, mode) {
+  const built = {};
+  rows.forEach((row) => {
+    const chainId = String(row.ChainId || "").trim();
+    const nom = String(row.Nom || "").trim();
+    if (!chainId || !nom) return;
+    const forme = excelParseForme(row.Forme);
+    const parentKey = String(row.ParentNom || "").trim() + "|" + excelParseForme(row.ParentForme);
+    const childKey = nom + "|" + forme;
+    if (!built[chainId]) built[chainId] = { added: [], linkOverrides: {} };
+    if (String(row.Type || "").trim() === "Ajout") {
+      built[chainId].added.push({ key: childKey, nom, forme: forme || null, parentKey, method: String(row.Methode || "") });
+    } else {
+      built[chainId].linkOverrides[parentKey + ">>>" + childKey] = {
+        method: String(row.Methode || ""), hidden: !!Number(row.Masque),
+      };
+    }
+  });
+  const current = mode === "replace" ? {} : await storageGetJSON("evolution_chain_overrides", {});
+  const next = { ...current, ...built };
+  await window.storage.set("evolution_chain_overrides", JSON.stringify(next), false);
+}
+
 async function buildExcelWorkbook(selectedKeys) {
   const wb = XLSX.utils.book_new();
   for (const sheetDef of EXCEL_SHEETS) {
@@ -13152,6 +13578,7 @@ async function buildExcelWorkbook(selectedKeys) {
     else if (sheetDef.key === "boitesgroupes") rows = await buildBoitesGroupesSheetRows();
     else if (sheetDef.key === "dispo") rows = await buildDispoSheetRows();
     else if (sheetDef.key === "go1") rows = await buildGo1SheetRows();
+    else if (sheetDef.key === "chainesevo") rows = await buildChainesEvoSheetRows();
     else if (sheetDef.key.startsWith("game_")) rows = await buildGameSheetRows(sheetDef.key.slice(5));
     if (!rows || !rows.length) rows = [{ Nom: "", Forme: "" }];
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -13735,6 +14162,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     else if (sheetName === "Groupe de boîte") { await importBoitesGroupesSheet(rows, mode); touched++; }
     else if (sheetName === "Disponibilité") { await importDispoSheet(rows, mode); touched++; }
     else if (sheetName === "Go 1") { await importGo1Sheet(rows, mode); touched++; }
+    else if (sheetName === "Chaînes évolution") { await importChainesEvoSheet(rows, mode); touched++; }
   }
   return touched;
 }
@@ -15977,6 +16405,7 @@ function App() {
     "parfait_search_suffix",
     "go2",
     "go2_search_suffix",
+    "evolution_chain_overrides",
   ];
 
   const buildExportOut = async () => {
