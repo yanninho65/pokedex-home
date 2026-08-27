@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.26.21.05";
+const APP_VERSION = "2026.8.27.8.25";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1956,25 +1956,43 @@ function formatEvolution(raw) {
 //   affichés en branche latérale avec un libellé purement local (pas PokeAPI).
 const EVOLUTION_CHAIN_CACHE = {}; // "nat|regionTag" -> arbre natif PokeAPI déjà résolu (session uniquement)
 
+// § correctif (chaîne de Pikachu "bizarre") : `includes` faisait matcher à tort les casquettes
+// cosmétiques comme "Casquette d'Alola" (Pikachu) — une casquette THÉMATISÉE autour d'une région,
+// pas une vraie forme régionale — la faisant passer pour la forme "de départ" lors de la
+// résolution de la chaîne. Une vraie forme régionale commence TOUJOURS par le nom de la région
+// (ex. "Alola", "Alola non dominant", "Galar") ; `startsWith` élimine ce faux positif sans
+// affecter aucune vraie forme régionale du catalogue.
 function regionTagOf(forme) {
   if (!forme) return null;
   const f = String(forme).toLowerCase();
   for (const r of ["alola", "galar", "hisui", "paldea"]) {
-    if (f.includes(r)) return r;
+    if (f.startsWith(r)) return r;
   }
   return null;
 }
+// § correctif majeur : "Non méga" / "Non Gmax" / "Non Gmax non méga" désignent la forme DE BASE
+// (ex. Alakazam "Non méga", Dracaufeu "Non Gmax non méga", Ronflex "Non Gmax", Miaouss "Kanto non
+// Gmax") — très répandu dans ce catalogue. Un simple `includes("méga"/"gmax")` les traitait à tort
+// comme des formes méga/Gmax : la forme de base disparaissait de `localFormsForNat` (chaîne
+// tombant sur une variante cosmétique au hasard, ex. Pikachu affichant une casquette au lieu de
+// "Non Gmax") et se retrouvait aussi affichée comme "extra" méga/Gmax à côté d'autres formes
+// (ex. Miaouss "Kanto non Gmax" proposé comme un faux méga à côté de Miaouss "Alola" — "toutes les
+// formes au lieu du méga seulement"). On retire donc d'abord les négations "non méga"/"non gmax"
+// avant de chercher le mot.
 function isMegaOrGmaxForme(forme) {
   if (!forme) return false;
-  const f = String(forme).toLowerCase();
+  const f = String(forme).toLowerCase().replace(/non\s+m[ée]ga/g, "").replace(/non\s+gmax/g, "");
   return f.includes("méga") || f.includes("mega") || f.includes("gmax");
 }
 function localFormsForNat(nat) {
   return NAT_ALL_FORMS.filter((f) => f.n === nat && !isMegaOrGmaxForme(f.forme));
 }
 // Forme locale à afficher pour un numéro national + une région cible (ou null = par défaut) :
-// correspondance régionale exacte en priorité, sinon une forme sans étiquette régionale connue,
-// sinon la première forme disponible. Retourne null si le Pokémon n'est pas dans le catalogue.
+// correspondance régionale exacte en priorité, sinon une forme "de base" reconnaissable (libellé
+// contenant "non", ex. "Non Gmax", "Non méga", "Kanto non méga" — évite qu'un Pokémon à
+// nombreuses formes cosmétiques non régionales, ex. les casquettes de Pikachu, tombe au hasard sur
+// l'une d'elles selon l'ordre du catalogue), sinon la première forme disponible. Retourne null si
+// le Pokémon n'est pas dans le catalogue.
 function pickLocalForm(nat, regionTag) {
   const forms = localFormsForNat(nat);
   if (forms.length === 0) return null;
@@ -1982,7 +2000,12 @@ function pickLocalForm(nat, regionTag) {
     const match = forms.find((f) => regionTagOf(f.forme) === regionTag);
     if (match) return match;
   }
-  return forms.find((f) => !regionTagOf(f.forme)) || forms[0];
+  const nonRegional = forms.filter((f) => !regionTagOf(f.forme));
+  if (nonRegional.length === 0) return forms[0];
+  const noForme = nonRegional.find((f) => !f.forme);
+  if (noForme) return noForme;
+  const looksBase = nonRegional.find((f) => /\bnon\b/i.test(String(f.forme || "")));
+  return looksBase || nonRegional[0];
 }
 function pokeApiIdFromUrl(url) {
   const m = String(url || "").match(/\/(\d+)\/?$/);
@@ -2120,27 +2143,39 @@ function evoNodeKey(nom, forme) { return nom + "|" + (forme || ""); }
 // voir applyChainOverrides) à partir d'un noeud `evolution-chain`. `isRoot` : pas de méthode
 // d'évolution affichée (rien avant la forme de base). Toutes les branches d'un même embranchement
 // sont conservées (§ multi-évolution), pas une seule choisie arbitrairement.
+// § demande explicite : Méga-évolution / Gigantamax sont traités comme une évolution à part
+// entière (flèche + méthode "Méga-évolution"/"Gigantamax" vers le Pokémon, comme n'importe quel
+// autre enfant) — plus une simple pastille à côté sans lien. Détectés localement (absents de
+// /evolution-chain), jamais plus loin qu'un seul niveau (pas de "children" sous un méga/Gmax).
 async function buildNativeEvolutionTree(node, regionTag, isRoot) {
   const id = pokeApiIdFromUrl(node.species.url);
   const localForm = pickLocalForm(id, regionTag);
   const methodLabel = isRoot ? null : translateEvolutionDetails(node.evolution_details);
-  const extra = localForm
-    ? NAT_ALL_FORMS.filter((f) => f.nom === localForm.nom && f.forme !== localForm.forme && isMegaOrGmaxForme(f.forme))
-    : [];
   const nom = localForm ? localForm.nom : await fetchFrenchSpeciesName(node.species.url, node.species.name);
   const forme = localForm ? localForm.forme : null;
+  const megaGmaxChildren = localForm
+    ? NAT_ALL_FORMS
+        .filter((f) => f.nom === localForm.nom && f.forme !== localForm.forme && isMegaOrGmaxForme(f.forme))
+        .map((f) => {
+          const badge = f.forme && f.forme.toLowerCase().includes("gmax") ? "Gigantamax" : "Méga-évolution";
+          return {
+            key: f.key, nat: id, nom: f.nom, forme: f.forme, isFallback: false,
+            badge, methodLabel: badge, native: true, children: [],
+          };
+        })
+    : [];
   const rawChildren = childrenToShow(node.evolves_to, regionTag);
-  const children = await Promise.all(rawChildren.map((c) => buildNativeEvolutionTree(c, regionTag, false)));
+  const evoChildren = await Promise.all(rawChildren.map((c) => buildNativeEvolutionTree(c, regionTag, false)));
   return {
     key: evoNodeKey(nom, forme),
     nat: id,
     nom,
     forme,
     isFallback: !localForm,
-    extra,
+    badge: null,
     methodLabel,
     native: true,
-    children,
+    children: [...evoChildren, ...megaGmaxChildren],
   };
 }
 async function resolveEvolutionChain(nom, forme) {
@@ -2169,8 +2204,11 @@ async function resolveEvolutionChain(nom, forme) {
 
 // Fusionne les ajouts manuels et les overrides de lien (stockage `evolution_chain_overrides`,
 // § édition manuelle de la chaîne) par-dessus l'arbre natif PokeAPI :
-// - un lien natif masqué (`hidden`) retire toute la branche (et sa descendance) de l'affichage ;
-// - un lien natif avec une méthode surchargée affiche ce texte à la place de celui de PokeAPI ;
+// - un lien natif masqué (`hidden`) retire toute la branche (et sa descendance) de l'affichage —
+//   s'applique aussi bien à une vraie évolution qu'à un lien Méga/Gmax (§ demande explicite :
+//   traités comme des évolutions à part entière, donc masquables/modifiables exactement pareil) ;
+// - un lien natif avec une méthode surchargée affiche ce texte à la place de celui de PokeAPI
+//   (ou du libellé "Méga-évolution"/"Gigantamax" par défaut) ;
 // - chaque entrée `added` est greffée sous son `parentKey` — rattachement répété jusqu'à
 //   stabilité pour qu'un ajout puisse lui-même servir de parent à un autre ajout, quel que soit
 //   leur ordre dans le tableau. Un ajout dont le parent reste introuvable (branche masquée,
@@ -2206,10 +2244,9 @@ function applyChainOverrides(nativeTree, overridesForChain) {
       const parent = byKey[a.parentKey];
       if (!parent) return true;
       const natOfAdd = nationalDexIdFor(a.nom, a.forme);
-      const extra = NAT_ALL_FORMS.filter((f) => f.nom === a.nom && f.forme !== (a.forme || null) && isMegaOrGmaxForme(f.forme));
       const node = {
         key: a.key, nat: typeof natOfAdd === "number" ? natOfAdd : null, nom: a.nom, forme: a.forme || null,
-        isFallback: false, extra, methodLabel: a.method || "Ajout manuel", native: false,
+        isFallback: false, badge: null, methodLabel: a.method || "Ajout manuel", native: false,
         linkKey: a.parentKey + ">>>" + a.key, children: [],
       };
       if (!parent.children) parent.children = [];
@@ -2247,20 +2284,6 @@ function EvolutionChainStageBox({ nom, forme, nat, isFallback, size = 68, badge 
       {badge && (
         <div style={{ fontFamily: "Inter, sans-serif", fontSize: 8.5, color: INFO, fontWeight: 700, textAlign: "center" }}>{badge}</div>
       )}
-    </div>
-  );
-}
-function EvolutionChainStageRow({ stage }) {
-  return (
-    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "center", gap: 10, flexWrap: "wrap" }}>
-      <EvolutionChainStageBox nom={stage.nom} forme={stage.forme} nat={stage.nat} isFallback={stage.isFallback} size={68} />
-      {(stage.extra || []).map((ex) => (
-        <EvolutionChainStageBox
-          key={ex.key}
-          nom={ex.nom} forme={ex.forme} nat={stage.nat} size={52}
-          badge={ex.forme && ex.forme.toLowerCase().includes("gmax") ? "Gigantamax" : "Méga-évolution"}
-        />
-      ))}
     </div>
   );
 }
@@ -2381,7 +2404,7 @@ function EvolutionTreeNode({ node, editMode, familyNom, existingKeys, onAddChild
   const nodeLabel = node.nom + (node.forme ? " (" + node.forme + ")" : "");
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <EvolutionChainStageRow stage={node} />
+      <EvolutionChainStageBox nom={node.nom} forme={node.forme} nat={node.nat} isFallback={node.isFallback} badge={node.badge} size={68} />
       {editMode && (
         <button
           type="button"
@@ -2467,9 +2490,16 @@ function EvolutionChainModal({ nom, forme, onClose }) {
     return applyChainOverrides(state.nativeTree, overridesForChain);
   }, [state.nativeTree, overridesForChain]);
 
+  // Méga/Gmax sont maintenant des enfants normaux de l'arbre (§ demande explicite : flèche +
+  // évolution à part entière), donc déjà couverts par le parcours de `children` ci-dessous — pas
+  // de traitement séparé nécessaire pour éviter de les reproposer dans "+ Évolution".
   const existingKeys = useMemo(() => {
     const set = new Set();
-    (function walk(n) { if (!n) return; set.add(n.key); (n.children || []).forEach(walk); })(mergedTree);
+    (function walk(n) {
+      if (!n) return;
+      set.add(n.key);
+      (n.children || []).forEach(walk);
+    })(mergedTree);
     return set;
   }, [mergedTree]);
 
@@ -13547,11 +13577,14 @@ async function importChainesEvoSheet(rows, mode) {
     const parentKey = String(row.ParentNom || "").trim() + "|" + excelParseForme(row.ParentForme);
     const childKey = nom + "|" + forme;
     if (!built[chainId]) built[chainId] = { added: [], linkOverrides: {} };
-    if (String(row.Type || "").trim() === "Ajout") {
+    const type = String(row.Type || "").trim();
+    if (type === "Ajout") {
       built[chainId].added.push({ key: childKey, nom, forme: forme || null, parentKey, method: String(row.Methode || "") });
     } else {
+      // "Masque" : compatibilité avec un fichier exporté avant que Méga/Gmax deviennent des
+      // liens normaux — équivaut désormais à un lien masqué classique.
       built[chainId].linkOverrides[parentKey + ">>>" + childKey] = {
-        method: String(row.Methode || ""), hidden: !!Number(row.Masque),
+        method: String(row.Methode || ""), hidden: type === "Masque" ? true : !!Number(row.Masque),
       };
     }
   });
