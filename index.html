@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.27.8.25";
+const APP_VERSION = "2026.8.28.23.0";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -3238,6 +3238,71 @@ function useWindowWidth() {
   return width;
 }
 
+// Navigation clavier (←/→) + swipe tactile horizontal entre FICHES POKÉMON DIFFÉRENTES de la
+// liste actuellement affichée (§ demande explicite : National/Shiny/Home) — distincte de toute
+// navigation existante ENTRE FORMES/CAPTURES d'un même Pokémon (ex. cardPos de National/Shiny),
+// qui reste pilotée séparément (boutons dédiés, sans clavier ni swipe, pour éviter toute
+// ambiguïté avec ce nouveau mécanisme). `active` : fiche actuellement ouverte (sinon rien
+// n'est attaché). `onPrev`/`onNext` : no-op silencieux en bout de liste (géré par l'appelant).
+// Retourne les handlers tactiles à poser sur le conteneur de la fiche.
+function useCardSwipeNav(active, onPrev, onNext) {
+  const touchRef = useRef(null);
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e) => {
+      // Ignore les flèches si le focus est dans un champ de saisie (input date, recherche…) —
+      // sinon la navigation entre fiches interfère avec la navigation normale au clavier dans
+      // ces champs (ex. jours/mois/années d'un <input type="date">).
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowRight") onNext();
+      else if (e.key === "ArrowLeft") onPrev();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, onPrev, onNext]);
+  const onTouchStart = (e) => {
+    const t = e.touches && e.touches[0];
+    touchRef.current = t ? { x: t.clientX, y: t.clientY } : null;
+  };
+  const onTouchEnd = (e) => {
+    const start = touchRef.current;
+    touchRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // Seuil de 40px + mouvement principalement horizontal, pour ne pas interférer avec le
+    // scroll vertical normal de la page ni déclencher sur un simple tap.
+    if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) onNext(); else onPrev();
+  };
+  return { onTouchStart, onTouchEnd };
+}
+
+// Flèches flottantes (fixées en bas de l'écran, gauche/droite) pour naviguer entre fiches
+// Pokémon — rendu au-dessus de toute modale (zIndex 105 > 100). Visuellement distinctes des
+// éventuels boutons "← Précédent/Suivant →" internes à une fiche (qui gèrent un autre
+// mécanisme, voir useCardSwipeNav) : icônes seules, ancrées aux bords plutôt que centrées.
+function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext }) {
+  if (!hasPrev && !hasNext) return null;
+  const btnStyle = (enabled) => ({
+    position: "fixed", bottom: 92, zIndex: 105,
+    background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
+    color: "#fff", border: GLASS_BORDER, borderRadius: 999,
+    width: 46, height: 46, display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 20, lineHeight: 1, cursor: enabled ? "pointer" : "default", opacity: enabled ? 1 : 0.3,
+    boxShadow: GLASS_SHADOW,
+  });
+  return (
+    <React.Fragment>
+      <button onClick={onPrev} disabled={!hasPrev} aria-label="Pokémon précédent" style={{ ...btnStyle(hasPrev), left: 16 }}>‹</button>
+      <button onClick={onNext} disabled={!hasNext} aria-label="Pokémon suivant" style={{ ...btnStyle(hasNext), right: 16 }}>›</button>
+    </React.Fragment>
+  );
+}
+
 // Persiste une valeur de state dans un cache partagé (ref vivant dans App, indépendant du
 // montage/démontage des composants) au lieu du localStorage — léger et volatile (perdu à la
 // fermeture de l'onglet navigateur), juste utile pour restaurer filtres/recherche quand on
@@ -3640,7 +3705,7 @@ function NumeroGroupeRow({ showNumber = true, numero, setNumero, numberPlacehold
     </div>
   );
 }
-function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave }) {
+function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave, navIndex, navTotal, onNavPrev, onNavNext }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
@@ -3648,10 +3713,15 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   const [showEvoChain, setShowEvoChain] = useState(false);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
   const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
+  const hasNav = navTotal != null && navTotal > 1;
+  const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div {...(hasNav ? swipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+      {hasNav && (
+        <FloatingCardNav onPrev={onNavPrev} onNext={onNavNext} hasPrev={navIndex > 0} hasNext={navIndex < navTotal - 1} />
+      )}
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
         <div style={{
           display: "flex", justifyContent: "center", alignItems: "center",
           background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
@@ -3674,7 +3744,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
             {lien && (
               <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-                Voir sur Poképédia ↗
+                Poképédia ↗
               </a>
             )}
             {evoLabel && (
@@ -3887,8 +3957,29 @@ function PairModeBlock({
         // de la marque) — c'est lui qu'affiche déjà la liste via boxInfo, donc la fiche doit
         // montrer la même valeur plutôt que systématiquement celle de la marque.
         const currentGroupEffective = rowIdx !== -1 ? ((boxInfo[rowIdx] && boxInfo[rowIdx].groupe) || "") : "";
+        // § demande explicite : dans une vue précise (ex. Saphir Alpha), la section "Disponible
+        // dans" ne montre que les jeux de CETTE paire/triple + Home — jamais les autres vues de
+        // la marque (ex. X/Y n'apparaissent pas ici) — contrairement à Home/Home + jeu qui
+        // gardent l'union de toutes les vues (marqueGames, inchangé).
+        const pairGamesWithHome = (pair.jeuKeys && pair.jeuKeys.length > 0)
+          ? [{ key: "home", label: "Home" }, ...pair.jeuKeys.map((k) => {
+              const def = JEU_VIDEO_DEFS.find((d) => d.key === k);
+              return { key: k, label: (def && def.label) || k };
+            })]
+          : marqueGames;
+        // Navigation entre fiches Pokémon (§ demande explicite) : au sein de la liste filtrée de
+        // CETTE vue, dans l'ordre affiché (sortOrder déjà appliqué par `filtered`).
+        const navIdx = filtered.findIndex((r) => boxGroupKeyFor(r.nom, r.forme) === multiDetailKey);
+        const goNav = (delta) => {
+          if (navIdx === -1) return;
+          const newIdx = navIdx + delta;
+          if (newIdx < 0 || newIdx >= filtered.length) return;
+          const item = filtered[newIdx];
+          setMultiDetailKey(boxGroupKeyFor(item.nom, item.forme));
+        };
         return (
           <BoxGroupModal
+            key={multiDetailKey}
             nom={nom}
             forme={forme}
             marque={gameKey}
@@ -3896,11 +3987,15 @@ function PairModeBlock({
             options={boxGroupOptions}
             currentJeu={(jeuOverrides && jeuOverrides[multiDetailKey]) || ""}
             jeuOptions={jeuOptionsForGame}
-            marqueGames={marqueGames}
+            marqueGames={pairGamesWithHome}
             onAvailabilityChanged={onAvailabilityChanged}
             showNumber
             currentNumber={numberOverrides && numberOverrides[multiDetailKey]}
             numberPlaceholder={marqueNumber}
+            navIndex={navIdx}
+            navTotal={filtered.length}
+            onNavPrev={() => goNav(-1)}
+            onNavNext={() => goNav(1)}
             onCancel={() => setMultiDetailKey(null)}
             onSave={(group, jeu, numero) => {
               setViewBoxGroup(multiDetailKey, group);
@@ -4945,8 +5040,17 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           onSave={(newSize, newPrefix) => { saveBoxSettings(newSize, newPrefix); setBoxSettingsOpen(false); }}
         />
       )}
-      {groupEditTarget !== null && (
+      {groupEditTarget !== null && (() => {
+        const homeNavIdx = filtered.findIndex((r) => r.i === groupEditTarget);
+        const goHomeNav = (delta) => {
+          if (homeNavIdx === -1) return;
+          const newIdx = homeNavIdx + delta;
+          if (newIdx < 0 || newIdx >= filtered.length) return;
+          setGroupEditTarget(filtered[newIdx].i);
+        };
+        return (
         <BoxGroupModal
+          key={groupEditTarget}
           nom={rows[groupEditTarget][1]}
           forme={rows[groupEditTarget][2]}
           marque={gameKey}
@@ -4960,6 +5064,10 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           showNumber
           currentNumber={numberOverridesHome && numberOverridesHome[boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2])]}
           numberPlaceholder={rows[groupEditTarget][0]}
+          navIndex={homeNavIdx}
+          navTotal={filtered.length}
+          onNavPrev={() => goHomeNav(-1)}
+          onNavNext={() => goHomeNav(1)}
           onCancel={() => setGroupEditTarget(null)}
           onSave={(v, jeuVal, numero) => {
             const k = boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2]);
@@ -4969,14 +5077,24 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             setGroupEditTarget(null);
           }}
         />
-      )}
+        );
+      })()}
 
       {multiDetailKey !== null && (() => {
         const sep = multiDetailKey.indexOf("|");
         const nom = sep === -1 ? multiDetailKey : multiDetailKey.slice(0, sep);
         const forme = sep === -1 ? null : (multiDetailKey.slice(sep + 1) || null);
+        const jeuNavIdx = filtered.findIndex((r) => boxGroupKeyFor(r.nom, r.forme) === multiDetailKey);
+        const goJeuNav = (delta) => {
+          if (jeuNavIdx === -1) return;
+          const newIdx = jeuNavIdx + delta;
+          if (newIdx < 0 || newIdx >= filtered.length) return;
+          const item = filtered[newIdx];
+          setMultiDetailKey(boxGroupKeyFor(item.nom, item.forme));
+        };
         return (
           <JeuMultiSourceModal
+            key={multiDetailKey}
             nom={nom}
             forme={forme}
             marque={gameKey}
@@ -4998,6 +5116,10 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
               const idx = rows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
               return idx !== -1 ? rows[idx][0] : null;
             })()}
+            navIndex={jeuNavIdx}
+            navTotal={filtered.length}
+            onNavPrev={() => goJeuNav(-1)}
+            onNavNext={() => goJeuNav(1)}
             onCancel={() => setMultiDetailKey(null)}
             onSave={({ group, jeu, home, gameKeys, numero }) => {
               const idx = rows.findIndex((rr) => boxGroupKeyFor(rr[1], rr[2]) === multiDetailKey);
@@ -5944,6 +6066,18 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     persist(next);
   };
 
+  // Navigation entre fiches POKÉMON DIFFÉRENTES (§ demande explicite), au sein de la liste
+  // actuellement affichée (filtered) — distincte de la navigation "Précédent/Suivant" ci-dessus
+  // entre CAPTURES d'un même Pokémon (cardPos), qui reste pilotée séparément (clic uniquement).
+  const shinyNavIdx = selected ? filtered.findIndex((r) => r.key === selected) : -1;
+  const goShinyNav = (delta) => {
+    if (shinyNavIdx === -1) return;
+    const newIdx = shinyNavIdx + delta;
+    if (newIdx < 0 || newIdx >= filtered.length) return;
+    openEntry(filtered[newIdx].key);
+  };
+  const shinySwipeHandlers = useCardSwipeNav(!!selected && filtered.length > 1, () => goShinyNav(-1), () => goShinyNav(1));
+
   if (!ready || !catches) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
 
   const selectedEntry = selected ? catalog.find((r) => keyOf(r[1], r[2]) === selected) : null;
@@ -5990,32 +6124,45 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         cardTotalRef.current = rowsToShow.length;
         const cp = Math.min(cardPos, rowsToShow.length - 1);
         const current = rowsToShow[cp];
+        const hasShinyNav = filtered.length > 1;
         return (
-        <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
-          <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <FloatingBackButton onClick={closeEntry} />
-            <CatalogQuickEditButton nom={selectedEntry[1]} forme={selectedEntry[2]} corner />
-            <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                <Sprite nom={selectedEntry[1]} forme={selectedEntry[2]} size={56} shiny />
-                <div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 17, color: TXT }}>
-                    {selectedEntry[1]}{selectedEntry[2] ? <span style={{ color: MUTED, fontWeight: 400 }}> · {selectedEntry[2]}</span> : null}
-                  </div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                    {showingAll ? `${allRecs.length} capture(s) enregistrée(s)` : `1 capture affichée sur ${allRecs.length}`}
-                  </div>
-                  {(() => {
-                    const lien = natInfoFor(selectedEntry[1], selectedEntry[2]).lien;
-                    if (!lien) return null;
-                    return (
-                      <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-                        Voir sur Poképédia ↗
-                      </a>
-                    );
-                  })()}
+        <div {...(hasShinyNav ? shinySwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+          {hasShinyNav && (
+            <FloatingCardNav onPrev={() => goShinyNav(-1)} onNext={() => goShinyNav(1)} hasPrev={shinyNavIdx > 0} hasNext={shinyNavIdx < filtered.length - 1} />
+          )}
+          <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+              <button onClick={closeEntry} title="Fermer" style={{ background: "transparent", border: "none", color: MUTED, fontSize: 20, lineHeight: 1, cursor: "pointer", padding: 4 }}>×</button>
+            </div>
+            <div style={{
+              display: "flex", justifyContent: "center", alignItems: "center",
+              background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
+              padding: 14, marginBottom: 10,
+            }}>
+              <Sprite nom={selectedEntry[1]} forme={selectedEntry[2]} size={96} shiny />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
+                  {selectedEntry[1]}{selectedEntry[2] ? <span style={{ color: MUTED, fontWeight: 400 }}> · {selectedEntry[2]}</span> : null}
+                </div>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
+                  {showingAll ? `${allRecs.length} capture(s) enregistrée(s)` : `1 capture affichée sur ${allRecs.length}`}
                 </div>
               </div>
+              <CatalogQuickEditButton nom={selectedEntry[1]} forme={selectedEntry[2]} label />
+            </div>
+            {(() => {
+              const lien = natInfoFor(selectedEntry[1], selectedEntry[2]).lien;
+              if (!lien) return null;
+              return (
+                <div style={{ marginBottom: 10 }}>
+                  <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+                    Poképédia ↗
+                  </a>
+                </div>
+              );
+            })()}
 
               {canToggle && (
                 <button
@@ -6187,13 +6334,12 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
               onClick={() => addCatch(selected)}
               title="Ajouter une capture"
               style={{
-                position: "fixed", bottom: 78, right: 16, zIndex: 55,
+                position: "fixed", bottom: 92, left: "50%", transform: "translateX(-50%)", zIndex: 106,
                 background: GOLD, color: BG, border: "none", borderRadius: 999,
                 padding: "13px 20px", fontFamily: "Inter, sans-serif", fontSize: 13.5, fontWeight: 800,
                 cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
               }}
             >+ Capture</button>
-          </div>
         </div>
         );
       })()}
@@ -9154,7 +9300,7 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
                 href={`https://www.pokepedia.fr/${encodeURIComponent(draft.nom.replace(/ /g, "_"))}`}
                 target="_blank" rel="noopener noreferrer"
                 style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT, textDecoration: "none" }}
-              >Voir sur Poképédia ↗</a>
+              >Poképédia ↗</a>
             </div>
           </React.Fragment>
         )}
@@ -11017,21 +11163,11 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [selectedNom, setSelectedNom] = useState(null);
   const [evoChainTarget, setEvoChainTarget] = useState(null); // { nom, forme } | null
   // Carte de forme affichée (parmi plusieurs formes d'une même espèce, ex. Zarbi, Motisma) —
-  // navigation "Précédent/Suivant" au lieu du défilement horizontal (même patron que Shiny/Double).
+  // navigation "Précédent/Suivant" par clic uniquement (le clavier ←/→ est réservé à la
+  // nouvelle navigation entre ESPÈCES/FORMES DIFFÉRENTES de la liste, voir plus bas).
   const [cardPos, setCardPos] = useState(0);
   useEffect(() => { setCardPos(0); }, [selectedNom, onlyFormKey]);
   const cardTotalRef = useRef(1);
-  useEffect(() => {
-    if (!selectedNom) return;
-    const onKey = (e) => {
-      const tag = document.activeElement && document.activeElement.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.key === "ArrowRight") setCardPos((p) => Math.min(p + 1, cardTotalRef.current - 1));
-      else if (e.key === "ArrowLeft") setCardPos((p) => Math.max(p - 1, 0));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selectedNom]);
   const savedScroll = useRef(0);
   const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
   const { customMarques, customModes, addMarque, addMode } = useCustomLists();
@@ -11340,10 +11476,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const ownedForms = rows.filter((r) => r[5]).length;
   const shinyOwned = rows.filter((r) => r[6]).length;
 
-  if (!ready) {
-    return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
-  }
-
   const openSpecies = (nom, formKey) => {
     savedScroll.current = window.scrollY;
     setSelectedNom(nom);
@@ -11355,6 +11487,41 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     setOnlyFormKey(null);
     requestAnimationFrame(() => window.scrollTo(0, savedScroll.current));
   };
+
+  // Navigation entre fiches ESPÈCES/FORMES DIFFÉRENTES (§ demande explicite), au sein de la
+  // liste actuellement affichée — filteredForms en mode "forms" (une forme = un élément),
+  // filteredSpecies en mode "species" — distincte de la navigation "Précédent/Suivant" entre
+  // FORMES d'une même espèce ci-dessus (cardPos), qui reste pilotée séparément (clic uniquement).
+  const nationalNavIndex = (() => {
+    if (!selectedNom) return -1;
+    if (mode === "forms") {
+      if (onlyFormKey) return filteredForms.findIndex((r) => (r[1] + "|" + (r[2] || "")) === onlyFormKey);
+      return filteredForms.findIndex((r) => r[1] === selectedNom);
+    }
+    return filteredSpecies.findIndex((sp) => sp.nom === selectedNom);
+  })();
+  const nationalNavTotal = mode === "forms" ? filteredForms.length : filteredSpecies.length;
+  const goNationalNav = (delta) => {
+    if (nationalNavIndex === -1) return;
+    const newIdx = nationalNavIndex + delta;
+    if (newIdx < 0 || newIdx >= nationalNavTotal) return;
+    if (mode === "forms") {
+      const r = filteredForms[newIdx];
+      openSpecies(r[1], r[1] + "|" + (r[2] || ""));
+    } else {
+      const sp = filteredSpecies[newIdx];
+      openSpecies(sp.nom);
+    }
+  };
+  const nationalSwipeHandlers = useCardSwipeNav(
+    !!selectedNom && nationalNavTotal > 1,
+    () => goNationalNav(-1),
+    () => goNationalNav(1)
+  );
+
+  if (!ready) {
+    return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
+  }
 
   const allSelectedForms = selectedNom ? bySpecies.get(selectedNom) : null;
   const selectedForms = allSelectedForms && onlyFormKey
@@ -11420,44 +11587,39 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         </div>
       )}
 
-      {selectedForms && (
-        <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
-          <div style={{ maxWidth: 720, margin: "0 auto" }}>
-            <FloatingBackButton onClick={closeSpecies} />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <Sprite nom={selectedNom} size={56} />
-                <div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 18, color: TXT }}>{selectedNom}</div>
-                    <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: ACCENT }}>#{selectedForms[0][0]}</span>
-                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>{selectedForms[0][3]}</span>
-                  </div>
-                  <a href={selectedForms[0][4]} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-                    Voir sur Poképédia ↗
-                  </a>
+      {selectedForms && (() => {
+        const hasNationalNav = nationalNavTotal > 1;
+        const shinyForm = selectedForms.find((f) => shinyCountFor(f[1], f[2]) > 0);
+        return (
+        <div {...(hasNationalNav ? nationalSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+          {hasNationalNav && (
+            <FloatingCardNav onPrev={() => goNationalNav(-1)} onNext={() => goNationalNav(1)} hasPrev={nationalNavIndex > 0} hasNext={nationalNavIndex < nationalNavTotal - 1} />
+          )}
+          <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 520, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+              <button onClick={closeSpecies} title="Fermer" style={{ background: "transparent", border: "none", color: MUTED, fontSize: 20, lineHeight: 1, cursor: "pointer", padding: 4 }}>×</button>
+            </div>
+            <div style={{
+              display: "flex", justifyContent: "center", alignItems: "center", gap: 16,
+              background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
+              padding: 14, marginBottom: 10,
+            }}>
+              <Sprite nom={selectedNom} size={96} />
+              {shinyForm && (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <Sprite nom={shinyForm[1]} forme={shinyForm[2]} size={64} shiny />
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: GOLD, fontWeight: 700 }}>✦ shiny</span>
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>{selectedNom}</div>
+                  <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 12, color: ACCENT }}>#{selectedForms[0][0]}</span>
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{selectedForms[0][3]}</span>
                 </div>
               </div>
-              {(() => {
-                const shinyForm = selectedForms.find((f) => shinyCountFor(f[1], f[2]) > 0);
-                if (!shinyForm) return null;
-                return (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                    <Sprite nom={shinyForm[1]} forme={shinyForm[2]} size={56} shiny />
-                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: GOLD, fontWeight: 700 }}>✦ shiny</span>
-                  </div>
-                );
-              })()}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14 }}>
-              {onlyFormKey && allSelectedForms && allSelectedForms.length > 1 ? (
-                <button
-                  onClick={() => setOnlyFormKey(null)}
-                  style={btnGhost}
-                >
-                  Voir toutes les formes ({allSelectedForms.length})
-                </button>
-              ) : <span />}
               <CatalogQuickEditButton
                 nom={selectedForms[0][1]}
                 forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
@@ -11465,6 +11627,21 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 label
               />
             </div>
+            <div style={{ marginBottom: 10 }}>
+              <a href={selectedForms[0][4]} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+                Poképédia ↗
+              </a>
+            </div>
+            {onlyFormKey && allSelectedForms && allSelectedForms.length > 1 && (
+              <div style={{ marginBottom: 14 }}>
+                <button
+                  onClick={() => setOnlyFormKey(null)}
+                  style={btnGhost}
+                >
+                  Voir toutes les formes ({allSelectedForms.length})
+                </button>
+              </div>
+            )}
             <div>
             {(() => {
               cardTotalRef.current = selectedForms.length;
@@ -11607,7 +11784,8 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             })()}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {mode === "forms" && (
         <div style={{
@@ -15149,7 +15327,9 @@ async function importGo1Sheet(rows, mode) {
 // marque toutes paires confondues) et en vue jeu précis (showHome=false, uniquement les jeux de
 // la paire affichée). C'est le seul endroit où Home peut être coché — jamais depuis une vue jeu
 // précis (§ demande explicite : ne pas mélanger les deux).
-function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showHome, homeChecked, games, checkedGames, marqueGames, onAvailabilityChanged, currentNumber, numberPlaceholder, onCancel, onSave }) {
+function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showHome, homeChecked, games, checkedGames, marqueGames, onAvailabilityChanged, currentNumber, numberPlaceholder, onCancel, onSave, navIndex, navTotal, onNavPrev, onNavNext }) {
+  const hasNav = navTotal != null && navTotal > 1;
+  const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
   const [group, setGroup] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [home, setHome] = useState(!!homeChecked);
@@ -15186,9 +15366,12 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
     </button>
   );
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div {...(hasNav ? swipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+      {hasNav && (
+        <FloatingCardNav onPrev={onNavPrev} onNext={onNavNext} hasPrev={navIndex > 0} hasNext={navIndex < navTotal - 1} />
+      )}
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
         <div style={{
           display: "flex", justifyContent: "center", alignItems: "center",
           background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
@@ -15212,7 +15395,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
             {lien && (
               <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-                Voir sur Poképédia ↗
+                Poképédia ↗
               </a>
             )}
             {evoLabel && (
