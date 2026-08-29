@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.28.20.52";
+const APP_VERSION = "2026.8.28.21.44";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -3285,8 +3285,9 @@ function useCardSwipeNav(active, onPrev, onNext) {
 // Pokémon — rendu au-dessus de toute modale (zIndex 105 > 100). Visuellement distinctes des
 // éventuels boutons "← Précédent/Suivant →" internes à une fiche (qui gèrent un autre
 // mécanisme, voir useCardSwipeNav) : icônes seules, ancrées aux bords plutôt que centrées.
-function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext }) {
-  if (!hasPrev && !hasNext) return null;
+function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext, center }) {
+  const showArrows = hasPrev || hasNext;
+  if (!showArrows && !center) return null;
   const btnStyle = (enabled) => ({
     position: "fixed", bottom: 92, zIndex: 105,
     background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
@@ -3297,8 +3298,13 @@ function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext }) {
   });
   return (
     <React.Fragment>
-      <button onClick={onPrev} disabled={!hasPrev} aria-label="Pokémon précédent" style={{ ...btnStyle(hasPrev), left: 16 }}>‹</button>
-      <button onClick={onNext} disabled={!hasNext} aria-label="Pokémon suivant" style={{ ...btnStyle(hasNext), right: 16 }}>›</button>
+      {showArrows && <button onClick={onPrev} disabled={!hasPrev} aria-label="Pokémon précédent" style={{ ...btnStyle(hasPrev), left: 16 }}>‹</button>}
+      {center && (
+        <div style={{ position: "fixed", bottom: 92, left: "50%", transform: "translateX(-50%)", zIndex: 105 }}>
+          {center}
+        </div>
+      )}
+      {showArrows && <button onClick={onNext} disabled={!hasNext} aria-label="Pokémon suivant" style={{ ...btnStyle(hasNext), right: 16 }}>›</button>}
     </React.Fragment>
   );
 }
@@ -5709,6 +5715,141 @@ function useAllGameJeuOverrides() {
   return all;
 }
 
+// Champs de saisie d'une capture Shiny (Marque → Gmax/Gmaxable) — composant PARTAGÉ entre
+// l'onglet Shiny (édition d'une capture existante) et l'onglet National ("Ajouter un shiny",
+// § demande explicite : "exactement la même fenêtre" et synchronisation automatique en cas de
+// modification future du format). Ne couvre QUE la saisie elle-même : les actions propres à une
+// capture déjà persistée (envoi vers Interjeu, Suppression) restent gérées par chaque appelant,
+// juste après ce composant dans leur JSX respectif — jamais dupliquées ici.
+// `rec` : objet capture en cours d'édition (marque/date/jeu/mode/location/details/alpha/gmax/gmaxable).
+// `onField(field, value)` : mise à jour générique d'un champ simple.
+// `onMarqueChange(value)` : dédié à la marque (permet à l'appelant de brancher son propre
+// avertissement de doublon, cf. `changeMarque` dans ShinyView).
+// `onGmaxState(state)` : dédié au tri-état Gmax/Gmaxable ("none"/"gmax"/"gmaxable").
+function ShinyRecordFields({ rec, onField, onMarqueChange, onGmaxState, nom, forme, marques, jeuOptionsFor, modeOptionsFor, detailOptionsFor, locations }) {
+  const setMarque = (v) => (onMarqueChange ? onMarqueChange(v) : onField("marque", v));
+  return (
+    <React.Fragment>
+      <Picker
+        value={rec.marque || ""}
+        onChange={setMarque}
+        options={marques}
+        placeholder="— marque —"
+        panelWidth={220}
+        buttonStyle={{
+          width: "100%", textAlign: "center",
+          background: "transparent", border: "none", borderBottom: `1px solid ${LINE}`,
+          fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 16, color: TXT,
+          cursor: "pointer", outline: "none", padding: "2px 0 8px",
+        }}
+      />
+      {rec.marque && !isFormeAvailableInGame(nom, forme, rec.marque) && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 6, padding: "6px 8px",
+          background: "#E4572E22", border: "1px solid #E4572E66", borderRadius: 8,
+        }}>
+          <span style={{ fontSize: 13, lineHeight: 1 }}>⚠️</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, lineHeight: 1.3 }}>
+            Cette forme n'est normalement pas disponible dans {rec.marque}. Cas particulier possible (ex. transfert + changement de forme) — vérifie la marque si ce n'était pas voulu.
+          </span>
+        </div>
+      )}
+      <div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Date</div>
+        <input type="date" value={rec.date || ""} onChange={(e) => onField("date", e.target.value)} style={{ ...plainFieldStyle, width: 130 }} />
+      </div>
+      <div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Jeu</div>
+        <Picker
+          value={rec.jeu || ""}
+          onChange={(v) => onField("jeu", v)}
+          options={jeuOptionsFor(rec.marque)}
+          placeholder="-"
+          buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
+          panelWidth={220}
+        />
+      </div>
+      <div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Méthode</div>
+        <Picker
+          value={rec.mode || ""}
+          onChange={(v) => onField("mode", v)}
+          options={modeOptionsFor(rec.marque)}
+          placeholder="-"
+          buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
+          panelWidth={180}
+        />
+      </div>
+      <div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Emplacement</div>
+        <Picker
+          value={catchLocation(rec)}
+          onChange={(v) => onField("location", v)}
+          options={locations}
+          placeholder={DEFAULT_LOCATION}
+          buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
+          panelWidth={200}
+        />
+      </div>
+      <div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", justifyItems: "start", gap: 4 }}>
+          {detailOptionsFor(rec.marque).length === 0 && (
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>Aucun détail disponible pour cette marque.</span>
+          )}
+          {detailOptionsFor(rec.marque).map((d) => {
+            const active = (rec.details || []).includes(d);
+            return (
+              <button
+                key={d}
+                type="button"
+                onClick={() => onField("details", active ? (rec.details || []).filter((x) => x !== d) : [...(rec.details || []), d])}
+                style={{
+                  border: "none", borderRadius: 999, padding: "3px 9px", cursor: "pointer",
+                  fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: active ? 700 : 500,
+                  background: active ? GOLD : PANEL, color: active ? BG : MUTED, maxWidth: "100%",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}
+              >{d}</button>
+            );
+          })}
+        </div>
+      </div>
+      {(rec.marque === "LA" || rec.marque === "LZA") && (
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!rec.alpha} onChange={(e) => onField("alpha", e.target.checked)} />
+          Alpha
+        </label>
+      )}
+      {(() => {
+        const f = forme || "";
+        const showGmax = /gmax/i.test(f) && !/non\s*gmax/i.test(f);
+        if (!showGmax) return null;
+        const gState = rec.gmax ? "gmax" : rec.gmaxable ? "gmaxable" : "none";
+        const gLabel = gState === "gmax" ? "Gmax" : gState === "gmaxable" ? "Gmaxable" : "Gmax / Gmaxable";
+        const gBoxLabel = gState === "gmax" ? "G" : gState === "gmaxable" ? "M" : "";
+        const gNext = gState === "none" ? "gmax" : gState === "gmax" ? "gmaxable" : "none";
+        return (
+          <button
+            type="button"
+            onClick={() => onGmaxState(gNext)}
+            title="Clique pour faire défiler : rien → Gmax → Gmaxable → rien"
+            style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer", background: "transparent", border: "none", padding: 0 }}
+          >
+            <span style={{
+              width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+              border: `2px solid ${gState !== "none" ? GOLD : MUTED}`,
+              background: gState !== "none" ? GOLD : "transparent",
+              display: "flex", alignItems: "center", justifyContent: "center", color: BG, fontSize: 9, fontWeight: 900,
+            }}>{gBoxLabel}</span>
+            {gLabel}
+          </button>
+        );
+      })()}
+    </React.Fragment>
+  );
+}
+
 function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
   const { catches, setCatches, ready, persist, saveState } = useShinyCatches();
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
@@ -6227,122 +6368,19 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
               <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
               {current && [current].map(({ rec, idx }) => (
                 <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch", width: "100%", background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12 }}>
-                  <Picker
-                    value={rec.marque || ""}
-                    onChange={(v) => changeMarque(selected, idx, v)}
-                    options={marques}
-                    placeholder="— marque —"
-                    panelWidth={220}
-                    buttonStyle={{
-                      width: "100%", textAlign: "center",
-                      background: "transparent", border: "none", borderBottom: `1px solid ${LINE}`,
-                      fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 16, color: TXT,
-                      cursor: "pointer", outline: "none", padding: "2px 0 8px",
-                    }}
+                  <ShinyRecordFields
+                    rec={rec}
+                    nom={selectedEntry[1]}
+                    forme={selectedEntry[2]}
+                    marques={marques}
+                    jeuOptionsFor={jeuOptionsFor}
+                    modeOptionsFor={modeOptionsFor}
+                    detailOptionsFor={detailOptionsFor}
+                    locations={locations}
+                    onField={(field, value) => updateCatch(selected, idx, field, value)}
+                    onMarqueChange={(v) => changeMarque(selected, idx, v)}
+                    onGmaxState={(state) => setGmaxState(selected, idx, state)}
                   />
-                  {rec.marque && !isFormeAvailableInGame(selectedEntry[1], selectedEntry[2], rec.marque) && (
-                    <div style={{
-                      display: "flex", alignItems: "flex-start", gap: 6, padding: "6px 8px",
-                      background: "#E4572E22", border: "1px solid #E4572E66", borderRadius: 8,
-                    }}>
-                      <span style={{ fontSize: 13, lineHeight: 1 }}>⚠️</span>
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: TXT, lineHeight: 1.3 }}>
-                        Cette forme n'est normalement pas disponible dans {rec.marque}. Cas particulier possible (ex. transfert + changement de forme) — vérifie la marque si ce n'était pas voulu.
-                      </span>
-                    </div>
-                  )}
-                  <div>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Date</div>
-                    <input type="date" value={rec.date} onChange={(e) => updateCatch(selected, idx, "date", e.target.value)} style={{ ...plainFieldStyle, width: 130 }} />
-                  </div>
-                  <div>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Jeu</div>
-                    <Picker
-                      value={rec.jeu || ""}
-                      onChange={(v) => updateCatch(selected, idx, "jeu", v)}
-                      options={jeuOptionsFor(rec.marque)}
-                      placeholder="-"
-                      buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
-                      panelWidth={220}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Méthode</div>
-                    <Picker
-                      value={rec.mode || ""}
-                      onChange={(v) => updateCatch(selected, idx, "mode", v)}
-                      options={modeOptionsFor(rec.marque)}
-                      placeholder="-"
-                      buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
-                      panelWidth={180}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 2 }}>Emplacement</div>
-                    <Picker
-                      value={catchLocation(rec)}
-                      onChange={(v) => updateCatch(selected, idx, "location", v)}
-                      options={locations}
-                      placeholder={DEFAULT_LOCATION}
-                      buttonStyle={{ ...plainFieldStyle, width: "100%", textAlign: "left" }}
-                      panelWidth={200}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>Détail</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", justifyItems: "start", gap: 4 }}>
-                      {detailOptionsFor(rec.marque).length === 0 && (
-                        <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>Aucun détail disponible pour cette marque.</span>
-                      )}
-                      {detailOptionsFor(rec.marque).map((d) => {
-                        const active = (rec.details || []).includes(d);
-                        return (
-                          <button
-                            key={d}
-                            type="button"
-                            onClick={() => updateCatch(selected, idx, "details", active ? (rec.details || []).filter((x) => x !== d) : [...(rec.details || []), d])}
-                            style={{
-                              border: "none", borderRadius: 999, padding: "3px 9px", cursor: "pointer",
-                              fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: active ? 700 : 500,
-                              background: active ? GOLD : PANEL, color: active ? BG : MUTED, maxWidth: "100%",
-                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                            }}
-                          >{d}</button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  {(rec.marque === "LA" || rec.marque === "LZA") && (
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
-                      <input type="checkbox" checked={!!rec.alpha} onChange={(e) => updateCatch(selected, idx, "alpha", e.target.checked)} />
-                      Alpha
-                    </label>
-                  )}
-                  {(() => {
-                    const forme = (selectedEntry && selectedEntry[2]) || "";
-                    const showGmax = /gmax/i.test(forme) && !/non\s*gmax/i.test(forme);
-                    if (!showGmax) return null;
-                    const gState = rec.gmax ? "gmax" : rec.gmaxable ? "gmaxable" : "none";
-                    const gLabel = gState === "gmax" ? "Gmax" : gState === "gmaxable" ? "Gmaxable" : "Gmax / Gmaxable";
-                    const gBoxLabel = gState === "gmax" ? "G" : gState === "gmaxable" ? "M" : "";
-                    const gNext = gState === "none" ? "gmax" : gState === "gmax" ? "gmaxable" : "none";
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => setGmaxState(selected, idx, gNext)}
-                        title="Clique pour faire défiler : rien → Gmax → Gmaxable → rien"
-                        style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer", background: "transparent", border: "none", padding: 0 }}
-                      >
-                        <span style={{
-                          width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                          border: `2px solid ${gState !== "none" ? GOLD : MUTED}`,
-                          background: gState !== "none" ? GOLD : "transparent",
-                          display: "flex", alignItems: "center", justifyContent: "center", color: BG, fontSize: 9, fontWeight: 900,
-                        }}>{gBoxLabel}</span>
-                        {gLabel}
-                      </button>
-                    );
-                  })()}
                   {rec.fromInterjeu && (
                     <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: INTERJEU, marginTop: 16 }}>
                       ↔ Suivi dans Interjeu jusqu'à l'arrivée en {DEFAULT_LOCATION}.
@@ -9785,7 +9823,7 @@ function catalogDraftForRow(idx) {
 // Bouton "Modifier" réutilisable, posé sur la page détail d'un Pokémon et sur les lignes de
 // liste (onglets jeu). Si `allForms` contient plusieurs formes (page détail d'une espèce
 // affichant toutes ses formes), demande d'abord laquelle modifier — voir §21bis.
-function CatalogQuickEditButton({ nom, forme, allForms, label, corner }) {
+function CatalogQuickEditButton({ nom, forme, allForms, label, corner, style }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState(null); // { idx, draft }
 
@@ -9824,11 +9862,14 @@ function CatalogQuickEditButton({ nom, forme, allForms, label, corner }) {
           width: 34, height: 34, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center",
           background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
           border: GLASS_BORDER, boxShadow: GLASS_SHADOW, color: "#fff", fontSize: 15, cursor: "pointer",
+          ...(style || {}),
         } : label ? {
           ...btnGhost, display: "flex", alignItems: "center", gap: 5, flexShrink: 0,
+          ...(style || {}),
         } : {
           background: "transparent", border: "none", cursor: "pointer", color: MUTED,
           fontSize: 13, padding: "2px 4px", flexShrink: 0,
+          ...(style || {}),
         }}
       >✎{!corner && label ? " Modifier" : ""}</button>
       {pickerOpen && (
@@ -11167,11 +11208,13 @@ function useLiveNat() {
     try { await window.storage.set("shiny_catches", JSON.stringify(next), false); } catch (e) {}
   };
 
-  const addShinyForGame = async (nom, forme, date, mode, marque, alpha) => {
+  // rec = objet capture complet (mêmes champs que ceux édités par ShinyRecordFields, partagé
+  // avec l'onglet Shiny) : { marque, date, mode, jeu, location, details, alpha, gmax, gmaxable }.
+  const addShinyForGame = async (nom, forme, rec) => {
     const key = nom + "|" + (forme || "");
     const current = shinyCatches || {};
     const list = (current[key] || []).slice();
-    list.push({ date: date || "", mode: mode || "", marque: marque || "", alpha: !!alpha });
+    list.push({ ...rec });
     const next = { ...current, [key]: list };
     setShinyCatches(next);
     try { await window.storage.set("shiny_catches", JSON.stringify(next), false); } catch (e) {}
@@ -11233,18 +11276,22 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const cardTotalRef = useRef(1);
   const savedScroll = useRef(0);
   const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
-  const { customMarques, customModes, addMarque, addMode } = useCustomLists();
+  const {
+    customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques,
+    addMarque, addMode, addLocation, addJeu, addDetail,
+  } = useCustomLists();
   // Sources "en jeu" (game_tab_sources, toutes marques) et vues Jeu configurées (custom_jeu_views,
   // toutes marques) — utilisées à la fois pour le mode "Home + jeux" (catchMode/cardMode) et pour
-  // le mode "Vue jeu" de la fiche détail (§ ci-dessus).
+  // le mode "Jeu" de la fiche détail (§ ci-dessus).
   const { all: gameTabSourcesAll, toggleSource: toggleGameTabSource } = useAllGameTabSourcesEditable();
   const jeuViewsAll = useAllJeuViewsData();
+  // Fenêtre "Ajouter un shiny" (§ nouveau : reprend exactement les mêmes champs que l'onglet
+  // Shiny — Marque, Date, Jeu, Méthode, Emplacement, Détail, Alpha, Gmax/Gmaxable — plutôt que
+  // le sous-ensemble réduit d'avant, pour ne jamais avoir à repasser par l'onglet Shiny éditer
+  // une capture ajoutée depuis National. Utilise le même composant `ShinyRecordFields` que
+  // l'onglet Shiny — toute évolution future de ce composant s'applique automatiquement ici aussi.
   const [shinyPrompt, setShinyPrompt] = useState(null); // { nom, forme, game }
-  const [promptDate, setPromptDate] = useState("");
-
-  const [promptMode, setPromptMode] = useState("");
-  const [promptMarque, setPromptMarque] = useState("");
-  const [promptAlpha, setPromptAlpha] = useState(false);
+  const [promptRec, setPromptRec] = useState({});
 
   const shinyMarques = useMemo(() => {
     const discovered = [];
@@ -11258,16 +11305,52 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     return orderedList(customModes, discovered);
   }, [shinyCatches, customModes]);
 
+  const shinyDetails = useMemo(() => {
+    const discovered = [];
+    if (shinyCatches) Object.values(shinyCatches).forEach((arr) => (arr || []).forEach((rec) => (rec.details || []).forEach((d) => discovered.push(d))));
+    return orderedList(customDetails, discovered);
+  }, [shinyCatches, customDetails]);
+
+  const shinyLocations = useMemo(() => {
+    const discovered = [];
+    if (shinyCatches) Object.values(shinyCatches).forEach((arr) => (arr || []).forEach((rec) => discovered.push(catchLocation(rec))));
+    return orderedList([DEFAULT_LOCATION, ...customLocations], discovered);
+  }, [shinyCatches, customLocations]);
+
+  // Méthode/Détail restreints par marque (Paramètres → "Disponibilité par marque"), Jeu limité
+  // aux valeurs personnalisées + déjà utilisées pour cette marque — même logique que l'onglet Shiny.
+  const modeOptionsFor = (marqueVal) => optionsForMarque(shinyModes, marqueVal, modeMarques);
+  const detailOptionsFor = (marqueVal) => optionsForMarque(shinyDetails, marqueVal, detailMarques);
+  const jeuOptionsFor = (marqueVal) => {
+    const mk = marqueVal && marqueVal !== "__none__" ? marqueVal : "";
+    const s = new Set((customJeux && customJeux[mk]) || []);
+    if (shinyCatches) Object.values(shinyCatches).forEach((arr) => (arr || []).forEach((rec) => {
+      if (rec.jeu && (rec.marque || "") === mk) s.add(rec.jeu);
+    }));
+    return Array.from(s);
+  };
+
   const openShinyPrompt = (nom, forme, game) => {
     setShinyPrompt({ nom, forme, game });
-    setPromptDate("");
-    setPromptMode("");
-    setPromptMarque(game);
-    setPromptAlpha(false);
+    setPromptRec({ marque: game || "" });
+  };
+  // Même avertissement de doublon que `changeMarque` dans ShinyView (§ demande explicite : la
+  // fenêtre doit être exactement la même) — ici toute capture existante compte comme "un autre
+  // exemplaire" puisque celle-ci est encore en cours de création.
+  const onPromptMarqueChange = (v) => {
+    if (v && shinyPrompt) {
+      const key = shinyPrompt.nom + "|" + (shinyPrompt.forme || "");
+      const already = ((shinyCatches && shinyCatches[key]) || []).some((rec) => (rec.marque || "") === v);
+      if (already) {
+        const proceed = window.confirm(`Un autre exemplaire Shiny de ce Pokémon a déjà la marque "${v}". Continuer quand même ?`);
+        if (!proceed) return;
+      }
+    }
+    setPromptRec((prev) => ({ ...prev, marque: v }));
   };
   const confirmShinyPrompt = () => {
     if (!shinyPrompt) return;
-    addShinyForGame(shinyPrompt.nom, shinyPrompt.forme, promptDate, promptMode, promptMarque, promptAlpha);
+    addShinyForGame(shinyPrompt.nom, shinyPrompt.forme, promptRec);
     setShinyPrompt(null);
   };
 
@@ -11652,38 +11735,29 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       </div>
 
       {shinyPrompt && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%" }}>
-            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 4 }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 380, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 14 }}>
               Ajouter un shiny — {shinyPrompt.nom}{shinyPrompt.forme ? " · " + shinyPrompt.forme : ""}
             </div>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 14 }}>Jeu : {shinyPrompt.game}</div>
 
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 3 }}>Date de capture</div>
-              <input type="date" value={promptDate} onChange={(e) => setPromptDate(e.target.value)} style={{ ...miniInput, width: "100%" }} />
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 3 }}>Méthode de capture</div>
-              <AddableSelect value={promptMode} onChange={setPromptMode} options={shinyModes} onAddNew={addMode} placeholder="-" />
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 3 }}>Marque</div>
-              <AddableSelect value={promptMarque} onChange={setPromptMarque} options={shinyMarques} onAddNew={addMarque} placeholder="-" />
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <ShinyRecordFields
+                rec={promptRec}
+                nom={shinyPrompt.nom}
+                forme={shinyPrompt.forme}
+                marques={shinyMarques}
+                jeuOptionsFor={jeuOptionsFor}
+                modeOptionsFor={modeOptionsFor}
+                detailOptionsFor={detailOptionsFor}
+                locations={shinyLocations}
+                onField={(field, value) => setPromptRec((prev) => ({ ...prev, [field]: value }))}
+                onMarqueChange={onPromptMarqueChange}
+                onGmaxState={(state) => setPromptRec((prev) => ({ ...prev, gmax: state === "gmax", gmaxable: state === "gmaxable" }))}
+              />
             </div>
 
-            {(shinyPrompt.game === "LA" || shinyPrompt.game === "LZA") && (() => {
-              const cap = DATA.alphaCapable[shinyPrompt.nom + "|" + (shinyPrompt.forme || "")];
-              if (!cap || !cap[shinyPrompt.game]) return null;
-              return (
-                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                  <input type="checkbox" checked={promptAlpha} onChange={(e) => setPromptAlpha(e.target.checked)} />
-                  Capturé en Alpha
-                </label>
-              );
-            })()}
-
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
               <button onClick={() => setShinyPrompt(null)} style={btnGhost}>Annuler</button>
               <button onClick={confirmShinyPrompt} style={{ ...tabActive, background: GOLD, color: BG }}>Ajouter</button>
             </div>
@@ -11698,13 +11772,36 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         const evoLabel = formatEvolution(evoRaw);
         return (
         <div {...(hasNationalNav ? nationalSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
-          {hasNationalNav && (
-            <FloatingCardNav onPrev={() => goNationalNav(-1)} onNext={() => goNationalNav(1)} hasPrev={nationalNavIndex > 0} hasNext={nationalNavIndex < nationalNavTotal - 1} />
-          )}
-          <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 520, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
-              <button onClick={closeSpecies} title="Fermer" style={{ background: "transparent", border: "none", color: MUTED, fontSize: 20, lineHeight: 1, cursor: "pointer", padding: 4 }}>×</button>
-            </div>
+          <FloatingCardNav
+            onPrev={() => goNationalNav(-1)}
+            onNext={() => goNationalNav(1)}
+            hasPrev={nationalNavIndex > 0}
+            hasNext={nationalNavIndex < nationalNavTotal - 1}
+            center={(
+              <CatalogQuickEditButton
+                nom={selectedForms[0][1]}
+                forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
+                allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
+                label
+                style={{
+                  background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
+                  border: GLASS_BORDER, boxShadow: GLASS_SHADOW, color: "#fff",
+                  height: 46, borderRadius: 999, padding: "0 18px",
+                  fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 700,
+                }}
+              />
+            )}
+          />
+          <div style={{ position: "relative", maxWidth: 520, width: "100%" }}>
+            <button onClick={closeSpecies} title="Fermer" style={{
+              position: "absolute", top: -14, right: -14, zIndex: 2,
+              width: 36, height: 36, borderRadius: "50%",
+              background: PANEL2, border: `1px solid ${LINE}`, color: TXT,
+              fontSize: 20, lineHeight: 1, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 2px 10px rgba(0,0,0,0.45)",
+            }}>×</button>
+            <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxHeight: "75vh", overflowY: "auto" }}>
             <div style={{
               display: "flex", justifyContent: "center", alignItems: "center", gap: 16,
               background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
@@ -11712,10 +11809,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             }}>
               <Sprite nom={selectedNom} size={96} />
               {shinyForm && (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  <Sprite nom={shinyForm[1]} forme={shinyForm[2]} size={64} shiny />
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: GOLD, fontWeight: 700 }}>✦ shiny</span>
-                </div>
+                <Sprite nom={shinyForm[1]} forme={shinyForm[2]} size={96} shiny />
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
@@ -11768,8 +11862,9 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
               const genericCaught = !!f[10];
               const genericShiny = !!f[11];
               const formIsCaught = isCaughtEff(f);
-              // Bouton rond partagé par toutes les pilules de marque (§ nouveau : contour pilule
-              // moins haut, boutons ronds sur une seule ligne sous le titre en gras).
+              const isJeuMode = cardMode === "jeu";
+              // Bouton rond partagé par les pilules de marque en mode Home/Home+Jeu (§ nouveau :
+              // contour pilule moins haut, boutons ronds sur une seule ligne sous le titre en gras).
               const roundBtn = (active, activeColor) => ({
                 width: 26, height: 26, borderRadius: "50%", border: "none", cursor: "pointer", padding: 0,
                 display: "flex", alignItems: "center", justifyContent: "center",
@@ -11782,19 +11877,30 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12,
                 marginBottom: 10,
               }}>
-                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
-                  {m.total > 0 && (
-                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, color: m.owned === m.total ? OK : INFO }}>
-                      {m.owned}/{m.total} marques
-                    </span>
-                  )}
-                  <span style={{
-                    fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
-                    background: formIsCaught ? "rgba(76,175,131,0.15)" : "rgba(228,87,46,0.15)",
-                    color: formIsCaught ? OK : ACCENT,
-                  }}>{formIsCaught ? "Attrapé" : "Manquant"}</span>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8, flexWrap: "nowrap", overflowX: "auto" }}>
+                  <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                    {[["home", "Home"], ["home+jeux", "Home + Jeu"], ["jeu", "Jeu"]].map(([k, l]) => (
+                      <button key={k} onClick={() => setCardMode(k)} style={{
+                        background: cardMode === k ? ACCENT : "transparent", color: cardMode === k ? "#fff" : MUTED,
+                        border: `1px solid ${cardMode === k ? ACCENT : LINE}`, borderRadius: 999, padding: "3px 8px",
+                        fontFamily: "Inter, sans-serif", fontSize: 9.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                      }}>{l}</button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                    {m.total > 0 && (
+                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, color: m.owned === m.total ? OK : INFO, whiteSpace: "nowrap" }}>
+                        {m.owned}/{m.total}
+                      </span>
+                    )}
+                    <span style={{
+                      fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                      background: formIsCaught ? "rgba(76,175,131,0.15)" : "rgba(228,87,46,0.15)",
+                      color: formIsCaught ? OK : ACCENT,
+                    }}>{formIsCaught ? "Attrapé" : "Manquant"}</span>
+                  </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isJeuMode ? "repeat(auto-fill, minmax(130px, 1fr))" : "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
                   {availableGames.map(({ g, gi }) => {
                     const caught = f[8][gi];
                     const caughtEffCard = marqueCaughtWithMode(f, gi, cardMode);
@@ -11802,19 +11908,20 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                     const alpha = f[12] ? !!f[12][gi] : false;
                     const cap = DATA.alphaCapable[f[1] + "|" + (f[2] || "")];
                     const isAlphaGame = (g === "LA" || g === "LZA") && cap && cap[g];
-                    const views = cardMode === "jeu" ? jeuViewsFor(g) : null;
+                    const views = isJeuMode ? jeuViewsFor(g) : null;
                     return (
                       <div key={g} style={{
-                        display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
-                        borderRadius: 999, border: `1px solid ${caughtEffCard ? OK : LINE}`,
+                        display: "flex", flexDirection: "column", alignItems: isJeuMode ? "stretch" : "center", gap: 5,
+                        borderRadius: isJeuMode ? 14 : 999,
+                        border: `1px solid ${caughtEffCard ? OK : LINE}`,
                         background: caughtEffCard ? "rgba(76,175,131,0.12)" : "transparent",
-                        padding: "7px 6px",
+                        padding: isJeuMode ? "8px 8px" : "7px 6px",
                       }}>
-                        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, color: TXT }}>{g}</div>
-                        {cardMode === "jeu" ? (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%" }}>
+                        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, color: TXT, textAlign: isJeuMode ? "left" : "center" }}>{g}</div>
+                        {isJeuMode ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
                             {views.length === 0 ? (
-                              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 9.5, color: MUTED, textAlign: "center" }}>Aucune vue</div>
+                              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 9.5, color: MUTED, textAlign: "left" }}>Aucune vue</div>
                             ) : views.map((vue) => {
                               const vueCaught = !!(gameTabSourcesAll && gameTabSourcesAll[g] && gameTabSourcesAll[g][key] && gameTabSourcesAll[g][key].includes(vue.key));
                               return (
@@ -11823,14 +11930,14 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                                   onClick={() => toggleGameTabSource(g, key, vue.key)}
                                   title="Coché/décoché dans cette vue (game_tab_sources)"
                                   style={{
-                                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6,
-                                    background: "transparent", border: "none", cursor: "pointer", width: "100%", padding: 0,
-                                    fontFamily: "Inter, sans-serif", fontSize: 9.5,
-                                    color: vueCaught ? OK : MUTED, fontWeight: vueCaught ? 700 : 500,
+                                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                                    background: vueCaught ? "rgba(76,175,131,0.22)" : "rgba(255,255,255,0.05)",
+                                    border: "none", borderRadius: 6, cursor: "pointer", width: "100%", padding: "3px 6px",
+                                    fontFamily: "Inter, sans-serif", fontSize: 9.5, fontWeight: vueCaught ? 700 : 500,
                                   }}
                                 >
-                                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{vue.label}</span>
-                                  <span>{vueCaught ? "✓" : "✗"}</span>
+                                  <span style={{ color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{vue.label}</span>
+                                  <span style={{ color: "#fff" }}>{vueCaught ? "✓" : "✗"}</span>
                                 </button>
                               );
                             })}
@@ -11873,7 +11980,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                           title="Aucun jeu répertorié pour cette forme — sélectionnable quand même"
                           style={roundBtn(genericCaught, OK)}
                         >{genericCaught ? "✓" : "✗"}</button>
-                        {cardMode !== "jeu" && (
+                        {!isJeuMode && (
                           <button
                             onClick={() => (genericShiny ? removeShinyForGame(f[1], f[2], "Forme") : openShinyPrompt(f[1], f[2], "Forme"))}
                             title="Ajouter/retirer un shiny pour cette forme"
@@ -11889,33 +11996,15 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
               });
             })()}
             </div>
-            <div style={{ marginTop: 4 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
-                {selectedForms.length > 1 && (
+            {selectedForms.length > 1 && (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
                   <button onClick={() => setCardPos((p) => Math.max(p - 1, 0))} disabled={currentCp === 0} style={{ ...btnGhost, opacity: currentCp === 0 ? 0.4 : 1, cursor: currentCp === 0 ? "default" : "pointer" }}>← Précédent</button>
-                )}
-                <CatalogQuickEditButton
-                  nom={selectedForms[0][1]}
-                  forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
-                  allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
-                  label
-                />
-                {selectedForms.length > 1 && (
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>{currentCp + 1} / {selectedForms.length}</span>
                   <button onClick={() => setCardPos((p) => Math.min(p + 1, selectedForms.length - 1))} disabled={currentCp === selectedForms.length - 1} style={{ ...btnGhost, opacity: currentCp === selectedForms.length - 1 ? 0.4 : 1, cursor: currentCp === selectedForms.length - 1 ? "default" : "pointer" }}>Suivant →</button>
-                )}
+                </div>
               </div>
-              {selectedForms.length > 1 && (
-                <div style={{ textAlign: "center", fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, marginTop: 2 }}>{currentCp + 1} / {selectedForms.length}</div>
-              )}
-              <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
-                {[["home", "Home"], ["home+jeux", "Home + Jeu"], ["jeu", "Vue jeu"]].map(([k, l]) => (
-                  <button key={k} onClick={() => setCardMode(k)} style={{
-                    background: cardMode === k ? ACCENT : "transparent", color: cardMode === k ? "#fff" : MUTED,
-                    border: `1px solid ${cardMode === k ? ACCENT : LINE}`, borderRadius: 999, padding: "4px 10px",
-                    fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
-                  }}>{l}</button>
-                ))}
-              </div>
+            )}
             </div>
           </div>
         </div>
