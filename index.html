@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.28.21.58";
+const APP_VERSION = "2026.8.29.13.13";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2461,7 +2461,7 @@ function EvolutionTreeNode({ node, editMode, familyNom, existingKeys, onAddChild
 // changements sont persistés dans `evolution_chain_overrides` (couvert par export/import
 // JSON et Excel, voir buildChainesEvoSheetRows/importChainesEvoSheet). `zIndex` volontairement
 // au-dessus des fiches de capture (BoxGroupModal/JeuMultiSourceModal, 100) pour s'empiler dessus.
-function EvolutionChainModal({ nom, forme, onClose }) {
+function EvolutionChainModal({ nom, forme, onClose, onEditModeChange }) {
   const [state, setState] = useState({ loading: true, error: false, chainId: null, nativeTree: null });
   useEffect(() => {
     let cancelled = false;
@@ -2473,6 +2473,13 @@ function EvolutionChainModal({ nom, forme, onClose }) {
   }, [nom, forme]);
 
   const [editMode, setEditMode] = useState(false);
+  // Prop opt-in (absente = aucun changement pour les autres appelants, ex. BoxGroupModal) :
+  // signale au parent si le mode "Modifier" de cette fenêtre est actif, pour lui permettre de
+  // bloquer sa propre navigation entre fiches Pokémon pendant ce temps (§ National — même
+  // principe que onOpenChange de CatalogQuickEditButton).
+  useEffect(() => {
+    if (onEditModeChange) onEditModeChange(editMode);
+  }, [editMode]);
   const [allOverrides, setAllOverrides] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -9830,9 +9837,16 @@ function catalogDraftForRow(idx) {
 // Bouton "Modifier" réutilisable, posé sur la page détail d'un Pokémon et sur les lignes de
 // liste (onglets jeu). Si `allForms` contient plusieurs formes (page détail d'une espèce
 // affichant toutes ses formes), demande d'abord laquelle modifier — voir §21bis.
-function CatalogQuickEditButton({ nom, forme, allForms, label, corner, style }) {
+function CatalogQuickEditButton({ nom, forme, allForms, label, corner, style, onOpenChange }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState(null); // { idx, draft }
+
+  // Prop opt-in (absente = aucun changement de comportement pour les autres appelants, ex.
+  // Shiny) : signale au parent si le sélecteur de forme et/ou la fenêtre d'édition sont ouverts,
+  // pour lui permettre de bloquer sa propre navigation entre fiches pendant ce temps (§ National).
+  useEffect(() => {
+    if (onOpenChange) onOpenChange(pickerOpen || !!editing);
+  }, [pickerOpen, editing]);
 
   const openFor = async (fNom, fForme) => {
     const idx = findNatIdx(fNom, fForme);
@@ -11269,6 +11283,17 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [onlyFormKey, setOnlyFormKey] = useState(null);
   const [selectedNom, setSelectedNom] = useState(null);
   const [evoChainTarget, setEvoChainTarget] = useState(null); // { nom, forme } | null
+  // Vrai tant que l'écran "Modifier" (CatalogQuickEditButton — sélecteur de forme et/ou
+  // CatalogEntryModal) est ouvert depuis la fiche détail — bloque la navigation clavier/swipe/
+  // flèches entre fiches Pokémon différentes pendant ce temps (§ demande explicite : on ne doit
+  // pas pouvoir changer de fiche pendant que l'écran de modification est ouvert).
+  const [catalogEditOpen, setCatalogEditOpen] = useState(false);
+  // Vrai tant que le mode "Modifier"/"Terminé" de la fenêtre "Chaîne d'évolution" est actif
+  // depuis cette fiche — bloque la navigation clavier/swipe/flèches entre fiches Pokémon
+  // différentes pendant ce temps, exactement comme catalogEditOpen ci-dessus (§ demande
+  // explicite : on ne doit pas pouvoir changer de fiche pendant qu'un écran d'édition, quel
+  // qu'il soit, est ouvert par-dessus).
+  const [evoChainEditOpen, setEvoChainEditOpen] = useState(false);
   // Mode d'affichage des blocs de marque dans la fiche détail (§ nouveau, à côté du bouton
   // "Modifier") : "home"/"home+jeux" = même logique que catchMode ci-dessus, mais scopé à la
   // seule fiche ouverte (indépendant du mode d'affichage de la liste) ; "jeu" = remplace les
@@ -11279,7 +11304,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   // navigation "Précédent/Suivant" par clic uniquement (le clavier ←/→ est réservé à la
   // nouvelle navigation entre ESPÈCES/FORMES DIFFÉRENTES de la liste, voir plus bas).
   const [cardPos, setCardPos] = useState(0);
-  useEffect(() => { setCardPos(0); }, [selectedNom, onlyFormKey]);
+  useEffect(() => { setCardPos(0); setCatalogEditOpen(false); setEvoChainEditOpen(false); }, [selectedNom, onlyFormKey]);
   const cardTotalRef = useRef(1);
   const savedScroll = useRef(0);
   const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
@@ -11717,7 +11742,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     }
   };
   const nationalSwipeHandlers = useCardSwipeNav(
-    !!selectedNom && nationalNavTotal > 1,
+    !!selectedNom && nationalNavTotal > 1 && !catalogEditOpen && !evoChainEditOpen,
     () => goNationalNav(-1),
     () => goNationalNav(1)
   );
@@ -11787,7 +11812,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       )}
 
       {selectedForms && (() => {
-        const hasNationalNav = nationalNavTotal > 1;
+        // `catalogEditOpen`/`evoChainEditOpen` désactivent à la fois le swipe/clavier
+        // (useCardSwipeNav ci-dessus) et les flèches ‹ › (hasPrev/hasNext forcés à false ici)
+        // tant qu'un écran "Modifier" (catalogue ou chaîne d'évolution) est ouvert — sinon les
+        // flèches (zIndex 105) restent cliquables au-dessus de la fenêtre d'édition (zIndex 100
+        // ou 110) et un swipe sur cette fenêtre change quand même de fiche par remontée
+        // d'événement jusqu'à ce conteneur.
+        const hasNationalNav = nationalNavTotal > 1 && !catalogEditOpen && !evoChainEditOpen;
         const shinyForm = selectedForms.find((f) => shinyCountFor(f[1], f[2]) > 0);
         const evoRaw = currentForm ? DATA.evolutionMode[currentForm[1] + "|" + (currentForm[2] || "")] : null;
         const evoLabel = formatEvolution(evoRaw);
@@ -11796,14 +11827,15 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           <FloatingCardNav
             onPrev={() => goNationalNav(-1)}
             onNext={() => goNationalNav(1)}
-            hasPrev={nationalNavIndex > 0}
-            hasNext={nationalNavIndex < nationalNavTotal - 1}
+            hasPrev={hasNationalNav && nationalNavIndex > 0}
+            hasNext={hasNationalNav && nationalNavIndex < nationalNavTotal - 1}
             center={(
               <CatalogQuickEditButton
                 nom={selectedForms[0][1]}
                 forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
                 allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
                 label
+                onOpenChange={setCatalogEditOpen}
                 style={{
                   background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
                   border: GLASS_BORDER, boxShadow: GLASS_SHADOW, color: "#fff",
@@ -12237,7 +12269,8 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         <EvolutionChainModal
           nom={evoChainTarget.nom}
           forme={evoChainTarget.forme}
-          onClose={() => setEvoChainTarget(null)}
+          onClose={() => { setEvoChainTarget(null); setEvoChainEditOpen(false); }}
+          onEditModeChange={setEvoChainEditOpen}
         />
       )}
     </div>
