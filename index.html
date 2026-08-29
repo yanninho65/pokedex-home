@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.28.23.0";
+const APP_VERSION = "2026.8.28.20.52";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -3479,6 +3479,57 @@ function useAllGameTabSources() {
     (async () => {
       try {
         const res = await window.storage.get("game_tab_sources", false);
+        setAll(res && res.value ? JSON.parse(res.value) : {});
+      } catch (e) {
+        setAll({});
+      }
+    })();
+  }, []);
+  return all;
+}
+
+// Variante éditable de useAllGameTabSources (National, mode "Vue jeu" — § onglet National) :
+// mêmes données (toutes marques), mais expose en plus `toggleSource(marque, key, vueKey)` pour
+// cocher/décocher directement une vue précise depuis la fiche National, sans repasser par
+// l'onglet Home de la marque concernée. Stockage identique (`game_tab_sources`), toujours
+// re-lu avant écriture pour ne jamais écraser une modif faite ailleurs entre-temps.
+function useAllGameTabSourcesEditable() {
+  const [all, setAll] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("game_tab_sources", false);
+        setAll(res && res.value ? JSON.parse(res.value) : {});
+      } catch (e) {
+        setAll({});
+      }
+    })();
+  }, []);
+  const toggleSource = async (marque, key, vueKey) => {
+    let allNow = {};
+    try {
+      const res = await window.storage.get("game_tab_sources", false);
+      allNow = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const forMarque = { ...(allNow[marque] || {}) };
+    const list = new Set(forMarque[key] || []);
+    if (list.has(vueKey)) list.delete(vueKey); else list.add(vueKey);
+    if (list.size === 0) delete forMarque[key]; else forMarque[key] = Array.from(list);
+    allNow = { ...allNow, [marque]: forMarque };
+    try { await window.storage.set("game_tab_sources", JSON.stringify(allNow), false); } catch (e) {}
+    setAll(allNow);
+  };
+  return { all, toggleSource };
+}
+
+// Lecture "toutes marques" de custom_jeu_views (National, mode "Vue jeu") — lecture seule,
+// l'édition des vues elles-mêmes reste réservée au menu "Mode" de chaque onglet Home (§5ter).
+function useAllJeuViewsData() {
+  const [all, setAll] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("custom_jeu_views", false);
         setAll(res && res.value ? JSON.parse(res.value) : {});
       } catch (e) {
         setAll({});
@@ -11133,6 +11184,12 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   useEffect(() => { if (onSaveStateChange) onSaveStateChange("saved"); }, []);
   const [mode, setMode] = useCachedState(filterCache, "national", "mode", "forms"); // "forms" | "species"
   const [viewMode, setViewMode] = useCachedState(filterCache, "national", "viewMode", "list");
+  // Mode de calcul du statut "Attrapé" par marque (§ nouveau, même logique que le sélecteur
+  // Home/Home+jeux de l'onglet Progression, §8) : "home" = flag Home strict (caught_<marque>,
+  // comportement historique inchangé) ; "home+jeux" = compte aussi un Pokémon coché uniquement
+  // "en jeu" (game_tab_sources) pour au moins une vue de la marque, même jamais transféré sur
+  // Home. Affiché sur la même ligne que Liste/Grille (menu "Vue"), en groupe séparé.
+  const [catchMode, setCatchMode] = useCachedState(filterCache, "national", "catchMode", "home"); // "home" | "home+jeux"
   const [search, setSearch] = useCachedState(filterCache, "national", "search", "");
   const [filter, setFilter] = useCachedState(filterCache, "national", "filter", "all");
   const [region, setRegion] = useCachedState(filterCache, "national", "region", null); // null = toutes, ou Set de régions cochées
@@ -11162,6 +11219,12 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [onlyFormKey, setOnlyFormKey] = useState(null);
   const [selectedNom, setSelectedNom] = useState(null);
   const [evoChainTarget, setEvoChainTarget] = useState(null); // { nom, forme } | null
+  // Mode d'affichage des blocs de marque dans la fiche détail (§ nouveau, à côté du bouton
+  // "Modifier") : "home"/"home+jeux" = même logique que catchMode ci-dessus, mais scopé à la
+  // seule fiche ouverte (indépendant du mode d'affichage de la liste) ; "jeu" = remplace les
+  // boutons rapides de chaque marque par la liste de ses vues Jeu configurées (§5ter) avec leur
+  // statut coché/pas coché — jamais les shinys dans ce mode.
+  const [cardMode, setCardMode] = useCachedState(filterCache, "national", "cardMode", "home"); // "home" | "home+jeux" | "jeu"
   // Carte de forme affichée (parmi plusieurs formes d'une même espèce, ex. Zarbi, Motisma) —
   // navigation "Précédent/Suivant" par clic uniquement (le clavier ←/→ est réservé à la
   // nouvelle navigation entre ESPÈCES/FORMES DIFFÉRENTES de la liste, voir plus bas).
@@ -11171,6 +11234,11 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const savedScroll = useRef(0);
   const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
   const { customMarques, customModes, addMarque, addMode } = useCustomLists();
+  // Sources "en jeu" (game_tab_sources, toutes marques) et vues Jeu configurées (custom_jeu_views,
+  // toutes marques) — utilisées à la fois pour le mode "Home + jeux" (catchMode/cardMode) et pour
+  // le mode "Vue jeu" de la fiche détail (§ ci-dessus).
+  const { all: gameTabSourcesAll, toggleSource: toggleGameTabSource } = useAllGameTabSourcesEditable();
+  const jeuViewsAll = useAllJeuViewsData();
   const [shinyPrompt, setShinyPrompt] = useState(null); // { nom, forme, game }
   const [promptDate, setPromptDate] = useState("");
 
@@ -11250,6 +11318,29 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     return games.some((g, gi) => jeuFilter.has(g) && avail[gi]);
   };
 
+  // Statut "attrapé" pour une marque donnée, sous un mode donné (§ nouveau — même logique que le
+  // sélecteur Home/Home+jeux de l'onglet Progression, §8) : le flag Home (r[8][gi]) prime
+  // toujours ; en mode "home+jeux", un Pokémon coché "en jeu" (game_tab_sources) pour au moins
+  // une vue de cette marque compte aussi comme attrapé, même jamais transféré sur Home.
+  const marqueCaughtWithMode = (r, gi, dataMode) => {
+    if (r[8][gi]) return true;
+    if (dataMode !== "home+jeux") return false;
+    const g = games[gi];
+    const key = r[1] + "|" + (r[2] || "");
+    const sources = gameTabSourcesAll && gameTabSourcesAll[g] && gameTabSourcesAll[g][key];
+    return !!(sources && sources.length > 0);
+  };
+  const marqueCaught = (r, gi) => marqueCaughtWithMode(r, gi, catchMode);
+  // Statut "attrapé" global d'une forme sous le mode d'affichage courant (catchMode) — remplace
+  // r[5] (toujours calculé en Home pur) partout où le statut doit réagir à ce sélecteur.
+  const isCaughtEff = (r) => {
+    if (r[10]) return true; // genericCaught (pseudo-jeu "Forme"), inchangé quel que soit le mode
+    for (let gi = 0; gi < r[7].length; gi++) {
+      if (r[7][gi] && marqueCaught(r, gi)) return true;
+    }
+    return false;
+  };
+
   const marksOf = (r) => {
     // Only count "owned" among games where the form is actually available (r[7]).
     // Some Nat sheet rows have stray caught=true flags for unavailable games; ignore those.
@@ -11257,7 +11348,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     r[7].forEach((avail, gi) => {
       if (avail) {
         total++;
-        if (r[8][gi]) owned++;
+        if (marqueCaught(r, gi)) owned++;
       }
     });
     return { total, owned };
@@ -11297,6 +11388,14 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     return { capable, owned };
   };
 
+  // Liste des vues Jeu configurées pour une marque (§5ter) — lecture directe de
+  // custom_jeu_views avec repli sur DEFAULT_JEU_VIEWS tant que la marque n'a jamais été migrée
+  // (même logique que useJeuViews, en lecture seule ici — l'édition reste dans l'onglet Home).
+  const jeuViewsFor = (marque) => {
+    if (jeuViewsAll && Object.prototype.hasOwnProperty.call(jeuViewsAll, marque)) return jeuViewsAll[marque] || [];
+    return DEFAULT_JEU_VIEWS[marque] || [];
+  };
+
   const speciesList = useMemo(() => Array.from(bySpecies.entries()).map(([nom, forms]) => {
     let marksTotal = 0, marksOwned = 0, shinyOwned = 0, alphaCapable = false, alphaOwned = 0;
     forms.forEach((f) => {
@@ -11312,12 +11411,12 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       nat: forms[0][0],
       region: forms[0][3],
       total: forms.length,
-      owned: forms.filter((f) => f[5]).length,
+      owned: forms.filter((f) => isCaughtEff(f)).length,
       shinyOwned,
       alphaCapable, alphaOwned,
       marksTotal, marksOwned,
     };
-  }), [bySpecies, shinyCatches]);
+  }), [bySpecies, shinyCatches, catchMode, gameTabSourcesAll]);
 
   // Quand une seule marque est cochée dans le filtre Jeu (cas d'ouverture depuis le tableau
   // National de Progression), le statut Attrapé/Manquant se base sur cette marque précise
@@ -11361,7 +11460,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     const s = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (s && !(String(r[1]).toLowerCase().includes(s) || (r[2] && String(r[2]).toLowerCase().includes(s)))) return false;
-      const isCaught = singleMarqueIdx >= 0 ? !!(r[8] && r[8][singleMarqueIdx]) : r[5];
+      const isCaught = singleMarqueIdx >= 0 ? marqueCaught(r, singleMarqueIdx) : isCaughtEff(r);
       if (filter === "caught" && !isCaught) return false;
       if (filter === "missing" && isCaught) return false;
       if (!matchesMulti(region, r[3])) return false;
@@ -11372,7 +11471,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       if (!matchesShinyRow(r)) return false;
       return true;
     });
-  }, [rows, search, filter, region, jeuFilter, singleMarqueIdx, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter]);
+  }, [rows, search, filter, region, jeuFilter, singleMarqueIdx, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, catchMode, gameTabSourcesAll]);
 
   const filteredSpecies = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -11425,7 +11524,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         if (!matchesHomeDexRow(r)) return;
         if (!matchesShinyRow(r)) return;
         matchedTotal++;
-        const isCaught = singleMarqueIdx >= 0 ? !!(r[8] && r[8][singleMarqueIdx]) : r[5];
+        const isCaught = singleMarqueIdx >= 0 ? marqueCaught(r, singleMarqueIdx) : isCaughtEff(r);
         if (filter === "missing") { if (!isCaught) matchedCount++; } else { if (isCaught) matchedCount++; }
       });
     } else {
@@ -11459,7 +11558,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       });
     }
     return { matchedTotal, matchedCount };
-  }, [rows, speciesList, search, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, filter, mode, bySpecies, singleMarqueIdx]);
+  }, [rows, speciesList, search, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, filter, mode, bySpecies, singleMarqueIdx, catchMode, gameTabSourcesAll]);
 
   const resetFilters = () => {
     setSearch("");
@@ -11473,7 +11572,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   };
 
   const totalForms = rows.length;
-  const ownedForms = rows.filter((r) => r[5]).length;
+  const ownedForms = rows.filter((r) => isCaughtEff(r)).length;
   const shinyOwned = rows.filter((r) => r[6]).length;
 
   const openSpecies = (nom, formKey) => {
@@ -11527,6 +11626,11 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const selectedForms = allSelectedForms && onlyFormKey
     ? allSelectedForms.filter((f) => (f[1] + "|" + (f[2] || "")) === onlyFormKey)
     : allSelectedForms;
+  // Forme actuellement affichée dans la fiche (pagination cp, § vue "Par Pokémon" à plusieurs
+  // formes) — calculée ici pour être utilisable dans l'en-tête (Forme + Évolution, en dehors du
+  // bloc de marques) comme dans le bloc de marques lui-même, sans dupliquer le calcul.
+  const currentCp = selectedForms ? Math.min(cardPos, selectedForms.length - 1) : 0;
+  const currentForm = selectedForms ? selectedForms[currentCp] : null;
 
   return (
     <div style={{ paddingBottom: 100 }}>
@@ -11590,6 +11694,8 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       {selectedForms && (() => {
         const hasNationalNav = nationalNavTotal > 1;
         const shinyForm = selectedForms.find((f) => shinyCountFor(f[1], f[2]) > 0);
+        const evoRaw = currentForm ? DATA.evolutionMode[currentForm[1] + "|" + (currentForm[2] || "")] : null;
+        const evoLabel = formatEvolution(evoRaw);
         return (
         <div {...(hasNationalNav ? nationalSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
           {hasNationalNav && (
@@ -11612,28 +11718,23 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 </div>
               )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>{selectedNom}</div>
                   <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 12, color: ACCENT }}>#{selectedForms[0][0]}</span>
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{selectedForms[0][3]}</span>
                 </div>
               </div>
-              <CatalogQuickEditButton
-                nom={selectedForms[0][1]}
-                forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
-                allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
-                label
-              />
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              <a href={selectedForms[0][4]} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
+              <a href={selectedForms[0][4]} target="_blank" rel="noreferrer" style={{
+                display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none", whiteSpace: "nowrap",
+                fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: ACCENT,
+                border: `1px solid ${ACCENT}66`, borderRadius: 999, padding: "7px 14px",
+              }}>
                 Poképédia ↗
               </a>
             </div>
-            {onlyFormKey && allSelectedForms && allSelectedForms.length > 1 && (
-              <div style={{ marginBottom: 14 }}>
+            {mode !== "forms" && onlyFormKey && allSelectedForms && allSelectedForms.length > 1 && (
+              <div style={{ marginBottom: 10 }}>
                 <button
                   onClick={() => setOnlyFormKey(null)}
                   style={btnGhost}
@@ -11642,128 +11743,144 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 </button>
               </div>
             )}
+            {currentForm && (
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600 }}>
+                  {currentForm[2] || "Forme normale"}
+                </div>
+                {evoLabel && (
+                  <EvolutionLabelButton
+                    label={evoLabel}
+                    onClick={() => setEvoChainTarget({ nom: currentForm[1], forme: currentForm[2] || null })}
+                  />
+                )}
+              </div>
+            )}
             <div>
             {(() => {
               cardTotalRef.current = selectedForms.length;
-              const cp = Math.min(cardPos, selectedForms.length - 1);
+              const cp = currentCp;
               const formsToShow = selectedForms.length > 1 ? [selectedForms[cp]] : selectedForms;
               return formsToShow.map((f, idx) => {
               const m = marksOf(f);
+              const key = f[1] + "|" + (f[2] || "");
               const availableGames = games.map((g, gi) => ({ g, gi })).filter(({ gi }) => f[7][gi]);
               const genericCaught = !!f[10];
               const genericShiny = !!f[11];
+              const formIsCaught = isCaughtEff(f);
+              // Bouton rond partagé par toutes les pilules de marque (§ nouveau : contour pilule
+              // moins haut, boutons ronds sur une seule ligne sous le titre en gras).
+              const roundBtn = (active, activeColor) => ({
+                width: 26, height: 26, borderRadius: "50%", border: "none", cursor: "pointer", padding: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 800,
+                background: active ? activeColor : "rgba(255,255,255,0.06)",
+                color: active ? "#fff" : MUTED,
+              });
               return (
               <div key={idx} style={{
                 background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 10, padding: 12,
                 marginBottom: 10,
               }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 600 }}>
-                    {f[2] || "Forme normale"} <span style={{ color: MUTED, fontWeight: 400 }}>· {f[3]}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    {m.total > 0 && (
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, color: m.owned === m.total ? OK : INFO }}>
-                        {m.owned}/{m.total} marques
-                      </span>
-                    )}
-                    <span style={{
-                      fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
-                      background: f[5] ? "rgba(76,175,131,0.15)" : "rgba(228,87,46,0.15)",
-                      color: f[5] ? OK : ACCENT,
-                    }}>{f[5] ? "Attrapé" : "Manquant"}</span>
-                  </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+                  {m.total > 0 && (
+                    <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, color: m.owned === m.total ? OK : INFO }}>
+                      {m.owned}/{m.total} marques
+                    </span>
+                  )}
+                  <span style={{
+                    fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+                    background: formIsCaught ? "rgba(76,175,131,0.15)" : "rgba(228,87,46,0.15)",
+                    color: formIsCaught ? OK : ACCENT,
+                  }}>{formIsCaught ? "Attrapé" : "Manquant"}</span>
                 </div>
-                {(() => {
-                  const evoRaw = DATA.evolutionMode[f[1] + "|" + (f[2] || "")];
-                  const evoLabel = formatEvolution(evoRaw);
-                  if (!evoLabel) return null;
-                  return (
-                    <div style={{ marginBottom: 6 }}>
-                      <EvolutionLabelButton
-                        label={evoLabel}
-                        onClick={() => setEvoChainTarget({ nom: f[1], forme: f[2] || null })}
-                      />
-                    </div>
-                  );
-                })()}
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED, marginBottom: 6 }}>
-                  Clique un jeu pour cocher/décocher · ✦ pour ajouter ou retirer un shiny de ce jeu
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 6 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
                   {availableGames.map(({ g, gi }) => {
                     const caught = f[8][gi];
+                    const caughtEffCard = marqueCaughtWithMode(f, gi, cardMode);
                     const shiny = f[9][gi];
                     const alpha = f[12] ? !!f[12][gi] : false;
                     const cap = DATA.alphaCapable[f[1] + "|" + (f[2] || "")];
                     const isAlphaGame = (g === "LA" || g === "LZA") && cap && cap[g];
+                    const views = cardMode === "jeu" ? jeuViewsFor(g) : null;
                     return (
                       <div key={g} style={{
-                        borderRadius: 8, padding: "4px 4px 6px",
-                        background: caught ? "rgba(76,175,131,0.25)" : "rgba(255,255,255,0.03)",
+                        display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+                        borderRadius: 999, border: `1px solid ${caughtEffCard ? OK : LINE}`,
+                        background: caughtEffCard ? "rgba(76,175,131,0.12)" : "transparent",
+                        padding: "7px 6px",
                       }}>
-                        <button
-                          onClick={() => (alpha ? toggleAlpha(f[1], f[2], g) : toggleGameCaught(f[1], f[2], g))}
-                          title={alpha ? "Attrapé en Alpha — clique pour décocher" : ""}
-                          style={{
-                            width: "100%", background: "transparent", border: "none", cursor: "pointer",
-                            fontFamily: "Inter, sans-serif", fontSize: 10.5, textAlign: "center",
-                            color: caught ? OK : MUTED,
-                          }}
-                        >
-                          <div style={{ fontWeight: 700 }}>{g}</div>
-                          <div style={{ fontSize: 9 }}>{caught ? "✓" : "✗"}</div>
-                        </button>
-                        {isAlphaGame && (
-                          <button
-                            onClick={() => toggleAlpha(f[1], f[2], g)}
-                            title="Marquer/retirer comme Alpha (prioritaire sur le statut normal)"
-                            style={{
-                              width: "100%", marginTop: 2, background: "transparent", border: "none", cursor: "pointer",
-                              fontFamily: "Inter, sans-serif", fontSize: 10.5, textAlign: "center",
-                              color: alpha ? "#E85D6B" : "#5a6b7a", fontWeight: 700,
-                            }}
-                          >α</button>
+                        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, color: TXT }}>{g}</div>
+                        {cardMode === "jeu" ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%" }}>
+                            {views.length === 0 ? (
+                              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 9.5, color: MUTED, textAlign: "center" }}>Aucune vue</div>
+                            ) : views.map((vue) => {
+                              const vueCaught = !!(gameTabSourcesAll && gameTabSourcesAll[g] && gameTabSourcesAll[g][key] && gameTabSourcesAll[g][key].includes(vue.key));
+                              return (
+                                <button
+                                  key={vue.key}
+                                  onClick={() => toggleGameTabSource(g, key, vue.key)}
+                                  title="Coché/décoché dans cette vue (game_tab_sources)"
+                                  style={{
+                                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6,
+                                    background: "transparent", border: "none", cursor: "pointer", width: "100%", padding: 0,
+                                    fontFamily: "Inter, sans-serif", fontSize: 9.5,
+                                    color: vueCaught ? OK : MUTED, fontWeight: vueCaught ? 700 : 500,
+                                  }}
+                                >
+                                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{vue.label}</span>
+                                  <span>{vueCaught ? "✓" : "✗"}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button
+                              onClick={() => (alpha ? toggleAlpha(f[1], f[2], g) : toggleGameCaught(f[1], f[2], g))}
+                              title={alpha ? "Attrapé en Alpha — clique pour décocher" : (caught ? "Attrapé — clique pour décocher" : "Manquant — clique pour cocher")}
+                              style={roundBtn(caughtEffCard, OK)}
+                            >{caughtEffCard ? "✓" : "✗"}</button>
+                            {isAlphaGame && (
+                              <button
+                                onClick={() => toggleAlpha(f[1], f[2], g)}
+                                title="Marquer/retirer comme Alpha (prioritaire sur le statut normal)"
+                                style={roundBtn(alpha, "#E85D6B")}
+                              >α</button>
+                            )}
+                            <button
+                              onClick={() => (shiny ? removeShinyForGame(f[1], f[2], g) : openShinyPrompt(f[1], f[2], g))}
+                              title="Ajouter/retirer un shiny pour ce jeu"
+                              style={roundBtn(shiny, GOLD)}
+                            >✦</button>
+                          </div>
                         )}
-                        <button
-                          onClick={() => (shiny ? removeShinyForGame(f[1], f[2], g) : openShinyPrompt(f[1], f[2], g))}
-                          title="Ajouter/retirer un shiny pour ce jeu"
-                          style={{
-                            width: "100%", marginTop: 2, background: "transparent", border: "none", cursor: "pointer",
-                            fontFamily: "Inter, sans-serif", fontSize: 10.5, textAlign: "center",
-                            color: shiny ? GOLD : "#5a6b7a",
-                          }}
-                        >✦</button>
                       </div>
                     );
                   })}
                   {availableGames.length === 0 && (
                     <div key="forme" style={{
-                      borderRadius: 8, padding: "4px 4px 6px",
-                      background: genericCaught ? "rgba(76,175,131,0.25)" : "rgba(255,255,255,0.03)",
-                      border: `1px dashed ${LINE}`,
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+                      borderRadius: 999, border: `1px dashed ${LINE}`,
+                      background: genericCaught ? "rgba(76,175,131,0.12)" : "transparent",
+                      padding: "7px 6px",
                     }}>
-                      <button
-                        onClick={() => toggleGameCaught(f[1], f[2], "Forme")}
-                        title="Aucun jeu répertorié pour cette forme — sélectionnable quand même"
-                        style={{
-                          width: "100%", background: "transparent", border: "none", cursor: "pointer",
-                          fontFamily: "Inter, sans-serif", fontSize: 10.5, textAlign: "center",
-                          color: genericCaught ? OK : "#5a6b7a",
-                        }}
-                      >
-                        <div style={{ fontWeight: 700 }}>Forme</div>
-                        <div style={{ fontSize: 9 }}>{genericCaught ? "✓" : "✗"}</div>
-                      </button>
-                      <button
-                        onClick={() => (genericShiny ? removeShinyForGame(f[1], f[2], "Forme") : openShinyPrompt(f[1], f[2], "Forme"))}
-                        title="Ajouter/retirer un shiny pour cette forme"
-                        style={{
-                          width: "100%", marginTop: 2, background: "transparent", border: "none", cursor: "pointer",
-                          fontFamily: "Inter, sans-serif", fontSize: 10.5, textAlign: "center",
-                          color: genericShiny ? GOLD : "#5a6b7a",
-                        }}
-                      >✦</button>
+                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, color: TXT }}>Forme</div>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button
+                          onClick={() => toggleGameCaught(f[1], f[2], "Forme")}
+                          title="Aucun jeu répertorié pour cette forme — sélectionnable quand même"
+                          style={roundBtn(genericCaught, OK)}
+                        >{genericCaught ? "✓" : "✗"}</button>
+                        {cardMode !== "jeu" && (
+                          <button
+                            onClick={() => (genericShiny ? removeShinyForGame(f[1], f[2], "Forme") : openShinyPrompt(f[1], f[2], "Forme"))}
+                            title="Ajouter/retirer un shiny pour cette forme"
+                            style={roundBtn(genericShiny, GOLD)}
+                          >✦</button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -11772,16 +11889,34 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
               });
             })()}
             </div>
-            {selectedForms.length > 1 && (() => {
-              const cp = Math.min(cardPos, selectedForms.length - 1);
-              return (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 4 }}>
-                  <button onClick={() => setCardPos((p) => Math.max(p - 1, 0))} disabled={cp === 0} style={{ ...btnGhost, opacity: cp === 0 ? 0.4 : 1, cursor: cp === 0 ? "default" : "pointer" }}>← Précédent</button>
-                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>{cp + 1} / {selectedForms.length}</span>
-                  <button onClick={() => setCardPos((p) => Math.min(p + 1, selectedForms.length - 1))} disabled={cp === selectedForms.length - 1} style={{ ...btnGhost, opacity: cp === selectedForms.length - 1 ? 0.4 : 1, cursor: cp === selectedForms.length - 1 ? "default" : "pointer" }}>Suivant →</button>
-                </div>
-              );
-            })()}
+            <div style={{ marginTop: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
+                {selectedForms.length > 1 && (
+                  <button onClick={() => setCardPos((p) => Math.max(p - 1, 0))} disabled={currentCp === 0} style={{ ...btnGhost, opacity: currentCp === 0 ? 0.4 : 1, cursor: currentCp === 0 ? "default" : "pointer" }}>← Précédent</button>
+                )}
+                <CatalogQuickEditButton
+                  nom={selectedForms[0][1]}
+                  forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
+                  allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
+                  label
+                />
+                {selectedForms.length > 1 && (
+                  <button onClick={() => setCardPos((p) => Math.min(p + 1, selectedForms.length - 1))} disabled={currentCp === selectedForms.length - 1} style={{ ...btnGhost, opacity: currentCp === selectedForms.length - 1 ? 0.4 : 1, cursor: currentCp === selectedForms.length - 1 ? "default" : "pointer" }}>Suivant →</button>
+                )}
+              </div>
+              {selectedForms.length > 1 && (
+                <div style={{ textAlign: "center", fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, marginTop: 2 }}>{currentCp + 1} / {selectedForms.length}</div>
+              )}
+              <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
+                {[["home", "Home"], ["home+jeux", "Home + Jeu"], ["jeu", "Vue jeu"]].map(([k, l]) => (
+                  <button key={k} onClick={() => setCardMode(k)} style={{
+                    background: cardMode === k ? ACCENT : "transparent", color: cardMode === k ? "#fff" : MUTED,
+                    border: `1px solid ${cardMode === k ? ACCENT : LINE}`, borderRadius: 999, padding: "4px 10px",
+                    fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+                  }}>{l}</button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
         );
@@ -11795,12 +11930,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         }}>
           {filteredForms.slice(0, limit).map((r, i) => {
             const m = marksOf(r);
+            const rCaught = isCaughtEff(r);
             if (viewMode === "list") {
               return (
                 <button key={i} onClick={() => openSpecies(r[1], r[1] + "|" + (r[2] || ""))} style={{
                   display: "flex", alignItems: "center", gap: 8, textAlign: "left",
-                  background: r[5] ? "rgba(76,175,131,0.25)" : PANEL2,
-                  border: `1px solid ${r[5] ? OK : LINE}`,
+                  background: rCaught ? "rgba(76,175,131,0.25)" : PANEL2,
+                  border: `1px solid ${rCaught ? OK : LINE}`,
                   borderRadius: 18, padding: "7px 12px", cursor: "pointer",
                 }}>
                   <Sprite nom={r[1]} forme={r[2]} size={32} />
@@ -11829,8 +11965,8 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             return (
               <button key={i} onClick={() => openSpecies(r[1], r[1] + "|" + (r[2] || ""))} style={{
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 6, textAlign: "center",
-                background: r[5] ? "rgba(76,175,131,0.25)" : PANEL2,
-                border: `1px solid ${r[5] ? OK : LINE}`,
+                background: rCaught ? "rgba(76,175,131,0.25)" : PANEL2,
+                border: `1px solid ${rCaught ? OK : LINE}`,
                 borderRadius: 18, padding: "4px 2px", cursor: "pointer",
               }}>
                 <Sprite nom={r[1]} forme={r[2]} size={32} />
@@ -11903,7 +12039,11 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={[["list", "Liste"], ["grid", "Grille"]]} />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={[["list", "Liste"], ["grid", "Grille"]]} />
+                  <div style={{ width: 1, alignSelf: "stretch", background: LINE }} />
+                  <ViewToggle mode={catchMode} setMode={(m) => { setCatchMode(m); close(); }} options={[["home", "Home"], ["home+jeux", "Home + Jeu"]]} />
+                </div>
                 <div style={{ display: "flex", gap: 4, background: PANEL2, borderRadius: 8, padding: 3, border: `1px solid ${LINE}` }}>
                   {[["forms", "Par forme"], ["species", "Par Pokémon"]].map(([k, l]) => (
                     <button key={k} onClick={() => { setMode(k); close(); }} style={{
