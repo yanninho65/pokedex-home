@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.28.21.44";
+const APP_VERSION = "2026.8.28.21.58";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -3300,8 +3300,15 @@ function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext, center }) {
     <React.Fragment>
       {showArrows && <button onClick={onPrev} disabled={!hasPrev} aria-label="Pokémon précédent" style={{ ...btnStyle(hasPrev), left: 16 }}>‹</button>}
       {center && (
-        <div style={{ position: "fixed", bottom: 92, left: "50%", transform: "translateX(-50%)", zIndex: 105 }}>
-          {center}
+        // Centrage par flexbox pleine largeur (jamais `transform`, ni `left: 50%` seul) : tout
+        // `transform` sur cet ancestor créerait un nouveau "containing block" pour les
+        // descendants en `position: fixed` (ex. CatalogEntryModal ouvert depuis le bouton
+        // Modifier) — ceux-ci se retrouveraient positionnés/redimensionnés relativement à ce
+        // petit conteneur au lieu du viewport entier (fiche minuscule et coupée, piège déjà
+        // rencontré). `pointerEvents: "none"` sur le conteneur + `"auto"` sur son enfant unique
+        // évite de bloquer les clics sur toute la largeur de la bande.
+        <div style={{ position: "fixed", bottom: 92, left: 0, right: 0, zIndex: 105, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+          <div style={{ pointerEvents: "auto" }}>{center}</div>
         </div>
       )}
       {showArrows && <button onClick={onNext} disabled={!hasNext} aria-label="Pokémon suivant" style={{ ...btnStyle(hasNext), right: 16 }}>›</button>}
@@ -11413,6 +11420,20 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     const sources = gameTabSourcesAll && gameTabSourcesAll[g] && gameTabSourcesAll[g][key];
     return !!(sources && sources.length > 0);
   };
+  // Variante détaillée de marqueCaughtWithMode (§ demande explicite, fiche détail — mode
+  // "Home + Jeu" uniquement) : distingue "attrapé sur Home" de "attrapé uniquement en jeu"
+  // (`sourcedOnly`), même logique/couleur (PURPLE) que `isSourcedOnly` dans les onglets Home + jeu
+  // des marques (GameView, §5ter). `sourcedOnly` est toujours `false` en mode "home" et "jeu" —
+  // ce dernier doit rester vert, jamais violet.
+  const marqueCaughtInfo = (r, gi, dataMode) => {
+    if (r[8][gi]) return { caught: true, sourcedOnly: false };
+    if (dataMode !== "home+jeux") return { caught: false, sourcedOnly: false };
+    const g = games[gi];
+    const key = r[1] + "|" + (r[2] || "");
+    const sources = gameTabSourcesAll && gameTabSourcesAll[g] && gameTabSourcesAll[g][key];
+    const has = !!(sources && sources.length > 0);
+    return { caught: has, sourcedOnly: has };
+  };
   const marqueCaught = (r, gi) => marqueCaughtWithMode(r, gi, catchMode);
   // Statut "attrapé" global d'une forme sous le mode d'affichage courant (catchMode) — remplace
   // r[5] (toujours calculé en Home pur) partout où le statut doit réagir à ce sélecteur.
@@ -11903,18 +11924,25 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 <div style={{ display: "grid", gridTemplateColumns: isJeuMode ? "repeat(auto-fill, minmax(130px, 1fr))" : "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
                   {availableGames.map(({ g, gi }) => {
                     const caught = f[8][gi];
-                    const caughtEffCard = marqueCaughtWithMode(f, gi, cardMode);
+                    // sourcedOnly (§ demande explicite) : attrapé uniquement via game_tab_sources,
+                    // jamais sur Home — colorée en violet (PURPLE), même logique que les onglets
+                    // Home + jeu des marques (isSourcedOnly, GameView §5ter). Toujours false en
+                    // mode "home" et "jeu" (reste vert dans ces deux modes).
+                    const caughtInfo = marqueCaughtInfo(f, gi, cardMode);
+                    const caughtEffCard = caughtInfo.caught;
+                    const markColor = caughtInfo.sourcedOnly ? PURPLE : OK;
+                    const markBg = caughtInfo.sourcedOnly ? "rgba(179,157,219,0.18)" : "rgba(76,175,131,0.12)";
                     const shiny = f[9][gi];
                     const alpha = f[12] ? !!f[12][gi] : false;
                     const cap = DATA.alphaCapable[f[1] + "|" + (f[2] || "")];
                     const isAlphaGame = (g === "LA" || g === "LZA") && cap && cap[g];
                     const views = isJeuMode ? jeuViewsFor(g) : null;
                     return (
-                      <div key={g} style={{
+                      <div key={g} title={caughtInfo.sourcedOnly ? "Attrapé en jeu (pas encore sur Home)" : undefined} style={{
                         display: "flex", flexDirection: "column", alignItems: isJeuMode ? "stretch" : "center", gap: 5,
                         borderRadius: isJeuMode ? 14 : 999,
-                        border: `1px solid ${caughtEffCard ? OK : LINE}`,
-                        background: caughtEffCard ? "rgba(76,175,131,0.12)" : "transparent",
+                        border: `1px solid ${caughtEffCard ? markColor : LINE}`,
+                        background: caughtEffCard ? markBg : "transparent",
                         padding: isJeuMode ? "8px 8px" : "7px 6px",
                       }}>
                         <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, color: TXT, textAlign: isJeuMode ? "left" : "center" }}>{g}</div>
@@ -11946,8 +11974,8 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                           <div style={{ display: "flex", gap: 4 }}>
                             <button
                               onClick={() => (alpha ? toggleAlpha(f[1], f[2], g) : toggleGameCaught(f[1], f[2], g))}
-                              title={alpha ? "Attrapé en Alpha — clique pour décocher" : (caught ? "Attrapé — clique pour décocher" : "Manquant — clique pour cocher")}
-                              style={roundBtn(caughtEffCard, OK)}
+                              title={alpha ? "Attrapé en Alpha — clique pour décocher" : (caughtInfo.sourcedOnly ? "Attrapé en jeu (pas encore sur Home)" : (caught ? "Attrapé — clique pour décocher" : "Manquant — clique pour cocher"))}
+                              style={roundBtn(caughtEffCard, markColor)}
                             >{caughtEffCard ? "✓" : "✗"}</button>
                             {isAlphaGame && (
                               <button
