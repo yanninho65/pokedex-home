@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.29.13.13";
+const APP_VERSION = "2026.8.29.21.53";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -249,6 +249,16 @@ const GLASS_BG = "rgba(27,39,51,0.72)";
 const GLASS_BORDER = "1px solid rgba(255,255,255,0.12)";
 const GLASS_BLUR = "blur(20px)";
 const GLASS_SHADOW = "0 10px 30px rgba(0,0,0,0.45)";
+// Style de bouton rond partagé pour la ligne du bas des fiches détail (Shiny, Home/jeux) — même
+// gabarit que les flèches de FloatingCardNav (46px), utilisé pour Modifier (crayon seul) et
+// Fermer (×) ; le bouton "+ Capture" (Shiny) réutilise ce gabarit avec un fond GOLD par-dessus.
+const GLASS_ROUND_BTN = {
+  width: 46, height: 46, borderRadius: 999, padding: 0, flexShrink: 0,
+  background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
+  border: GLASS_BORDER, boxShadow: GLASS_SHADOW, color: "#fff",
+  display: "flex", alignItems: "center", justifyContent: "center",
+  fontSize: 18, lineHeight: 1, cursor: "pointer",
+};
 
 function pct(c, t) { return t === 0 ? 0 : Math.round((c / t) * 100); }
 // sel: null (= Tous, aucune restriction) | Set des valeurs cochées (peut être vide = Aucun)
@@ -3789,9 +3799,27 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   return (
     <div {...(hasNav ? swipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
-      {hasNav && (
-        <FloatingCardNav onPrev={onNavPrev} onNext={onNavNext} hasPrev={navIndex > 0} hasNext={navIndex < navTotal - 1} />
-      )}
+      {(() => {
+        // Modifier (crayon seul) / Fermer regroupés sur la ligne du bas, entre les flèches ‹ ›
+        // (comme National, sans bouton "+ Capture" ici — pas de création de capture depuis cette
+        // fenêtre, § demande explicite). "Fermer" route vers onCancel (pas de onClose dédié dans
+        // ce composant) — remplace l'ancien bouton "Annuler" du panneau, "Enregistrer" reste seul
+        // dans le panneau (action de sauvegarde explicite, distincte d'une simple fermeture).
+        return (
+          <FloatingCardNav
+            onPrev={onNavPrev}
+            onNext={onNavNext}
+            hasPrev={hasNav && navIndex > 0}
+            hasNext={hasNav && navIndex < navTotal - 1}
+            center={(
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CatalogQuickEditButton nom={nom} forme={forme} style={GLASS_ROUND_BTN} />
+                <button onClick={onCancel} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
+              </div>
+            )}
+          />
+        );
+      })()}
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
         <div style={{
           display: "flex", justifyContent: "center", alignItems: "center",
@@ -3809,7 +3837,6 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
             )}
           </div>
-          <CatalogQuickEditButton nom={nom} forme={forme} label />
         </div>
         {(lien || evoLabel) && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
@@ -3840,7 +3867,6 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
           />
         )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-          <button onClick={onCancel} style={btnGhost}>Annuler</button>
           <button onClick={() => onSave(value, jeu, numero)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
         </div>
       </div>
@@ -6333,13 +6359,24 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         const hasShinyNav = filtered.length > 1;
         return (
         <div {...(hasShinyNav ? shinySwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
-          {hasShinyNav && (
-            <FloatingCardNav onPrev={() => goShinyNav(-1)} onNext={() => goShinyNav(1)} hasPrev={shinyNavIdx > 0} hasNext={shinyNavIdx < filtered.length - 1} />
-          )}
+          <FloatingCardNav
+            onPrev={() => goShinyNav(-1)}
+            onNext={() => goShinyNav(1)}
+            hasPrev={hasShinyNav && shinyNavIdx > 0}
+            hasNext={hasShinyNav && shinyNavIdx < filtered.length - 1}
+            center={(
+              // Modifier (crayon seul) / + Capture / Fermer regroupés sur la ligne du bas, entre
+              // les flèches ‹ › (comme National) — ordre gauche→droite : Modifier, + Capture,
+              // Fermer (§ demande explicite, remplace l'ancien bouton × en haut de fiche et
+              // l'ancien bouton "+ Capture" flottant séparé).
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CatalogQuickEditButton nom={selectedEntry[1]} forme={selectedEntry[2]} style={GLASS_ROUND_BTN} />
+                <button onClick={() => addCatch(selected)} title="Ajouter une capture" style={{ ...GLASS_ROUND_BTN, background: GOLD, color: BG, border: "none", fontSize: 22, fontWeight: 800 }}>+</button>
+                <button onClick={closeEntry} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
+              </div>
+            )}
+          />
           <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
-              <button onClick={closeEntry} title="Fermer" style={{ background: "transparent", border: "none", color: MUTED, fontSize: 20, lineHeight: 1, cursor: "pointer", padding: 4 }}>×</button>
-            </div>
             <div style={{
               display: "flex", justifyContent: "center", alignItems: "center",
               background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
@@ -6356,7 +6393,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                   {showingAll ? `${allRecs.length} capture(s) enregistrée(s)` : `1 capture affichée sur ${allRecs.length}`}
                 </div>
               </div>
-              <CatalogQuickEditButton nom={selectedEntry[1]} forme={selectedEntry[2]} label />
             </div>
             {(() => {
               const lien = natInfoFor(selectedEntry[1], selectedEntry[2]).lien;
@@ -6433,16 +6469,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
               )}
             </div>
 
-            <button
-              onClick={() => addCatch(selected)}
-              title="Ajouter une capture"
-              style={{
-                position: "fixed", bottom: 92, left: "50%", transform: "translateX(-50%)", zIndex: 106,
-                background: GOLD, color: BG, border: "none", borderRadius: 999,
-                padding: "13px 20px", fontFamily: "Inter, sans-serif", fontSize: 13.5, fontWeight: 800,
-                cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
-              }}
-            >+ Capture</button>
         </div>
         );
       })()}
@@ -11830,30 +11856,23 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             hasPrev={hasNationalNav && nationalNavIndex > 0}
             hasNext={hasNationalNav && nationalNavIndex < nationalNavTotal - 1}
             center={(
-              <CatalogQuickEditButton
-                nom={selectedForms[0][1]}
-                forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
-                allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
-                label
-                onOpenChange={setCatalogEditOpen}
-                style={{
-                  background: GLASS_BG, backdropFilter: GLASS_BLUR, WebkitBackdropFilter: GLASS_BLUR,
-                  border: GLASS_BORDER, boxShadow: GLASS_SHADOW, color: "#fff",
-                  height: 46, borderRadius: 999, padding: "0 18px",
-                  fontFamily: "Inter, sans-serif", fontSize: 13, fontWeight: 700,
-                }}
-              />
+              // Modifier (crayon seul, désormais aligné sur Shiny/Home/jeux) / Fermer regroupés
+              // sur la ligne du bas, entre les flèches ‹ › — pas de bouton "+ Capture" ici
+              // (l'ajout d'un shiny reste une action contextuelle par marque, pas une action
+              // globale de la fiche).
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CatalogQuickEditButton
+                  nom={selectedForms[0][1]}
+                  forme={selectedForms.length === 1 ? selectedForms[0][2] : undefined}
+                  allForms={selectedForms.length > 1 ? selectedForms.map((f) => f[2] || "") : null}
+                  onOpenChange={setCatalogEditOpen}
+                  style={GLASS_ROUND_BTN}
+                />
+                <button onClick={closeSpecies} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
+              </div>
             )}
           />
           <div style={{ position: "relative", maxWidth: 520, width: "100%" }}>
-            <button onClick={closeSpecies} title="Fermer" style={{
-              position: "absolute", top: -14, right: -14, zIndex: 2,
-              width: 36, height: 36, borderRadius: "50%",
-              background: PANEL2, border: `1px solid ${LINE}`, color: TXT,
-              fontSize: 20, lineHeight: 1, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: "0 2px 10px rgba(0,0,0,0.45)",
-            }}>×</button>
             <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxHeight: "75vh", overflowY: "auto" }}>
             <div style={{
               display: "flex", justifyContent: "center", alignItems: "center", gap: 16,
@@ -15658,9 +15677,24 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
   return (
     <div {...(hasNav ? swipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
-      {hasNav && (
-        <FloatingCardNav onPrev={onNavPrev} onNext={onNavNext} hasPrev={navIndex > 0} hasNext={navIndex < navTotal - 1} />
-      )}
+      {(() => {
+        // Modifier (crayon seul) / Fermer regroupés sur la ligne du bas (comme BoxGroupModal) —
+        // "Fermer" route vers onCancel, "Enregistrer" reste seul dans le panneau.
+        return (
+          <FloatingCardNav
+            onPrev={onNavPrev}
+            onNext={onNavNext}
+            hasPrev={hasNav && navIndex > 0}
+            hasNext={hasNav && navIndex < navTotal - 1}
+            center={(
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CatalogQuickEditButton nom={nom} forme={forme} style={GLASS_ROUND_BTN} />
+                <button onClick={onCancel} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
+              </div>
+            )}
+          />
+        );
+      })()}
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
         <div style={{
           display: "flex", justifyContent: "center", alignItems: "center",
@@ -15678,7 +15712,6 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
             )}
           </div>
-          <CatalogQuickEditButton nom={nom} forme={forme} label />
         </div>
 
         {(lien || evoLabel) && (
@@ -15718,7 +15751,6 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
         </div>
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-          <button onClick={onCancel} style={btnGhost}>Annuler</button>
           <button onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked), numero })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
         </div>
       </div>
