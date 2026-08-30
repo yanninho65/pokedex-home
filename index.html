@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.30.16.26";
+const APP_VERSION = "2026.8.30.21.43";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2694,7 +2694,7 @@ function EvolutionLabelButton({ label, onClick, style }) {
 // JeuMultiSourceModal...) : le numéro national (`n`) est affiché en haut à gauche du cadre, gras,
 // plus gros, en blanc — plus de libellé "Numéro" ni de "#" devant. Reste modifiable comme avant
 // (crayon Modifier de la barre du bas, §5septies) mais rien dans l'affichage ne le signale.
-function FicheArtworkBlock({ n, children }) {
+function FicheArtworkBlock({ n, children, editableNumero, numeroValue, onNumeroChange, numeroPlaceholder }) {
   return (
     <div style={{
       position: "relative",
@@ -2702,11 +2702,26 @@ function FicheArtworkBlock({ n, children }) {
       background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
       padding: 14, marginBottom: 10,
     }}>
-      {(n != null && n !== "") && (
-        <div style={{
-          position: "absolute", top: 8, left: 12,
-          fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 15, color: "#fff", lineHeight: 1,
-        }}>{n}</div>
+      {editableNumero ? (
+        <input
+          className="pkdx-numero-input"
+          value={numeroValue}
+          onChange={(e) => onNumeroChange(e.target.value)}
+          maxLength={4}
+          placeholder={numeroPlaceholder != null ? String(numeroPlaceholder) : "—"}
+          style={{
+            position: "absolute", top: 8, left: 12, width: 44,
+            fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 15, color: "#fff", lineHeight: 1,
+            background: "transparent", border: "none", outline: "none", padding: 0, textAlign: "left",
+          }}
+        />
+      ) : (
+        (n != null && n !== "") && (
+          <div style={{
+            position: "absolute", top: 8, left: 12,
+            fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 15, color: "#fff", lineHeight: 1,
+          }}>{n}</div>
+        )
       )}
       {children}
     </div>
@@ -3455,57 +3470,44 @@ function effectiveGridCols(desired, windowWidth, minCellPx = 40, gapPx = 6, page
   return Math.max(1, Math.min(desired, maxFit));
 }
 
-// Modale de réglages de boîte/grille pour UNE vue d'une marque (Home / Home + jeu / vue
-// précise, § demande explicite) : lignes par boîte, colonnes par boîte (la capacité d'une
-// boîte est rows×cols, plus de champ "nombre par boîte" séparé), préfixe des noms de boîte
-// (ex. "6G" → "6G 1-29"), et nombre de Pokémon par ligne en vue Grille par défaut. Ouverte
-// depuis Paramètres → Marque → ⚙️ Réglages (BoxViewSettingsSection ci-dessous) — plus de bouton
-// sur la page elle-même. Persistée dans `game_view_box_settings` (JSON uniquement, jamais
-// dans l'Excel).
-function BoxViewSettingsModal({ gameKey, viewLabel, settings, onCancel, onSave }) {
-  const [rows, setRows] = useState(settings.rows);
-  const [cols, setCols] = useState(settings.cols);
-  const [prefix, setPrefix] = useState(settings.prefix);
-  const [gridCols, setGridCols] = useState(settings.gridCols);
-  const numField = (label, value, setValue, min = 1) => (
+// Bloc de champs réutilisable "réglages de boîte/grille" pour UNE vue d'une marque (Home /
+// Home + jeu / vue précise, § demande explicite) : lignes par boîte, colonnes par boîte (la
+// capacité d'une boîte est rows×cols, plus de champ "nombre par boîte" séparé), préfixe des
+// noms de boîte (ex. "6G" → "6G 1-29"), et nombre de Pokémon par ligne en vue Grille par
+// défaut. Vit directement dans JeuViewsSettingsModal (icône Pokédex de la barre du bas → ⚙️),
+// sous le nom de la vue en cours de modification — jamais dans les Paramètres généraux
+// (§ demande explicite). Persisté dans `game_view_box_settings` (JSON uniquement, jamais dans
+// l'Excel). `form`/`setForm` = state contrôlé { rows, cols, prefix, gridCols } côté appelant.
+function BoxSettingsFields({ form, setForm }) {
+  if (!form) return null;
+  const numField = (label, key, min = 1) => (
     <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, flex: 1 }}>
       {label}
       <input
-        type="number" min={min} value={value}
-        onChange={(e) => setValue(Math.max(min, parseInt(e.target.value, 10) || min))}
+        type="number" min={min} value={form[key]}
+        onChange={(e) => setForm((f) => ({ ...f, [key]: Math.max(min, parseInt(e.target.value, 10) || min) }))}
         style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }}
       />
     </label>
   );
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 360, width: "100%" }}>
-        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 4 }}>
-          Réglages des boîtes — {gameKey}
-        </div>
-        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 12 }}>{viewLabel}</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", gap: 10 }}>
-            {numField("Lignes par boîte", rows, setRows)}
-            {numField("Colonnes par boîte", cols, setCols)}
-          </div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
-            Capacité d'une boîte : {rows * cols} Pokémon.
-          </div>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Préfixe des noms de boîte
-            <input
-              value={prefix} onChange={(e) => setPrefix(e.target.value)}
-              style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }}
-            />
-          </label>
-          {numField("Pokémon par ligne en vue Grille (par défaut)", gridCols, setGridCols, 2)}
-        </div>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-          <button onClick={onCancel} style={btnGhost}>Annuler</button>
-          <button onClick={() => onSave({ rows, cols, prefix, gridCols })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
-        </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, background: BG, border: `1px solid ${LINE}`, borderRadius: 10, padding: 10 }}>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED, fontWeight: 700 }}>Réglages des boîtes</div>
+      <div style={{ display: "flex", gap: 10 }}>
+        {numField("Lignes par boîte", "rows")}
+        {numField("Colonnes par boîte", "cols")}
       </div>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10.5, color: MUTED }}>
+        Capacité d'une boîte : {form.rows * form.cols} Pokémon.
+      </div>
+      <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+        Préfixe des noms de boîte
+        <input
+          value={form.prefix} onChange={(e) => setForm((f) => ({ ...f, prefix: e.target.value }))}
+          style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }}
+        />
+      </label>
+      {numField("Pokémon par ligne en vue Grille (par défaut)", "gridCols", 2)}
     </div>
   );
 }
@@ -3937,16 +3939,18 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
         );
       })()}
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
-        <FicheArtworkBlock n={natInfo.n}>
+        <FicheArtworkBlock
+          editableNumero
+          numeroValue={numero}
+          onNumeroChange={setNumero}
+          numeroPlaceholder={numberPlaceholder}
+        >
           <Sprite nom={nom} forme={forme} size={96} />
         </FicheArtworkBlock>
         <FicheNameRow nom={nom} lien={lien} />
         <FicheFormeEvoRow forme={forme} evoLabel={evoLabel} onEvoClick={() => setShowEvoChain(true)} />
         <NumeroGroupeRow
-          showNumber={showNumber}
-          numero={numero}
-          setNumero={setNumero}
-          numberPlaceholder={numberPlaceholder}
+          showNumber={false}
           groupValue={value}
           setGroupValue={setValue}
           groupOptions={options}
@@ -3983,6 +3987,7 @@ function PairModeBlock({
   boxOverrides, setBoxGroup, boxGroupOptions, boxGroupRank,
   gameSourcesDict, setSource, setAllSources, modeMenuItem,
   marqueGames, onAvailabilityChanged, autoOpenKey,
+  getBoxSettingsFor, boxSettingsReady,
 }) {
   const bucketKey = gameKey + "_" + pair.key;
   const [viewMode, setViewMode] = useCachedState(filterCache, bucketKey, "viewMode", "list");
@@ -3992,8 +3997,9 @@ function PairModeBlock({
   const [boxGroupFilter, setBoxGroupFilter] = useState(null);
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, bucketKey, "jeuFilter", null);
   // Réglages boîte/grille propres à CETTE vue (rows/cols/prefix/gridCols, § demande explicite —
-  // éditables désormais depuis Paramètres → Marque → ⚙️ Réglages, plus de bouton sur cette page).
-  const { ready: boxSettingsReady, getFor: getBoxSettingsFor } = useGameViewBoxSettings(gameKey);
+  // éditables désormais depuis le bloc "Vues Jeu" de cette marque, sous le nom de la vue,
+  // jamais dans les Paramètres généraux). `getBoxSettingsFor` vient de GameView (une seule
+  // instance de useGameViewBoxSettings partagée, pour rester synchro avec la modale d'édition).
   const viewBoxSettings = getBoxSettingsFor(pair.key);
   const { rows: boxRows, cols: boxCols, prefix: boxPrefix } = viewBoxSettings;
   const boxSize = boxRows * boxCols;
@@ -4382,23 +4388,36 @@ function PairModeBlock({
 // modifier, ajouter ou supprimer des onglets en vue pop up"). Remplace l'ancien formulaire
 // intégré au menu "Mode" (trop étroit — champ nom disproportionné). Édition en place (renommer,
 // changer les jeux) + suppression + ajout, tout au même endroit.
-function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView, onCancel }) {
-  const [editingKey, setEditingKey] = useState(null); // null = pas d'édition, "new" = ajout, sinon clé de la vue éditée
+function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView, onCancel, getBoxSettingsFor, saveBoxSettingsFor }) {
+  const [editingKey, setEditingKey] = useState(null); // null = pas d'édition, "new" = ajout, "__home__"/"__home_jeu__" = pseudo-vues, sinon clé de la vue éditée
   const [formLabel, setFormLabel] = useState("");
   const [formKeys, setFormKeys] = useState([]);
+  // Réglages boîte/grille (lignes/colonnes/préfixe/nombre par ligne en grille) de la vue en
+  // cours de modification (§ demande explicite : "dans le bloc du jeu... en dessous du nom de
+  // la vue quand je modifie", jamais dans les Paramètres généraux). null tant qu'aucune édition
+  // n'est en cours ; réinitialisé à chaque ouverture d'édition via getBoxSettingsFor(key).
+  const [boxForm, setBoxForm] = useState(null);
   const jeuVideoByGen = useMemo(() => {
     const byGen = {};
     JEU_VIDEO_DEFS.forEach((d) => { (byGen[d.gen] || (byGen[d.gen] = [])).push(d); });
     return byGen;
   }, []);
-  const startAdd = () => { setEditingKey("presets"); setFormLabel(""); setFormKeys([]); };
-  const startCustom = () => { setEditingKey("new"); setFormLabel(""); setFormKeys([]); };
+  const loadBoxForm = (key) => {
+    if (!getBoxSettingsFor) { setBoxForm(null); return; }
+    const s = getBoxSettingsFor(key);
+    setBoxForm({ rows: s.rows, cols: s.cols, prefix: s.prefix, gridCols: s.gridCols });
+  };
+  const startAdd = () => { setEditingKey("presets"); setFormLabel(""); setFormKeys([]); setBoxForm(null); };
+  const startCustom = () => { setEditingKey("new"); setFormLabel(""); setFormKeys([]); setBoxForm(null); };
   const pickPreset = async (preset) => {
     await addView(preset.label, preset.jeuKeys);
     cancelForm();
   };
-  const startEdit = (v) => { setEditingKey(v.key); setFormLabel(v.label); setFormKeys(v.jeuKeys || []); };
-  const cancelForm = () => { setEditingKey(null); setFormLabel(""); setFormKeys([]); };
+  const startEdit = (v) => { setEditingKey(v.key); setFormLabel(v.label); setFormKeys(v.jeuKeys || []); loadBoxForm(v.key); };
+  // Pseudo-vues fixes Home / Home + Jeu (§ demande explicite, ajoutées en haut de la liste) —
+  // pas de nom ni de jeux à éditer, seulement leurs réglages de boîte/grille propres.
+  const startEditPseudo = (key) => { setEditingKey(key); setFormLabel(""); setFormKeys([]); loadBoxForm(key); };
+  const cancelForm = () => { setEditingKey(null); setFormLabel(""); setFormKeys([]); setBoxForm(null); };
   const toggleFormKey = (k) => {
     setFormKeys((prev) => {
       const has = prev.includes(k);
@@ -4410,16 +4429,29 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
       return next;
     });
   };
+  const isPseudoView = editingKey === "__home__" || editingKey === "__home_jeu__";
   const saveForm = async () => {
+    if (isPseudoView) {
+      if (saveBoxSettingsFor && boxForm) await saveBoxSettingsFor(editingKey, boxForm);
+      cancelForm();
+      return;
+    }
     if (formKeys.length === 0 || !formLabel.trim()) return;
-    if (editingKey === "new") await addView(formLabel.trim(), formKeys);
-    else await updateView(editingKey, formLabel.trim(), formKeys);
+    if (editingKey === "new") {
+      await addView(formLabel.trim(), formKeys);
+      // Réglages boîte non enregistrés pour une vue tout juste créée (clé pas encore connue
+      // ici) — reste modifiable ensuite via le crayon, une fois la vue créée.
+    } else {
+      await updateView(editingKey, formLabel.trim(), formKeys);
+      if (saveBoxSettingsFor && boxForm) await saveBoxSettingsFor(editingKey, boxForm);
+    }
     cancelForm();
   };
 
   const formOpen = editingKey !== null;
   const pickingPreset = editingKey === "presets";
   const gameLabel = (k) => JEU_VIDEO_DEFS.find((d) => d.key === k)?.label || k;
+  const PSEUDO_VIEWS = [{ key: "__home__", label: "Home" }, { key: "__home_jeu__", label: "Home + Jeu" }];
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -4431,6 +4463,14 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
 
         {!formOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {PSEUDO_VIEWS.map((pv) => (
+              <div key={pv.key} style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${LINE}`, borderRadius: 12, padding: "8px 10px" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, fontWeight: 700 }}>{pv.label}</div>
+                </div>
+                <button onClick={() => startEditPseudo(pv.key)} title="Réglages des boîtes" style={{ background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8, width: 30, height: 30, color: MUTED, cursor: "pointer" }}>✎</button>
+              </div>
+            ))}
             {(views || []).length === 0 && (
               <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED, fontStyle: "italic" }}>Aucune vue configurée pour l'instant.</div>
             )}
@@ -4470,7 +4510,20 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
           </div>
         )}
 
-        {formOpen && !pickingPreset && (
+        {formOpen && !pickingPreset && isPseudoView && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>
+              {editingKey === "__home__" ? "Home" : "Home + Jeu"}
+            </div>
+            <BoxSettingsFields form={boxForm} setForm={setBoxForm} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={cancelForm} style={btnGhost}>Annuler</button>
+              <button onClick={saveForm} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
+            </div>
+          </div>
+        )}
+
+        {formOpen && !pickingPreset && !isPseudoView && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
             <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 13, color: TXT }}>
               {editingKey === "new" ? "Nouvelle vue" : "Modifier la vue"}
@@ -4510,6 +4563,9 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
                 }}
               />
             </label>
+            {editingKey !== "new" && (
+              <BoxSettingsFields form={boxForm} setForm={setBoxForm} />
+            )}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button onClick={cancelForm} style={btnGhost}>Annuler</button>
               <button
@@ -4702,7 +4758,13 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // XXS/XXL), dans le même format de pilules.
   const isGoMarque = gameKey === "Go";
   const [go1Mode, setGo1Mode] = useCachedState(filterCache, "go1", "mode", "pokedex");
-  const goModeOptions = isGoMarque ? [{ key: "home", label: "Home" }, { key: "go1", label: "Go 1" }, { key: "go2", label: "Go 2" }] : [];
+  // Go 1 / Go 2 restent deux options FIXES, en plus des vues normales (Home + jeu / Home / vues
+  // créées via ⚙️) — Go fonctionne désormais "sur le même principe que les autres marques"
+  // (§ demande explicite), Go 1/Go 2 ne sont pas affectés (routage par `goSubView`, toujours
+  // prioritaire, voir plus bas — indépendant de `viMode`/marquePairs).
+  const goModeOptions = isGoMarque ? [{ key: "go1", label: "Go 1" }, { key: "go2", label: "Go 2" }] : [];
+  // Un bouton Home + jeu/Home/vue est actif seulement si on n'est pas sur Go 1/Go 2.
+  const viModeActive = !(isGoMarque && (goSubView === "go1" || goSubView === "go2"));
   // Ouverture automatique du menu "Mode" (§ demande explicite, affinée en plusieurs temps) :
   // - en arrivant sur cette marque DEPUIS UNE AUTRE MARQUE (cameFromMarqueSwitch, prop reçue de
   //   App) → le jeu déjà choisi reste ouvert (viMode/goSubView sont persistés, voir plus haut),
@@ -4716,56 +4778,58 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   //   cameFromMarqueSwitch (qui ne reflète que l'origine du montage initial de cet onglet).
   const hasUserInteractedRef = useRef(false);
   const effectiveAutoOpenMode = cameFromMarqueSwitch || hasUserInteractedRef.current;
+  const nonHomeJeuSelected = hasJeuPairs && viMode !== "home_jeu";
   const modeMenuItem = {
     key: "vimode", title: "Mode", icon: BarIcon.dex,
-    active: isGoMarque ? (goSubView === "go1" || goSubView === "go2") : (hasJeuPairs && viMode !== "home_jeu"),
+    active: isGoMarque ? (goSubView === "go1" || goSubView === "go2" || nonHomeJeuSelected) : nonHomeJeuSelected,
     render: (close) => (
       <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 200 }}>
         <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-          {isGoMarque
-            ? goModeOptions.map((m) => (
+          {viModeOptions.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => {
+                if (isGoMarque) setGoSubView("home");
+                setViMode(m.key);
+                close();
+              }}
+              style={{
+                ...btnGhost, padding: "7px 12px",
+                background: viModeActive && viMode === m.key ? PURPLE : "transparent",
+                color: viModeActive && viMode === m.key ? "#fff" : MUTED,
+                border: `1px solid ${viModeActive && viMode === m.key ? PURPLE : LINE}`,
+                fontWeight: viModeActive && viMode === m.key ? 800 : 500,
+              }}
+            >{m.label}</button>
+          ))}
+          {isGoMarque && goModeOptions.map((m) => (
                 <button
                   key={m.key}
                   onClick={() => {
                     // § demande explicite : ne rouvrir automatiquement le menu qu'en sélectionnant
-                    // "Go 1" (pour révéler ses sous-modes) — "Home" et "Go 2" sont des choix finaux,
-                    // le menu doit se fermer normalement, pas se rouvrir tout seul sur la vue suivante.
+                    // "Go 1" (pour révéler ses sous-modes) — "Go 2" est un choix final, le menu
+                    // doit se fermer normalement, pas se rouvrir tout seul sur la vue suivante.
                     if (m.key === "go1") hasUserInteractedRef.current = true;
                     setGoSubView(m.key);
                     close();
                   }}
                   style={{
                     ...btnGhost, padding: "7px 12px",
-                    background: goSubView === m.key ? PURPLE : "transparent",
-                    color: goSubView === m.key ? "#fff" : MUTED,
-                    border: `1px solid ${goSubView === m.key ? PURPLE : LINE}`,
-                    fontWeight: goSubView === m.key ? 800 : 500,
-                  }}
-                >{m.label}</button>
-              ))
-            : viModeOptions.map((m) => (
-                <button
-                  key={m.key}
-                  onClick={() => { setViMode(m.key); close(); }}
-                  style={{
-                    ...btnGhost, padding: "7px 12px",
-                    background: viMode === m.key ? PURPLE : "transparent",
-                    color: viMode === m.key ? "#fff" : MUTED,
-                    border: `1px solid ${viMode === m.key ? PURPLE : LINE}`,
-                    fontWeight: viMode === m.key ? 800 : 500,
+                    background: !viModeActive && goSubView === m.key ? PURPLE : "transparent",
+                    color: !viModeActive && goSubView === m.key ? "#fff" : MUTED,
+                    border: `1px solid ${!viModeActive && goSubView === m.key ? PURPLE : LINE}`,
+                    fontWeight: !viModeActive && goSubView === m.key ? 800 : 500,
                   }}
                 >{m.label}</button>
               ))}
-          {!isGoMarque && (
-            <button
-              onClick={() => { setJeuViewsSettingsOpen(true); close(); }}
-              title="Modifier, ajouter ou supprimer des vues"
-              style={{
-                background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8,
-                width: 30, height: 30, color: MUTED, cursor: "pointer", flexShrink: 0,
-              }}
-            >⚙️</button>
-          )}
+          <button
+            onClick={() => { setJeuViewsSettingsOpen(true); close(); }}
+            title="Modifier, ajouter ou supprimer des vues"
+            style={{
+              background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8,
+              width: 30, height: 30, color: MUTED, cursor: "pointer", flexShrink: 0,
+            }}
+          >⚙️</button>
         </div>
         {isGoMarque && goSubView === "go1" && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingTop: 10, borderTop: `1px solid ${LINE}` }}>
@@ -4809,7 +4873,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // Boîtes Home dynamiques : réglages par vue (rows/cols/prefix/gridCols, § demande explicite —
   // Home et Home + jeu ont chacun leur propre réglage, édité depuis Paramètres → Marque →
   // ⚙️ Réglages, plus de bouton sur cette page) + surcharges de groupe par Pokémon.
-  const { ready: boxSettingsReady, getFor: getBoxSettingsFor } = useGameViewBoxSettings(gameKey);
+  const { ready: boxSettingsReady, getFor: getBoxSettingsFor, save: saveBoxSettingsFor } = useGameViewBoxSettings(gameKey);
   const homeBoxSettings = getBoxSettingsFor("__home__");
   const homeJeuBoxSettings = getBoxSettingsFor("__home_jeu__");
   const { rows: homeBoxRows, cols: homeBoxCols, prefix: homeBoxPrefix } = homeBoxSettings;
@@ -5187,6 +5251,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           marqueGames={marqueGamesWithHome}
           onAvailabilityChanged={bumpJeuVideoVersion}
           autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined}
+          getBoxSettingsFor={getBoxSettingsFor}
+          boxSettingsReady={boxSettingsReady}
         />
         {jeuViewsSettingsOpen && (
           <JeuViewsSettingsModal
@@ -5196,6 +5262,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             removeView={removeJeuView}
             updateView={updateJeuView}
             onCancel={() => setJeuViewsSettingsOpen(false)}
+            getBoxSettingsFor={getBoxSettingsFor}
+            saveBoxSettingsFor={saveBoxSettingsFor}
           />
         )}
       </React.Fragment>
@@ -5329,6 +5397,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           removeView={removeJeuView}
           updateView={updateJeuView}
           onCancel={() => setJeuViewsSettingsOpen(false)}
+          getBoxSettingsFor={getBoxSettingsFor}
+          saveBoxSettingsFor={saveBoxSettingsFor}
         />
       )}
 
@@ -10811,134 +10881,6 @@ function NumeroVueSection({ collapsedVal, onToggle }) {
   );
 }
 
-// Bloc "Réglages des boîtes" (§ demande explicite : bouton ⚙️ dans le bloc Marque) — pour une
-// marque choisie, liste ses vues (Home, Home + jeu, puis chaque vue Jeu précise configurée,
-// § vues Jeu) ; un crayon par ligne ouvre BoxViewSettingsModal (lignes/colonnes/préfixe/
-// nombre par ligne en grille) pour CETTE vue. Remplace l'ancien bouton ⚙️ qui vivait sur la
-// page de chaque marque (un seul réglage partagé par les 3 modes, plus de champ "nombre par
-// boîte" séparé — voir BoxViewSettingsModal/useGameViewBoxSettings).
-function BoxViewSettingsSection({ collapsedVal, onToggle, marques }) {
-  const [marque, setMarque] = useState("");
-  const [jeuViews, setJeuViews] = useState([]);
-  const [editingView, setEditingView] = useState(null); // { key, label } | null
-  const [editingSettings, setEditingSettings] = useState(null);
-  const [oldBoxSettings, setOldBoxSettings] = useState(null);
-  const [allBoxViewSettings, setAllBoxViewSettings] = useState({});
-
-  useEffect(() => {
-    if (!marque) { setJeuViews([]); return; }
-    (async () => {
-      try {
-        const res = await window.storage.get("custom_jeu_views", false);
-        const all = res && res.value ? JSON.parse(res.value) : {};
-        setJeuViews(all[marque] || []);
-      } catch (e) { setJeuViews([]); }
-      try {
-        const res2 = await window.storage.get("box_settings", false);
-        const allOld = res2 && res2.value ? JSON.parse(res2.value) : {};
-        setOldBoxSettings(allOld[marque] || null);
-      } catch (e) { setOldBoxSettings(null); }
-      try {
-        const res3 = await window.storage.get("game_view_box_settings", false);
-        const all3 = res3 && res3.value ? JSON.parse(res3.value) : {};
-        setAllBoxViewSettings(all3[marque] || {});
-      } catch (e) { setAllBoxViewSettings({}); }
-    })();
-  }, [marque]);
-
-  const views = marque ? [
-    { key: "__home__", label: "Home" },
-    { key: "__home_jeu__", label: "Home + Jeu" },
-    ...jeuViews.map((v) => ({ key: v.key, label: v.label })),
-  ] : [];
-
-  const settingsFor = (viewKey) => ({
-    ...defaultBoxViewSettings(marque, oldBoxSettings),
-    ...(allBoxViewSettings[viewKey] || {}),
-  });
-
-  const openEdit = (v) => {
-    setEditingView(v);
-    setEditingSettings(settingsFor(v.key));
-  };
-
-  const saveEdit = async (patch) => {
-    let all = {};
-    try {
-      const res = await window.storage.get("game_view_box_settings", false);
-      all = res && res.value ? JSON.parse(res.value) : {};
-    } catch (e) {}
-    const forMarque = { ...(all[marque] || {}) };
-    forMarque[editingView.key] = { ...defaultBoxViewSettings(marque, oldBoxSettings), ...(forMarque[editingView.key] || {}), ...patch };
-    const next = { ...all, [marque]: forMarque };
-    try { await window.storage.set("game_view_box_settings", JSON.stringify(next), false); } catch (e) {}
-    setAllBoxViewSettings(forMarque);
-    setEditingView(null);
-    setEditingSettings(null);
-  };
-
-  return (
-    <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
-      <button
-        onClick={onToggle}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-          background: "transparent", border: "none", cursor: "pointer", padding: 0,
-          marginBottom: collapsedVal ? 0 : 10,
-        }}
-      >
-        <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: TXT }}>⚙️ Réglages des boîtes</span>
-        <span style={{ color: MUTED, fontSize: 12, transform: collapsedVal ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
-      </button>
-      {!collapsedVal && (
-        <React.Fragment>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
-            Choisis une marque, puis règle chaque vue (Home, Home + jeu, et chaque vue Jeu précise configurée) : nombre de lignes et de colonnes par boîte (la capacité d'une boîte est lignes × colonnes), préfixe des noms de boîte, et nombre de Pokémon par ligne par défaut en vue Grille.
-          </div>
-          <Picker
-            value={marque}
-            onChange={setMarque}
-            options={marques}
-            placeholder="— choisir une marque —"
-            buttonStyle={{ ...selectStyle, width: "100%", marginBottom: 10, display: "block", textAlign: "left" }}
-            panelWidth={220}
-          />
-          {marque && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {views.map((v) => {
-                const s = settingsFor(v.key);
-                return (
-                  <div key={v.key} style={{ display: "flex", alignItems: "center", gap: 8, background: BG, border: `1px solid ${LINE}`, borderRadius: 10, padding: "8px 10px" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600 }}>{v.label}</div>
-                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
-                        {s.rows}×{s.cols} ({s.rows * s.cols}/boîte) · préfixe "{s.prefix}" · {s.gridCols}/ligne en grille
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => openEdit(v)}
-                      title="Modifier"
-                      style={{ background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8, width: 30, height: 30, color: MUTED, cursor: "pointer", flexShrink: 0, fontSize: 13 }}
-                    >✎</button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </React.Fragment>
-      )}
-      {editingView && editingSettings && (
-        <BoxViewSettingsModal
-          gameKey={marque}
-          viewLabel={editingView.label}
-          settings={editingSettings}
-          onCancel={() => { setEditingView(null); setEditingSettings(null); }}
-          onSave={saveEdit}
-        />
-      )}
-    </div>
-  );
-}
 
 function SettingsView({
   onSaveStateChange,
@@ -10966,7 +10908,7 @@ function SettingsView({
   const [modeAddOpen, setModeAddOpen] = useState(false);
   const [detailAddOpen, setDetailAddOpen] = useState(false);
   const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
-  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, numerovue: true, boxview: true, catalog: true, detail: true, restrict: true, gist: true });
+  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, numerovue: true, catalog: true, detail: true, restrict: true, gist: true });
   const [gistTokenDraft, setGistTokenDraft] = useState(gistToken || "");
   const [gistIdDraft, setGistIdDraft] = useState(gistId || "");
   useEffect(() => { setGistTokenDraft(gistToken || ""); }, [gistToken]);
@@ -11186,10 +11128,7 @@ function SettingsView({
       </div>
       <SettingsSection title="Marque" color={TXT} kind="marque" values={marques}
         collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
-        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete}
-        onHeaderButton={() => setCollapsed((c) => ({ ...c, boxview: false }))}
-        headerButtonTitle="Réglages des boîtes (lignes, colonnes, préfixe, grille)" headerButtonIcon="⚙️" />
-      <BoxViewSettingsSection collapsedVal={collapsed.boxview} onToggle={() => toggleSection("boxview")} marques={marques} />
+        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
       <SettingsSection title="Méthode de capture" color={GOLD} kind="mode" values={modes}
         collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
         doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
@@ -16003,16 +15942,19 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
         );
       })()}
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
-        <FicheArtworkBlock n={natInfo.n}>
+        <FicheArtworkBlock
+          editableNumero
+          numeroValue={numero}
+          onNumeroChange={setNumero}
+          numeroPlaceholder={numberPlaceholder}
+        >
           <Sprite nom={nom} forme={forme} size={96} />
         </FicheArtworkBlock>
         <FicheNameRow nom={nom} lien={lien} />
         <FicheFormeEvoRow forme={forme} evoLabel={evoLabel} onEvoClick={() => setShowEvoChain(true)} />
 
         <NumeroGroupeRow
-          numero={numero}
-          setNumero={setNumero}
-          numberPlaceholder={numberPlaceholder}
+          showNumber={false}
           groupValue={group}
           setGroupValue={setGroup}
           groupOptions={options}
