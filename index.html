@@ -227,7 +227,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.29.21.53";
+const APP_VERSION = "2026.8.30.16.26";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2688,6 +2688,65 @@ function EvolutionLabelButton({ label, onClick, style }) {
   );
 }
 
+// ---- Fiche détail — en-tête harmonisé (§ demande explicite : "harmoniser dans tout le fichier",
+// numéro national en haut à gauche du cadre d'artwork) --------------------------------------
+// Cadre d'artwork partagé par toutes les fiches détail (National, Shiny, BoxGroupModal,
+// JeuMultiSourceModal...) : le numéro national (`n`) est affiché en haut à gauche du cadre, gras,
+// plus gros, en blanc — plus de libellé "Numéro" ni de "#" devant. Reste modifiable comme avant
+// (crayon Modifier de la barre du bas, §5septies) mais rien dans l'affichage ne le signale.
+function FicheArtworkBlock({ n, children }) {
+  return (
+    <div style={{
+      position: "relative",
+      display: "flex", justifyContent: "center", alignItems: "center", gap: 16,
+      background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
+      padding: 14, marginBottom: 10,
+    }}>
+      {(n != null && n !== "") && (
+        <div style={{
+          position: "absolute", top: 8, left: 12,
+          fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 15, color: "#fff", lineHeight: 1,
+        }}>{n}</div>
+      )}
+      {children}
+    </div>
+  );
+}
+// Ligne Nom + bouton Poképédia (pilule, bord ACCENT) — même emplacement/format partout.
+// `extra` : contenu additionnel optionnel affiché sous le nom (ex. compteur de captures Shiny).
+function FicheNameRow({ nom, lien, extra }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>{nom}</div>
+        {extra}
+      </div>
+      {lien && (
+        <a href={lien} target="_blank" rel="noreferrer" style={{
+          display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none", whiteSpace: "nowrap",
+          fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: ACCENT,
+          border: `1px solid ${ACCENT}66`, borderRadius: 999, padding: "7px 14px", flexShrink: 0,
+        }}>
+          Poképédia ↗
+        </a>
+      )}
+    </div>
+  );
+}
+// Ligne Forme (à gauche) + Évolution (à droite) — même emplacement/format partout.
+function FicheFormeEvoRow({ forme, evoLabel, onEvoClick }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600 }}>
+        {forme || "Forme normale"}
+      </div>
+      {evoLabel && (
+        <EvolutionLabelButton label={evoLabel} onClick={onEvoClick} />
+      )}
+    </div>
+  );
+}
+
 function buildAlphaBaseline() {
   // DATA.nat rows: [..., alphaCapableLA(10), alphaCapableLZA(11), alphaCaughtLA(12), alphaCaughtLZA(13)]
   const base = {};
@@ -2814,8 +2873,9 @@ function computeGameSortOrder(gameKey, rows, overrides, groupRank, numberOverrid
 // nommer les boîtes (première/dernière valeur du libellé), pas seulement au tri — même principe
 // que `computeGameSortOrder`. Absent pour Home/Home + jeu (comportement inchangé, numéro de la
 // marque toujours utilisé pour le libellé).
-function computeGameBoxes(gameKey, rows, overrides, boxSize, prefix, order, numberOverrides) {
+function computeGameBoxes(gameKey, rows, overrides, boxSize, prefix, order, numberOverrides, cols) {
   const size = boxSize && boxSize > 0 ? boxSize : 30;
+  const nCols = cols && cols > 0 ? cols : 6;
   const pfx = prefix != null ? prefix : (DATA.boxPrefixDefault[gameKey] || "");
   const seq = order || rows.map((_, i) => i);
   const result = new Array(rows.length);
@@ -2851,7 +2911,7 @@ function computeGameBoxes(gameKey, rows, overrides, boxSize, prefix, order, numb
     for (let pos = b.start; pos <= b.end; pos++) {
       const rowIdx = seq[pos];
       const posInBox = pos - b.start;
-      result[rowIdx] = { nboite: bi + 1, boite: label, l: Math.floor(posInBox / 6) + 1, c: (posInBox % 6) + 1, groupe: groupsBySeqPos[pos] };
+      result[rowIdx] = { nboite: bi + 1, boite: label, l: Math.floor(posInBox / nCols) + 1, c: (posInBox % nCols) + 1, groupe: groupsBySeqPos[pos] };
     }
   });
   return result;
@@ -2895,40 +2955,77 @@ function useBoxGroupOptions(gameKey) {
   return options;
 }
 
-// Réglages de boîte par jeu (nb de Pokémon par boîte + préfixe), stockage `box_settings` =
-// { [jeu]: { size, prefix } }.
-function useBoxSettings(gameKey) {
-  const [size, setSize] = useState(30);
-  const [prefix, setPrefix] = useState(DATA.boxPrefixDefault[gameKey] || "");
-  const [ready, setReady] = useState(false);
+// Réglages de boîte + grille PAR VUE (Home / Home + jeu / vue précise), stockage
+// `game_view_box_settings` = { [marque]: { [viewKey]: { rows, cols, prefix, gridCols } } }
+// (§ demande explicite). Remplace l'ancien `box_settings` (un seul "nombre par boîte" partagé
+// par les 3 modes, alors que l'affichage réel était figé en dur à 5×6 dans BoxGrid — un
+// "nombre par boîte" différent de 30 pouvait donc faire disparaître silencieusement des
+// Pokémon de l'affichage). La capacité d'une boîte est désormais TOUJOURS rows×cols, affichée
+// fidèlement (plus de valeur "nombre par boîte" séparée à maintenir en cohérence). viewKey :
+// "__home__"/"__home_jeu__" pour les 2 modes agrégés, sinon la clé de la vue précise
+// (pair.key, `custom_jeu_views`). Enregistré uniquement en JSON (`ALL_KEYS`), jamais dans
+// l'Excel (comme l'ancien `box_settings`).
+// Valeurs par défaut : 5 lignes × 6 colonnes, 6 Pokémon par ligne en vue Grille. Si l'ancien
+// `box_settings[marque]` existe déjà (réglage fait avant cette mise à jour), on en dérive un
+// défaut de départ (cols=6 comme l'affichage figé précédent, rows = ancien nombre par boîte
+// arrondi au-dessus / 6) pour ne perdre aucun réglage déjà fait — cette dérivation n'est
+// utilisée que tant qu'aucune valeur n'a encore été enregistrée dans la nouvelle clé.
+function defaultBoxViewSettings(gameKey, oldBoxSettings) {
+  if (oldBoxSettings && oldBoxSettings.size && oldBoxSettings.size > 0) {
+    const cols = 6;
+    const rows = Math.max(1, Math.ceil(oldBoxSettings.size / cols));
+    return {
+      rows, cols,
+      prefix: oldBoxSettings.prefix != null ? oldBoxSettings.prefix : (DATA.boxPrefixDefault[gameKey] || ""),
+      gridCols: 6,
+    };
+  }
+  return { rows: 5, cols: 6, prefix: DATA.boxPrefixDefault[gameKey] || "", gridCols: 6 };
+}
+function useGameViewBoxSettings(gameKey) {
+  const [byView, setByView] = useState(null); // null tant que non chargé, sinon { [viewKey]: {...} }
+  const [oldSettings, setOldSettings] = useState(null);
   useEffect(() => {
     let cancelled = false;
-    setReady(false);
+    setByView(null);
     (async () => {
-      let cfg = {};
+      let forGame = {};
       try {
-        const res = await window.storage.get("box_settings", false);
+        const res = await window.storage.get("game_view_box_settings", false);
         const all = res && res.value ? JSON.parse(res.value) : {};
-        cfg = all[gameKey] || {};
+        forGame = all[gameKey] || {};
+      } catch (e) {}
+      let old = null;
+      try {
+        const res2 = await window.storage.get("box_settings", false);
+        const allOld = res2 && res2.value ? JSON.parse(res2.value) : {};
+        old = allOld[gameKey] || null;
       } catch (e) {}
       if (cancelled) return;
-      setSize(cfg.size && cfg.size > 0 ? cfg.size : 30);
-      setPrefix(cfg.prefix != null ? cfg.prefix : (DATA.boxPrefixDefault[gameKey] || ""));
-      setReady(true);
+      setOldSettings(old);
+      setByView(forGame);
     })();
     return () => { cancelled = true; };
   }, [gameKey]);
-  const save = async (newSize, newPrefix) => {
-    setSize(newSize);
-    setPrefix(newPrefix);
-    try {
-      const res = await window.storage.get("box_settings", false);
-      const all = res && res.value ? JSON.parse(res.value) : {};
-      all[gameKey] = { size: newSize, prefix: newPrefix };
-      await window.storage.set("box_settings", JSON.stringify(all), false);
-    } catch (e) {}
+  const ready = byView !== null;
+  const getFor = (viewKey) => {
+    const def = defaultBoxViewSettings(gameKey, oldSettings);
+    const stored = (byView && byView[viewKey]) || {};
+    return { ...def, ...stored };
   };
-  return { size, prefix, ready, save };
+  const save = async (viewKey, patch) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("game_view_box_settings", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const forGame = { ...(all[gameKey] || {}) };
+    forGame[viewKey] = { ...defaultBoxViewSettings(gameKey, oldSettings), ...(forGame[viewKey] || {}), ...patch };
+    const next = { ...all, [gameKey]: forGame };
+    try { await window.storage.set("game_view_box_settings", JSON.stringify(next), false); } catch (e) {}
+    setByView(forGame);
+  };
+  return { ready, getFor, save };
 }
 
 // Groupe de boîte personnalisé par Pokémon (surcharge de `DATA.boxGroups`), stockage
@@ -3358,37 +3455,55 @@ function effectiveGridCols(desired, windowWidth, minCellPx = 40, gapPx = 6, page
   return Math.max(1, Math.min(desired, maxFit));
 }
 
-// Modale de réglages de boîte pour un jeu : nombre de Pokémon par boîte + préfixe des noms
-// de boîte (ex. "6G" → "6G 1-29"). Persisté par jeu dans `box_settings`.
-function BoxSettingsModal({ gameKey, size, prefix, onCancel, onSave }) {
-  const [localSize, setLocalSize] = useState(size);
-  const [localPrefix, setLocalPrefix] = useState(prefix);
+// Modale de réglages de boîte/grille pour UNE vue d'une marque (Home / Home + jeu / vue
+// précise, § demande explicite) : lignes par boîte, colonnes par boîte (la capacité d'une
+// boîte est rows×cols, plus de champ "nombre par boîte" séparé), préfixe des noms de boîte
+// (ex. "6G" → "6G 1-29"), et nombre de Pokémon par ligne en vue Grille par défaut. Ouverte
+// depuis Paramètres → Marque → ⚙️ Réglages (BoxViewSettingsSection ci-dessous) — plus de bouton
+// sur la page elle-même. Persistée dans `game_view_box_settings` (JSON uniquement, jamais
+// dans l'Excel).
+function BoxViewSettingsModal({ gameKey, viewLabel, settings, onCancel, onSave }) {
+  const [rows, setRows] = useState(settings.rows);
+  const [cols, setCols] = useState(settings.cols);
+  const [prefix, setPrefix] = useState(settings.prefix);
+  const [gridCols, setGridCols] = useState(settings.gridCols);
+  const numField = (label, value, setValue, min = 1) => (
+    <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, flex: 1 }}>
+      {label}
+      <input
+        type="number" min={min} value={value}
+        onChange={(e) => setValue(Math.max(min, parseInt(e.target.value, 10) || min))}
+        style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }}
+      />
+    </label>
+  );
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 340, width: "100%" }}>
-        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 12 }}>
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 360, width: "100%" }}>
+        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 4 }}>
           Réglages des boîtes — {gameKey}
         </div>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 12 }}>{viewLabel}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-            Pokémon par boîte
-            <input
-              type="number" min="1" value={localSize}
-              onChange={(e) => setLocalSize(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }}
-            />
-          </label>
+          <div style={{ display: "flex", gap: 10 }}>
+            {numField("Lignes par boîte", rows, setRows)}
+            {numField("Colonnes par boîte", cols, setCols)}
+          </div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
+            Capacité d'une boîte : {rows * cols} Pokémon.
+          </div>
           <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
             Préfixe des noms de boîte
             <input
-              value={localPrefix} onChange={(e) => setLocalPrefix(e.target.value)}
+              value={prefix} onChange={(e) => setPrefix(e.target.value)}
               style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }}
             />
           </label>
+          {numField("Pokémon par ligne en vue Grille (par défaut)", gridCols, setGridCols, 2)}
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
           <button onClick={onCancel} style={btnGhost}>Annuler</button>
-          <button onClick={() => onSave(localSize, localPrefix)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
+          <button onClick={() => onSave({ rows, cols, prefix, gridCols })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
         </div>
       </div>
     </div>
@@ -3793,7 +3908,8 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   const [, forceRefresh] = useState(0);
   const [showEvoChain, setShowEvoChain] = useState(false);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
-  const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
+  const natInfo = natInfoFor(nom, forme);
+  const lien = pokepediaLienPourMarque(natInfo.lien, marque);
   const hasNav = navTotal != null && navTotal > 1;
   const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
   return (
@@ -3821,35 +3937,11 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
         );
       })()}
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
-        <div style={{
-          display: "flex", justifyContent: "center", alignItems: "center",
-          background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
-          padding: 14, marginBottom: 10,
-        }}>
+        <FicheArtworkBlock n={natInfo.n}>
           <Sprite nom={nom} forme={forme} size={96} />
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
-              {nom}
-            </div>
-            {forme && (
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
-            )}
-          </div>
-        </div>
-        {(lien || evoLabel) && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-            {lien && (
-              <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-                Poképédia ↗
-              </a>
-            )}
-            {evoLabel && (
-              <EvolutionLabelButton label={evoLabel} onClick={() => setShowEvoChain(true)} />
-            )}
-          </div>
-        )}
+        </FicheArtworkBlock>
+        <FicheNameRow nom={nom} lien={lien} />
+        <FicheFormeEvoRow forme={forme} evoLabel={evoLabel} onEvoClick={() => setShowEvoChain(true)} />
         <NumeroGroupeRow
           showNumber={showNumber}
           numero={numero}
@@ -3889,7 +3981,6 @@ function PairModeBlock({
   gameKey, pair, pairRows, filterCache,
   jeuOverrides, setJeu, jeuOptionsForGame,
   boxOverrides, setBoxGroup, boxGroupOptions, boxGroupRank,
-  boxSize, boxPrefix, saveBoxSettings,
   gameSourcesDict, setSource, setAllSources, modeMenuItem,
   marqueGames, onAvailabilityChanged, autoOpenKey,
 }) {
@@ -3900,12 +3991,27 @@ function PairModeBlock({
   const [region, setRegion] = useCachedState(filterCache, bucketKey, "region", null);
   const [boxGroupFilter, setBoxGroupFilter] = useState(null);
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, bucketKey, "jeuFilter", null);
+  // Réglages boîte/grille propres à CETTE vue (rows/cols/prefix/gridCols, § demande explicite —
+  // éditables désormais depuis Paramètres → Marque → ⚙️ Réglages, plus de bouton sur cette page).
+  const { ready: boxSettingsReady, getFor: getBoxSettingsFor } = useGameViewBoxSettings(gameKey);
+  const viewBoxSettings = getBoxSettingsFor(pair.key);
+  const { rows: boxRows, cols: boxCols, prefix: boxPrefix } = viewBoxSettings;
+  const boxSize = boxRows * boxCols;
   const [gridCols, setGridCols] = useCachedState(filterCache, bucketKey, "gridCols", 6);
+  // Applique le nombre par ligne par défaut (réglage centralisé) une fois chargé, sauf si déjà
+  // ajusté cette session (§ demande explicite : garder le réglage vivant possible, cf. plus bas).
+  const gridColsInitedRef = useRef(false);
+  useEffect(() => {
+    if (boxSettingsReady && !gridColsInitedRef.current) {
+      gridColsInitedRef.current = true;
+      setGridCols(viewBoxSettings.gridCols);
+    }
+    // eslint-disable-next-line
+  }, [boxSettingsReady]);
   const [grilleSortMode, setGrilleSortMode] = useCachedState(filterCache, bucketKey, "grilleSortMode", "boite");
   const [showBoxGroup, setShowBoxGroup] = useState(false);
   const [showBoxName, setShowBoxName] = useState(false);
   const [showJeu, setShowJeu] = useState(false);
-  const [boxSettingsOpen, setBoxSettingsOpen] = useState(false);
   const [multiDetailKey, setMultiDetailKey] = useState(null);
   const [limit, setLimit] = useState(150);
   const windowWidth = useWindowWidth();
@@ -3940,8 +4046,8 @@ function PairModeBlock({
     [gameKey, pairRows, effectiveOverridesForPair, boxGroupRank, numberOverrides]
   );
   const boxInfo = useMemo(
-    () => computeGameBoxes(gameKey, pairRows, effectiveOverridesForPair, boxSize, boxPrefix, sortOrder, numberOverrides),
-    [gameKey, pairRows, effectiveOverridesForPair, boxSize, boxPrefix, sortOrder, numberOverrides]
+    () => computeGameBoxes(gameKey, pairRows, effectiveOverridesForPair, boxSize, boxPrefix, sortOrder, numberOverrides, boxCols),
+    [gameKey, pairRows, effectiveOverridesForPair, boxSize, boxPrefix, sortOrder, numberOverrides, boxCols]
   );
 
   const regions = useMemo(() => {
@@ -4022,26 +4128,7 @@ function PairModeBlock({
           right={{ label: "Affiché", rings: [{ pct: pct(filtered.filter((r) => isInPairIdx(r.i)).length, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }] }}
         />
         <StatBlock value={boxesWithPokemonCount} label="boîtes" color={TXT} />
-        <button
-          onClick={() => setBoxSettingsOpen(true)}
-          title="Réglages des boîtes (nombre par boîte, préfixe)"
-          style={{
-            marginLeft: "auto", background: "transparent", border: `1px solid ${LINE}`,
-            borderRadius: 10, width: 32, height: 32, display: "flex", alignItems: "center",
-            justifyContent: "center", cursor: "pointer", color: MUTED, fontSize: 15, flexShrink: 0,
-          }}
-        >⚙️</button>
       </div>
-
-      {boxSettingsOpen && (
-        <BoxSettingsModal
-          gameKey={gameKey}
-          size={boxSize}
-          prefix={boxPrefix}
-          onCancel={() => setBoxSettingsOpen(false)}
-          onSave={(newSize, newPrefix) => { saveBoxSettings(newSize, newPrefix); setBoxSettingsOpen(false); }}
-        />
-      )}
 
       {multiDetailKey !== null && (() => {
         const sep = multiDetailKey.indexOf("|");
@@ -4110,8 +4197,8 @@ function PairModeBlock({
             const b = boxInfo[r.i] || {};
             return { nom: r.nom, forme: r.forme, i: r.i, nboite: b.nboite, boite: b.boite, l: b.l, c: b.c, groupe: b.groupe };
           })}
-          fixedRows={5}
-          fixedCols={6}
+          fixedRows={boxRows}
+          fixedCols={boxCols}
           renderCell={(it) => (
             <BoxCell
               nom={it.nom} forme={it.forme} caught={isInPairIdx(it.i)} color={PURPLE}
@@ -4229,7 +4316,7 @@ function PairModeBlock({
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={GAME_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={GAME_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
                   <React.Fragment>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
@@ -4719,8 +4806,16 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     return !!(cap && cap[gameKey]);
   };
 
-  // Boîtes Home dynamiques : réglages (taille/préfixe) + surcharges de groupe par Pokémon.
-  const { size: boxSize, prefix: boxPrefix, save: saveBoxSettings } = useBoxSettings(gameKey);
+  // Boîtes Home dynamiques : réglages par vue (rows/cols/prefix/gridCols, § demande explicite —
+  // Home et Home + jeu ont chacun leur propre réglage, édité depuis Paramètres → Marque →
+  // ⚙️ Réglages, plus de bouton sur cette page) + surcharges de groupe par Pokémon.
+  const { ready: boxSettingsReady, getFor: getBoxSettingsFor } = useGameViewBoxSettings(gameKey);
+  const homeBoxSettings = getBoxSettingsFor("__home__");
+  const homeJeuBoxSettings = getBoxSettingsFor("__home_jeu__");
+  const { rows: homeBoxRows, cols: homeBoxCols, prefix: homeBoxPrefix } = homeBoxSettings;
+  const homeBoxSize = homeBoxRows * homeBoxCols;
+  const { rows: homeJeuBoxRows, cols: homeJeuBoxCols, prefix: homeJeuBoxPrefix } = homeJeuBoxSettings;
+  const homeJeuBoxSize = homeJeuBoxRows * homeJeuBoxCols;
   const { overrides: boxOverrides, setGroup: setBoxGroup } = useBoxGroupOverrides(gameKey);
   const { overrides: jeuOverrides, setJeu } = useGameJeuOverrides(gameKey);
   // Options "Jeu - DO" restreintes à cette marque — uniquement les valeurs ajoutées par
@@ -4740,8 +4835,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     [gameKey, rows, boxOverrides, boxGroupRank]
   );
   const boxInfo = useMemo(
-    () => computeGameBoxes(gameKey, rows, boxOverrides || {}, boxSize, boxPrefix, sortOrder),
-    [gameKey, rows, boxOverrides, boxSize, boxPrefix, sortOrder]
+    () => computeGameBoxes(gameKey, rows, boxOverrides || {}, homeBoxSize, homeBoxPrefix, sortOrder, null, homeBoxCols),
+    [gameKey, rows, boxOverrides, homeBoxSize, homeBoxPrefix, sortOrder, homeBoxCols]
   );
   // Vue "Home + jeu" uniquement (§ demande explicite) : agrège les membres de la marque (`rows`)
   // ET les Pokémon "jeu seulement" (disponibles dans un jeu de la marque mais absents de la
@@ -4759,8 +4854,20 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   }, [showJeuMerge, gameKey, extendedRows, boxOverrides, boxGroupRank, sortOrder]);
   const extendedBoxInfo = useMemo(() => {
     if (!showJeuMerge) return boxInfo;
-    return computeGameBoxes(gameKey, extendedRows, boxOverrides || {}, boxSize, boxPrefix, extendedSortOrder);
-  }, [showJeuMerge, gameKey, extendedRows, boxOverrides, boxSize, boxPrefix, extendedSortOrder, boxInfo]);
+    return computeGameBoxes(gameKey, extendedRows, boxOverrides || {}, homeJeuBoxSize, homeJeuBoxPrefix, extendedSortOrder, null, homeJeuBoxCols);
+  }, [showJeuMerge, gameKey, extendedRows, boxOverrides, homeJeuBoxSize, homeJeuBoxPrefix, extendedSortOrder, boxInfo, homeJeuBoxCols]);
+  // Réglages boîte/grille de la vue actuellement affichée (Home ou Home + jeu) — pour la vue
+  // Boîte (fixedRows/fixedCols) et le nombre par ligne par défaut de la vue Grille.
+  const currentBoxSettings = showJeuMerge ? homeJeuBoxSettings : homeBoxSettings;
+  const gridColsInitedRef = useRef({});
+  useEffect(() => {
+    const modeKey = showJeuMerge ? "home_jeu" : "home";
+    if (boxSettingsReady && !gridColsInitedRef.current[modeKey]) {
+      gridColsInitedRef.current[modeKey] = true;
+      setGridCols(currentBoxSettings.gridCols);
+    }
+    // eslint-disable-next-line
+  }, [boxSettingsReady, showJeuMerge]);
   // Raccourcis pour le reste du rendu (liste/boîte/grille) : basculent automatiquement sur la
   // version étendue (Pokémon "jeu seulement" inclus) en vue Home + jeu uniquement.
   const currentRows = showJeuMerge ? extendedRows : rows;
@@ -4791,7 +4898,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     });
     return set.size;
   }, [currentRows, currentBoxInfo]);
-  const [boxSettingsOpen, setBoxSettingsOpen] = useState(false);
   const [groupEditTarget, setGroupEditTarget] = useState(null); // index dans `rows`
   const [showBoxGroup, setShowBoxGroup] = useState(false); // options d'affichage : groupe sous le nom
   const [showBoxName, setShowBoxName] = useState(false); // options d'affichage : nom de boîte sous le nom
@@ -5074,9 +5180,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           setBoxGroup={setBoxGroup}
           boxGroupOptions={boxGroupOptions}
           boxGroupRank={boxGroupRank}
-          boxSize={boxSize}
-          boxPrefix={boxPrefix}
-          saveBoxSettings={saveBoxSettings}
           gameSourcesDict={gameSourcesDict}
           setSource={setSource}
           setAllSources={setAllSources}
@@ -5117,26 +5220,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           }}
         />
         <StatBlock value={boxesWithPokemonCount} label="boîtes" color={TXT} />
-        <button
-          onClick={() => setBoxSettingsOpen(true)}
-          title="Réglages des boîtes (nombre par boîte, préfixe)"
-          style={{
-            marginLeft: "auto", background: "transparent", border: `1px solid ${LINE}`,
-            borderRadius: 10, width: 32, height: 32, display: "flex", alignItems: "center",
-            justifyContent: "center", cursor: "pointer", color: MUTED, fontSize: 15, flexShrink: 0,
-          }}
-        >⚙️</button>
       </div>
 
-      {boxSettingsOpen && (
-        <BoxSettingsModal
-          gameKey={gameKey}
-          size={boxSize}
-          prefix={boxPrefix}
-          onCancel={() => setBoxSettingsOpen(false)}
-          onSave={(newSize, newPrefix) => { saveBoxSettings(newSize, newPrefix); setBoxSettingsOpen(false); }}
-        />
-      )}
       {groupEditTarget !== null && (() => {
         const homeNavIdx = filtered.findIndex((r) => r.i === groupEditTarget);
         const goHomeNav = (delta) => {
@@ -5253,8 +5338,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             const b = currentBoxInfo[r.i] || {};
             return { nom: r.nom, forme: r.forme, i: r.i, nboite: b.nboite, boite: b.boite, l: b.l, c: b.c, groupe: b.groupe };
           })}
-          fixedRows={5}
-          fixedCols={6}
+          fixedRows={currentBoxSettings.rows}
+          fixedCols={currentBoxSettings.cols}
           renderCell={(it) => (
             <BoxCell
               nom={it.nom} forme={it.forme} caught={!!displayEffective[it.i]}
@@ -5510,7 +5595,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={GAME_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={GAME_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
                   <React.Fragment>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
@@ -5923,6 +6008,10 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   // pratique au clavier (flèches ←/→) sur ordinateur qu'un scroll horizontal à la souris.
   const [cardPos, setCardPos] = useState(0);
   useEffect(() => { setCardPos(0); }, [selected]);
+  // Fenêtre "Chaîne d'évolution" (§ harmonisation — Shiny n'en disposait pas avant, comme
+  // National/Home/onglets jeu, voir FicheFormeEvoRow) — refermée à chaque changement de fiche.
+  const [showEvoChain, setShowEvoChain] = useState(false);
+  useEffect(() => { setShowEvoChain(false); }, [selected]);
   const cardTotalRef = useRef(1);
   useEffect(() => {
     if (!selected) return;
@@ -6377,32 +6466,29 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
             )}
           />
           <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
-            <div style={{
-              display: "flex", justifyContent: "center", alignItems: "center",
-              background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
-              padding: 14, marginBottom: 10,
-            }}>
-              <Sprite nom={selectedEntry[1]} forme={selectedEntry[2]} size={96} shiny />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
-                  {selectedEntry[1]}{selectedEntry[2] ? <span style={{ color: MUTED, fontWeight: 400 }}> · {selectedEntry[2]}</span> : null}
-                </div>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
-                  {showingAll ? `${allRecs.length} capture(s) enregistrée(s)` : `1 capture affichée sur ${allRecs.length}`}
-                </div>
-              </div>
-            </div>
             {(() => {
-              const lien = natInfoFor(selectedEntry[1], selectedEntry[2]).lien;
-              if (!lien) return null;
+              const info = natInfoFor(selectedEntry[1], selectedEntry[2]);
+              const evoLabel = formatEvolution(DATA.evolutionMode[selectedEntry[1] + "|" + (selectedEntry[2] || "")]);
               return (
-                <div style={{ marginBottom: 10 }}>
-                  <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-                    Poképédia ↗
-                  </a>
-                </div>
+              <React.Fragment>
+                <FicheArtworkBlock n={info.n}>
+                  <Sprite nom={selectedEntry[1]} forme={selectedEntry[2]} size={96} shiny />
+                </FicheArtworkBlock>
+                <FicheNameRow
+                  nom={selectedEntry[1]}
+                  lien={info.lien}
+                  extra={(
+                    <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
+                      {showingAll ? `${allRecs.length} capture(s) enregistrée(s)` : `1 capture affichée sur ${allRecs.length}`}
+                    </div>
+                  )}
+                />
+                <FicheFormeEvoRow
+                  forme={selectedEntry[2]}
+                  evoLabel={evoLabel}
+                  onEvoClick={() => setShowEvoChain(true)}
+                />
+              </React.Fragment>
               );
             })()}
 
@@ -6468,7 +6554,9 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 </div>
               )}
             </div>
-
+        {showEvoChain && (
+          <EvolutionChainModal nom={selectedEntry[1]} forme={selectedEntry[2]} onClose={() => setShowEvoChain(false)} />
+        )}
         </div>
         );
       })()}
@@ -6607,7 +6695,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={SHINY_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={SHINY_VIEW_OPTIONS} />
                 {viewMode === "list" && (
                   <ViewToggle
                     mode={listSubMode}
@@ -6736,6 +6824,9 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   const [selected, setSelected] = useState(null); // "nom|forme"
   const [selectedRecIdx, setSelectedRecIdx] = useState(null);
   const [detailShowAll, setDetailShowAll] = useState(true);
+  // Fenêtre "Chaîne d'évolution" (§ harmonisation, comme Shiny/National/Home).
+  const [showEvoChain, setShowEvoChain] = useState(false);
+  useEffect(() => { setShowEvoChain(false); }, [selected]);
   // Carte affichée (parmi plusieurs exemplaires de la même forme) dans le panneau de détail —
   // navigation "Précédent/Suivant" au lieu du défilement horizontal (§ voir ShinyView, même patron).
   const [cardPos, setCardPos] = useState(0);
@@ -6865,6 +6956,22 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     });
   }, [catalog, search, shinyFilter, marqueFilter, locationFilter, detailFilterSel, modeFilter, jeuFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
+  // Navigation ‹ › entre fiches Pokémon DIFFÉRENTES (§ harmonisation, comme Shiny/National/Home) —
+  // liste dédupliquée par clé nom|forme (distincte de la navigation Précédent/Suivant entre
+  // exemplaires d'un même Pokémon, pilotée par cardPos ci-dessus).
+  const doubleNavKeys = useMemo(() => {
+    const seen = new Set(); const arr = [];
+    filtered.forEach((r) => { if (!seen.has(r.key)) { seen.add(r.key); arr.push(r.key); } });
+    return arr;
+  }, [filtered]);
+  const doubleNavIdx = selected ? doubleNavKeys.indexOf(selected) : -1;
+  const goDoubleNav = (delta) => {
+    if (doubleNavIdx === -1) return;
+    const newIdx = doubleNavIdx + delta;
+    if (newIdx < 0 || newIdx >= doubleNavKeys.length) return;
+    openEntry(doubleNavKeys[newIdx]);
+  };
+  const doubleSwipeHandlers = useCardSwipeNav(!!selected && doubleNavKeys.length > 1, () => goDoubleNav(-1), () => goDoubleNav(1));
 
   const resetFilters = () => {
     setSearch("");
@@ -6944,22 +7051,38 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
         const sepIdx = selected.indexOf("|");
         const selNom = selected.slice(0, sepIdx);
         const selForme = selected.slice(sepIdx + 1) || null;
+        const info = natInfoFor(selNom, selForme);
+        const evoLabel = formatEvolution(DATA.evolutionMode[selNom + "|" + (selForme || "")]);
+        const hasDoubleNav = doubleNavKeys.length > 1;
         return (
-        <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
-          <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <FloatingBackButton onClick={closeEntry} />
-            <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                <Sprite nom={selNom} forme={selForme} size={56} shiny={!!(current && current.rec.shiny)} />
-                <div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 17, color: TXT }}>
-                    {selNom}{selForme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {selForme}</span> : null}
-                  </div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                    {showingAll ? `${allRecs.length} exemplaire(s) en double` : `1 exemplaire affiché sur ${allRecs.length}`}
-                  </div>
-                </div>
+        <div {...(hasDoubleNav ? doubleSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+          <FloatingCardNav
+            onPrev={() => goDoubleNav(-1)}
+            onNext={() => goDoubleNav(1)}
+            hasPrev={hasDoubleNav && doubleNavIdx > 0}
+            hasNext={hasDoubleNav && doubleNavIdx < doubleNavKeys.length - 1}
+            center={(
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CatalogQuickEditButton nom={selNom} forme={selForme} style={GLASS_ROUND_BTN} />
+                <button onClick={() => addCatch(selected, false)} title="Ajouter un exemplaire" style={{ ...GLASS_ROUND_BTN, background: GOLD, color: BG, border: "none", fontSize: 22, fontWeight: 800 }}>+</button>
+                <button onClick={closeEntry} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
               </div>
+            )}
+          />
+          <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+            <FicheArtworkBlock n={info.n}>
+              <Sprite nom={selNom} forme={selForme} size={96} shiny={!!(current && current.rec.shiny)} />
+            </FicheArtworkBlock>
+            <FicheNameRow
+              nom={selNom}
+              lien={info.lien}
+              extra={(
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
+                  {showingAll ? `${allRecs.length} exemplaire(s) en double` : `1 exemplaire affiché sur ${allRecs.length}`}
+                </div>
+              )}
+            />
+            <FicheFormeEvoRow forme={selForme} evoLabel={evoLabel} onEvoClick={() => setShowEvoChain(true)} />
 
               {canToggle && (
                 <button onClick={() => setDetailShowAll(!detailShowAll)} style={{ ...btnGhost, marginBottom: 12 }}>
@@ -7086,10 +7209,10 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
                   <button onClick={() => setCardPos((p) => Math.min(p + 1, rowsToShow.length - 1))} disabled={cp === rowsToShow.length - 1} style={{ ...btnGhost, opacity: cp === rowsToShow.length - 1 ? 0.4 : 1, cursor: cp === rowsToShow.length - 1 ? "default" : "pointer" }}>Suivant →</button>
                 </div>
               )}
-
-              <button onClick={() => addCatch(selected, false)} style={{ ...tabActive, background: GOLD, color: BG, marginTop: 4 }}>+ Ajouter un exemplaire</button>
-            </div>
           </div>
+          {showEvoChain && (
+            <EvolutionChainModal nom={selNom} forme={selForme} onClose={() => setShowEvoChain(false)} />
+          )}
         </div>
         );
       })()}
@@ -7154,7 +7277,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
         menus={[
           {
             key: "view", title: "Vue", icon: BarIcon.view,
-            render: (close) => <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={DOUBLE_VIEW_OPTIONS} />,
+            render: () => <ViewToggle mode={viewMode} setMode={setViewMode} options={DOUBLE_VIEW_OPTIONS} />,
           },
           {
             key: "filters", title: "Filtres", icon: BarIcon.filter, active: anyFilterActive,
@@ -7322,6 +7445,9 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     || tailleFilter !== null || dynamaxFilter !== null || boiteFilter !== null
     || doPersoFilter !== null || jeuDOFilter !== null;
   const [selected, setSelected] = useState(null); // clé "base-i" ou "custom-i"
+  // Fenêtre "Chaîne d'évolution" (§ harmonisation, comme Shiny/National/Home/Double).
+  const [showEvoChain, setShowEvoChain] = useState(false);
+  useEffect(() => { setShowEvoChain(false); }, [selected]);
   const [limit, setLimit] = useState(150);
   const [gridCols, setGridCols] = useCachedState(filterCache, "event", "gridCols", 6);
   const windowWidth = useWindowWidth();
@@ -7422,6 +7548,15 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     });
   }, [catalog, search, filter, shinyFilter, marqueFilter, tailleFilter, dynamaxFilter, boiteFilter, doPersoFilter, jeuDOFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
+  // Navigation ‹ › entre fiches Pokémon différentes (§ harmonisation, comme Shiny/National/Home).
+  const eventNavIdx = selected ? filtered.findIndex((r) => r.key === selected) : -1;
+  const goEventNav = (delta) => {
+    if (eventNavIdx === -1) return;
+    const newIdx = eventNavIdx + delta;
+    if (newIdx < 0 || newIdx >= filtered.length) return;
+    openEntry(filtered[newIdx].key);
+  };
+  const eventSwipeHandlers = useCardSwipeNav(!!selected && filtered.length > 1, () => goEventNav(-1), () => goEventNav(1));
 
   const resetFilters = () => {
     setSearch("");
@@ -7497,40 +7632,55 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
       {selectedEntry && (() => {
         const r = selectedEntry;
         const showAlpha = r.marque === "LA" || r.marque === "LZA";
+        const lien = natInfoFor(r.nom, r.forme).lien;
+        const evoLabel = formatEvolution(DATA.evolutionMode[r.nom + "|" + (r.forme || "")]);
+        const hasEventNav = filtered.length > 1;
         return (
-        <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
-          <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <FloatingBackButton onClick={closeEntry} />
-            <div style={{ background: PANEL2, border: `1px solid ${EVENTORANGE}66`, borderRadius: 20, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                <span title={r.attrape ? "Attrapé" : "Non attrapé"} style={{
-                  width: 24, height: 24, borderRadius: 6, flexShrink: 0,
-                  border: `2px solid ${r.attrape ? OK : MUTED}`,
-                  background: r.attrape ? OK : "transparent",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: BG, fontSize: 15, fontWeight: 900,
-                }}>{r.attrape ? "✓" : ""}</span>
-                <Sprite nom={r.nom} forme={r.forme} size={56} shiny={r.shiny} />
-                <div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 17, color: TXT, display: "flex", alignItems: "center", gap: 6 }}>
-                    {r.nom}{r.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.forme}</span> : null}
-                    {showAlpha && <span style={{ fontSize: 13, fontWeight: 900, color: "#E85D6B" }}>α</span>}
-                    {r.shiny && <span style={{ fontSize: 14, fontWeight: 900, color: GOLD }}>✦</span>}
-                    {r.gmax && (
-                      <span title="Gmax" style={{
-                        width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                        border: `2px solid ${GOLD}`, background: GOLD,
-                        display: "inline-flex", alignItems: "center", justifyContent: "center",
-                        color: BG, fontSize: 9, fontWeight: 900,
-                      }}>G</span>
-                    )}
-                    {r.enBoite && <span title="Déjà dans une boîte de jeu (non recompté)" style={{ fontSize: 13 }}>📦</span>}
-                  </div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                    {r.boite}
-                  </div>
-                </div>
+        <div {...(hasEventNav ? eventSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+          <FloatingCardNav
+            onPrev={() => goEventNav(-1)}
+            onNext={() => goEventNav(1)}
+            hasPrev={hasEventNav && eventNavIdx > 0}
+            hasNext={hasEventNav && eventNavIdx < filtered.length - 1}
+            center={(
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CatalogQuickEditButton nom={r.nom} forme={r.forme} style={GLASS_ROUND_BTN} />
+                <button onClick={closeEntry} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
               </div>
+            )}
+          />
+          <div style={{ background: PANEL2, border: `1px solid ${EVENTORANGE}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+            <FicheArtworkBlock n={r.nat}>
+              <Sprite nom={r.nom} forme={r.forme} size={96} shiny={r.shiny} />
+            </FicheArtworkBlock>
+            <FicheNameRow
+              nom={r.nom}
+              lien={lien}
+              extra={(
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+                  <span title={r.attrape ? "Attrapé" : "Non attrapé"} style={{
+                    width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                    border: `2px solid ${r.attrape ? OK : MUTED}`,
+                    background: r.attrape ? OK : "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: BG, fontSize: 11, fontWeight: 900,
+                  }}>{r.attrape ? "✓" : ""}</span>
+                  {showAlpha && <span style={{ fontSize: 13, fontWeight: 900, color: "#E85D6B" }}>α</span>}
+                  {r.shiny && <span style={{ fontSize: 14, fontWeight: 900, color: GOLD }}>✦</span>}
+                  {r.gmax && (
+                    <span title="Gmax" style={{
+                      width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                      border: `2px solid ${GOLD}`, background: GOLD,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      color: BG, fontSize: 9, fontWeight: 900,
+                    }}>G</span>
+                  )}
+                  {r.enBoite && <span title="Déjà dans une boîte de jeu (non recompté)" style={{ fontSize: 13 }}>📦</span>}
+                  <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{r.boite}</span>
+                </div>
+              )}
+            />
+            <FicheFormeEvoRow forme={r.forme} evoLabel={evoLabel} onEvoClick={() => setShowEvoChain(true)} />
 
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", background: PANEL, borderRadius: 8, padding: 10 }}>
                 <div>
@@ -7590,8 +7740,10 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
                 )}
                 <button onClick={() => removeCustom(r.idx)} style={{ ...btnGhost, color: "#E4572E", borderColor: "#E4572E55" }}>Supprimer</button>
               </div>
-            </div>
           </div>
+          {showEvoChain && (
+            <EvolutionChainModal nom={r.nom} forme={r.forme} onClose={() => setShowEvoChain(false)} />
+          )}
         </div>
         );
       })()}
@@ -7724,7 +7876,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={EVENT_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={EVENT_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
                     Par ligne :
@@ -8224,6 +8376,15 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     });
   }, [catalog, search, shinyFilter, ouFilter, versFilter, marqueFilter, jeuFilter]);
   useInfiniteScroll(filtered.length > limit, () => setLimit((l) => l + 200));
+  // Navigation ‹ › entre fiches Pokémon différentes (§ harmonisation, comme Shiny/National/Home).
+  const interjeuNavIdx = selected ? filtered.findIndex((r) => r.key === selected) : -1;
+  const goInterjeuNav = (delta) => {
+    if (interjeuNavIdx === -1) return;
+    const newIdx = interjeuNavIdx + delta;
+    if (newIdx < 0 || newIdx >= filtered.length) return;
+    openEntry(filtered[newIdx].key);
+  };
+  const interjeuSwipeHandlers = useCardSwipeNav(!!selected && filtered.length > 1, () => goInterjeuNav(-1), () => goInterjeuNav(1));
 
   const resetFilters = () => {
     setSearch("");
@@ -8365,27 +8526,52 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
         // Vérification "déjà attrapé ?" désormais calculée pour toutes les entrées, pas
         // seulement celles actuellement en Home (demande explicite) — voir bloc dédié plus bas.
         const status = targetStatus(r);
+        const lien = natInfoFor(r.nomApres, r.formeApres).lien;
+        const hasInterjeuNav = filtered.length > 1;
         return (
-        <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 50, overflowY: "auto", padding: "20px 20px 90px" }}>
-          <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <FloatingBackButton onClick={closeEntry} />
-            <div style={{ background: PANEL2, border: `1px solid ${INTERJEU}66`, borderRadius: 20, padding: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-                <Sprite nom={r.nom} forme={r.forme} size={52} shiny={r.shiny} />
-                <div style={{ fontSize: 20, color: MUTED }}>→</div>
-                <Sprite nom={r.nomApres} forme={r.formeApres} size={52} shiny={r.shiny} />
-                <div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 15, color: TXT }}>
-                    {r.nom}{r.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.forme}</span> : null}
-                    <span style={{ color: MUTED, fontWeight: 400 }}> → </span>
-                    {r.nomApres}{r.formeApres ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.formeApres}</span> : null}
-                    {r.shiny && <span style={{ fontSize: 14, fontWeight: 900, color: GOLD, marginLeft: 6 }}>✦</span>}
-                  </div>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                    {r.ou} → {r.vers}
-                  </div>
-                </div>
+        <div {...(hasInterjeuNav ? interjeuSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+          <FloatingCardNav
+            onPrev={() => goInterjeuNav(-1)}
+            onNext={() => goInterjeuNav(1)}
+            hasPrev={hasInterjeuNav && interjeuNavIdx > 0}
+            hasNext={hasInterjeuNav && interjeuNavIdx < filtered.length - 1}
+            center={(
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CatalogQuickEditButton nom={r.nomApres} forme={r.formeApres} style={GLASS_ROUND_BTN} />
+                <button onClick={closeEntry} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
               </div>
+            )}
+          />
+          <div style={{ background: PANEL2, border: `1px solid ${INTERJEU}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+            <FicheArtworkBlock n={natInfoFor(r.nom, r.forme).n}>
+              <Sprite nom={r.nom} forme={r.forme} size={90} shiny={r.shiny} />
+              <div style={{ fontSize: 22, color: MUTED, fontWeight: 700, flexShrink: 0 }}>→</div>
+              <Sprite nom={r.nomApres} forme={r.formeApres} size={90} shiny={r.shiny} />
+            </FicheArtworkBlock>
+            <FicheNameRow
+              nom={(
+                <span>
+                  {r.nom}{r.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.forme}</span> : null}
+                  <span style={{ color: MUTED, fontWeight: 400 }}> → </span>
+                  {r.nomApres}{r.formeApres ? <span style={{ color: MUTED, fontWeight: 400 }}> · {r.formeApres}</span> : null}
+                  {r.shiny && <span style={{ fontSize: 14, fontWeight: 900, color: GOLD, marginLeft: 6 }}>✦</span>}
+                </span>
+              )}
+              lien={lien}
+              extra={(
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{r.ou} → {r.vers}</div>
+              )}
+            />
+            {/* Forme avant → Forme après (§ demande explicite : "bien mettre forme avant et
+                après avec une flèche") — équivalent Interjeu de FicheFormeEvoRow, adapté aux
+                deux espèces potentiellement différentes d'un transfert. */}
+            {(r.forme || r.formeApres) && (
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600 }}>{r.forme || "Forme normale"}</span>
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>→</span>
+                <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600 }}>{r.formeApres || "Forme normale"}</span>
+              </div>
+            )}
 
               <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", background: PANEL, borderRadius: 8, padding: 10 }}>
                 <div>
@@ -8581,7 +8767,6 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
                   </div>
                 )}
               </div>
-            </div>
           </div>
         </div>
         );
@@ -8677,7 +8862,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={INTERJEU_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={INTERJEU_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
                     Par ligne :
@@ -10406,24 +10591,37 @@ function SettingsSection({
   collapsed, toggleSection,
   newValue, setNewValue,
   doAdd, doReorder, doRename, doDelete,
+  onHeaderButton, headerButtonTitle, headerButtonIcon,
 }) {
   const isCollapsed = collapsed[kind];
   return (
     <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
-      <button
-        onClick={() => toggleSection(kind)}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-          background: "transparent", border: "none", cursor: "pointer", padding: 0,
-          marginBottom: isCollapsed ? 0 : 10,
-        }}
-      >
-        <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color }}>{title}</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{values.length}</span>
-          <span style={{ color: MUTED, fontSize: 12, transform: isCollapsed ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
-        </span>
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isCollapsed ? 0 : 10 }}>
+        <button
+          onClick={() => toggleSection(kind)}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", flex: 1, minWidth: 0,
+            background: "transparent", border: "none", cursor: "pointer", padding: 0,
+          }}
+        >
+          <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color }}>{title}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{values.length}</span>
+            <span style={{ color: MUTED, fontSize: 12, transform: isCollapsed ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+          </span>
+        </button>
+        {onHeaderButton && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onHeaderButton(); }}
+            title={headerButtonTitle || "Réglages"}
+            style={{
+              background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8,
+              width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: MUTED, fontSize: 13, flexShrink: 0,
+            }}
+          >{headerButtonIcon || "⚙️"}</button>
+        )}
+      </div>
       {!isCollapsed && (
       <React.Fragment>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
@@ -10613,6 +10811,135 @@ function NumeroVueSection({ collapsedVal, onToggle }) {
   );
 }
 
+// Bloc "Réglages des boîtes" (§ demande explicite : bouton ⚙️ dans le bloc Marque) — pour une
+// marque choisie, liste ses vues (Home, Home + jeu, puis chaque vue Jeu précise configurée,
+// § vues Jeu) ; un crayon par ligne ouvre BoxViewSettingsModal (lignes/colonnes/préfixe/
+// nombre par ligne en grille) pour CETTE vue. Remplace l'ancien bouton ⚙️ qui vivait sur la
+// page de chaque marque (un seul réglage partagé par les 3 modes, plus de champ "nombre par
+// boîte" séparé — voir BoxViewSettingsModal/useGameViewBoxSettings).
+function BoxViewSettingsSection({ collapsedVal, onToggle, marques }) {
+  const [marque, setMarque] = useState("");
+  const [jeuViews, setJeuViews] = useState([]);
+  const [editingView, setEditingView] = useState(null); // { key, label } | null
+  const [editingSettings, setEditingSettings] = useState(null);
+  const [oldBoxSettings, setOldBoxSettings] = useState(null);
+  const [allBoxViewSettings, setAllBoxViewSettings] = useState({});
+
+  useEffect(() => {
+    if (!marque) { setJeuViews([]); return; }
+    (async () => {
+      try {
+        const res = await window.storage.get("custom_jeu_views", false);
+        const all = res && res.value ? JSON.parse(res.value) : {};
+        setJeuViews(all[marque] || []);
+      } catch (e) { setJeuViews([]); }
+      try {
+        const res2 = await window.storage.get("box_settings", false);
+        const allOld = res2 && res2.value ? JSON.parse(res2.value) : {};
+        setOldBoxSettings(allOld[marque] || null);
+      } catch (e) { setOldBoxSettings(null); }
+      try {
+        const res3 = await window.storage.get("game_view_box_settings", false);
+        const all3 = res3 && res3.value ? JSON.parse(res3.value) : {};
+        setAllBoxViewSettings(all3[marque] || {});
+      } catch (e) { setAllBoxViewSettings({}); }
+    })();
+  }, [marque]);
+
+  const views = marque ? [
+    { key: "__home__", label: "Home" },
+    { key: "__home_jeu__", label: "Home + Jeu" },
+    ...jeuViews.map((v) => ({ key: v.key, label: v.label })),
+  ] : [];
+
+  const settingsFor = (viewKey) => ({
+    ...defaultBoxViewSettings(marque, oldBoxSettings),
+    ...(allBoxViewSettings[viewKey] || {}),
+  });
+
+  const openEdit = (v) => {
+    setEditingView(v);
+    setEditingSettings(settingsFor(v.key));
+  };
+
+  const saveEdit = async (patch) => {
+    let all = {};
+    try {
+      const res = await window.storage.get("game_view_box_settings", false);
+      all = res && res.value ? JSON.parse(res.value) : {};
+    } catch (e) {}
+    const forMarque = { ...(all[marque] || {}) };
+    forMarque[editingView.key] = { ...defaultBoxViewSettings(marque, oldBoxSettings), ...(forMarque[editingView.key] || {}), ...patch };
+    const next = { ...all, [marque]: forMarque };
+    try { await window.storage.set("game_view_box_settings", JSON.stringify(next), false); } catch (e) {}
+    setAllBoxViewSettings(forMarque);
+    setEditingView(null);
+    setEditingSettings(null);
+  };
+
+  return (
+    <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
+      <button
+        onClick={onToggle}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+          background: "transparent", border: "none", cursor: "pointer", padding: 0,
+          marginBottom: collapsedVal ? 0 : 10,
+        }}
+      >
+        <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: TXT }}>⚙️ Réglages des boîtes</span>
+        <span style={{ color: MUTED, fontSize: 12, transform: collapsedVal ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+      </button>
+      {!collapsedVal && (
+        <React.Fragment>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
+            Choisis une marque, puis règle chaque vue (Home, Home + jeu, et chaque vue Jeu précise configurée) : nombre de lignes et de colonnes par boîte (la capacité d'une boîte est lignes × colonnes), préfixe des noms de boîte, et nombre de Pokémon par ligne par défaut en vue Grille.
+          </div>
+          <Picker
+            value={marque}
+            onChange={setMarque}
+            options={marques}
+            placeholder="— choisir une marque —"
+            buttonStyle={{ ...selectStyle, width: "100%", marginBottom: 10, display: "block", textAlign: "left" }}
+            panelWidth={220}
+          />
+          {marque && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {views.map((v) => {
+                const s = settingsFor(v.key);
+                return (
+                  <div key={v.key} style={{ display: "flex", alignItems: "center", gap: 8, background: BG, border: `1px solid ${LINE}`, borderRadius: 10, padding: "8px 10px" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600 }}>{v.label}</div>
+                      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>
+                        {s.rows}×{s.cols} ({s.rows * s.cols}/boîte) · préfixe "{s.prefix}" · {s.gridCols}/ligne en grille
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => openEdit(v)}
+                      title="Modifier"
+                      style={{ background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8, width: 30, height: 30, color: MUTED, cursor: "pointer", flexShrink: 0, fontSize: 13 }}
+                    >✎</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </React.Fragment>
+      )}
+      {editingView && editingSettings && (
+        <BoxViewSettingsModal
+          gameKey={marque}
+          viewLabel={editingView.label}
+          settings={editingSettings}
+          onCancel={() => { setEditingView(null); setEditingSettings(null); }}
+          onSave={saveEdit}
+        />
+      )}
+    </div>
+  );
+}
+
 function SettingsView({
   onSaveStateChange,
   gistToken, gistId, gistSyncedAt, gistModCount, gistSyncState, gistMsg,
@@ -10639,7 +10966,7 @@ function SettingsView({
   const [modeAddOpen, setModeAddOpen] = useState(false);
   const [detailAddOpen, setDetailAddOpen] = useState(false);
   const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
-  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, numerovue: true, catalog: true, detail: true, restrict: true, gist: true });
+  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, numerovue: true, boxview: true, catalog: true, detail: true, restrict: true, gist: true });
   const [gistTokenDraft, setGistTokenDraft] = useState(gistToken || "");
   const [gistIdDraft, setGistIdDraft] = useState(gistId || "");
   useEffect(() => { setGistTokenDraft(gistToken || ""); }, [gistToken]);
@@ -10859,7 +11186,10 @@ function SettingsView({
       </div>
       <SettingsSection title="Marque" color={TXT} kind="marque" values={marques}
         collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
-        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
+        doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete}
+        onHeaderButton={() => setCollapsed((c) => ({ ...c, boxview: false }))}
+        headerButtonTitle="Réglages des boîtes (lignes, colonnes, préfixe, grille)" headerButtonIcon="⚙️" />
+      <BoxViewSettingsSection collapsedVal={collapsed.boxview} onToggle={() => toggleSection("boxview")} marques={marques} />
       <SettingsSection title="Méthode de capture" color={GOLD} kind="mode" values={modes}
         collapsed={collapsed} toggleSection={toggleSection} newValue={newValue} setNewValue={setNewValue}
         doAdd={doAdd} doReorder={doReorder} doRename={doRename} doDelete={doDelete} />
@@ -11874,31 +12204,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           />
           <div style={{ position: "relative", maxWidth: 520, width: "100%" }}>
             <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxHeight: "75vh", overflowY: "auto" }}>
-            <div style={{
-              display: "flex", justifyContent: "center", alignItems: "center", gap: 16,
-              background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
-              padding: 14, marginBottom: 10,
-            }}>
+            <FicheArtworkBlock n={selectedForms[0][0]}>
               <Sprite nom={selectedNom} size={96} />
               {shinyForm && (
                 <Sprite nom={shinyForm[1]} forme={shinyForm[2]} size={96} shiny />
               )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>{selectedNom}</div>
-                  <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 12, color: ACCENT }}>#{selectedForms[0][0]}</span>
-                </div>
-              </div>
-              <a href={selectedForms[0][4]} target="_blank" rel="noreferrer" style={{
-                display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none", whiteSpace: "nowrap",
-                fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: ACCENT,
-                border: `1px solid ${ACCENT}66`, borderRadius: 999, padding: "7px 14px",
-              }}>
-                Poképédia ↗
-              </a>
-            </div>
+            </FicheArtworkBlock>
+            <FicheNameRow nom={selectedNom} lien={selectedForms[0][4]} />
             {mode !== "forms" && onlyFormKey && allSelectedForms && allSelectedForms.length > 1 && (
               <div style={{ marginBottom: 10 }}>
                 <button
@@ -11910,17 +12222,11 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
               </div>
             )}
             {currentForm && (
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600 }}>
-                  {currentForm[2] || "Forme normale"}
-                </div>
-                {evoLabel && (
-                  <EvolutionLabelButton
-                    label={evoLabel}
-                    onClick={() => setEvoChainTarget({ nom: currentForm[1], forme: currentForm[2] || null })}
-                  />
-                )}
-              </div>
+              <FicheFormeEvoRow
+                forme={currentForm[2]}
+                evoLabel={evoLabel}
+                onEvoClick={() => setEvoChainTarget({ nom: currentForm[1], forme: currentForm[2] || null })}
+              />
             )}
             <div>
             {(() => {
@@ -12208,7 +12514,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={[["list", "Liste"], ["grid", "Grille"]]} />
+                  <ViewToggle mode={viewMode} setMode={setViewMode} options={[["list", "Liste"], ["grid", "Grille"]]} />
                   <div style={{ width: 1, alignSelf: "stretch", background: LINE }} />
                   <ViewToggle mode={catchMode} setMode={(m) => { setCatchMode(m); close(); }} options={[["home", "Home"], ["home+jeux", "Home + Jeu"]]} />
                 </div>
@@ -15647,7 +15953,8 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
   const [, forceRefresh] = useState(0);
   const [showEvoChain, setShowEvoChain] = useState(false);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
-  const lien = pokepediaLienPourMarque(natInfoFor(nom, forme).lien, marque);
+  const natInfo = natInfoFor(nom, forme);
+  const lien = pokepediaLienPourMarque(natInfo.lien, marque);
   const toggleGame = (k) => {
     setChecked((prev) => {
       const next = new Set(prev);
@@ -15696,36 +16003,11 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
         );
       })()}
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
-        <div style={{
-          display: "flex", justifyContent: "center", alignItems: "center",
-          background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
-          padding: 14, marginBottom: 10,
-        }}>
+        <FicheArtworkBlock n={natInfo.n}>
           <Sprite nom={nom} forme={forme} size={96} />
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT }}>
-              {nom}
-            </div>
-            {forme && (
-              <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11, color: MUTED }}>{forme}</div>
-            )}
-          </div>
-        </div>
-
-        {(lien || evoLabel) && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-            {lien && (
-              <a href={lien} target="_blank" rel="noreferrer" style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT }}>
-                Poképédia ↗
-              </a>
-            )}
-            {evoLabel && (
-              <EvolutionLabelButton label={evoLabel} onClick={() => setShowEvoChain(true)} />
-            )}
-          </div>
-        )}
+        </FicheArtworkBlock>
+        <FicheNameRow nom={nom} lien={lien} />
+        <FicheFormeEvoRow forme={forme} evoLabel={evoLabel} onEvoClick={() => setShowEvoChain(true)} />
 
         <NumeroGroupeRow
           numero={numero}
@@ -16123,7 +16405,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={HOME2_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={HOME2_VIEW_OPTIONS} />
                 {viewMode === "grille" && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
                     Par ligne :
@@ -16578,7 +16860,7 @@ function Go2View({ filterCache }) {
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ViewToggle mode={viewMode} setMode={(m) => { setViewMode(m); close(); }} options={HOME2_VIEW_OPTIONS} />
+                <ViewToggle mode={viewMode} setMode={setViewMode} options={HOME2_VIEW_OPTIONS} />
                 {viewMode === "grille" && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
                     Par ligne :
@@ -16931,6 +17213,10 @@ function App() {
     "catalog_additions",
     "catalog_deletions",
     "box_settings",
+    // Réglages boîte/grille PAR VUE (Home/Home + jeu/vue précise, § demande explicite) —
+    // remplace l'usage de box_settings ci-dessus (conservé en lecture seule pour migration).
+    // JSON/Gist uniquement, aucune feuille Excel dédiée (comme box_settings).
+    "game_view_box_settings",
     "box_group_overrides",
     "custom_box_groups",
     "game_jeu_overrides",
