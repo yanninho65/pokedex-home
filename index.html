@@ -127,6 +127,7 @@ const JEU_VIEW_PRESETS = [
   { label: "Rubis/Saphir/Émeraude", jeuKeys: ["rubis", "saphir", "emeraude"] },
   { label: "Rouge Feu/Vert Feuille", jeuKeys: ["rougefeu", "vertfeuille"] },
   { label: "Diamant/Perle/Platine", jeuKeys: ["diamant", "perle", "platine"] },
+  { label: "Or HeartGold/Argent SoulSilver", jeuKeys: ["orheartgold", "argentsoulsilver"] },
   { label: "Noir/Blanc", jeuKeys: ["noir", "blanc"] },
   { label: "Noir 2/Blanc 2", jeuKeys: ["noir2", "blanc2"] },
   { label: "X/Y", jeuKeys: ["x", "y"] },
@@ -227,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.30.21.43";
+const APP_VERSION = "2026.8.31.14.58";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -417,6 +418,11 @@ const JEU_VIDEO_DEFS = [
   { key: "diamant", label: "Diamant", gen: "4G" },
   { key: "perle", label: "Perle", gen: "4G" },
   { key: "platine", label: "Platine", gen: "4G" },
+  // § demande explicite : paire Or HeartGold/Argent SoulSilver (remakes 2G sortis en 4G,
+  // classés ici par génération de sortie réelle — contrairement à Diamant Étincelant/Perle
+  // Scintillante, sortis bien plus tard en 8G malgré leur contenu 4G, voir plus bas).
+  { key: "orheartgold", label: "Or HeartGold", gen: "4G" },
+  { key: "argentsoulsilver", label: "Argent SoulSilver", gen: "4G" },
   { key: "noir", label: "Noir", gen: "5G" },
   { key: "blanc", label: "Blanc", gen: "5G" },
   { key: "noir2", label: "Noir 2", gen: "5G" },
@@ -465,6 +471,7 @@ const JEU_VIDEO_PAIRS = [
   ["rougefeu", "vertfeuille"],
   ["diamant", "perle"],
   ["platine"],
+  ["orheartgold", "argentsoulsilver"],
   ["noir", "blanc"],
   ["noir2", "blanc2"],
   ["x", "y"],
@@ -1016,14 +1023,23 @@ function spriteCandidates(nom, forme, shiny) {
   const key = forme ? nom + "|" + forme : null;
   const dedicatedId = key ? (REGIONAL_SPRITE_IDS[key] || MEGA_GMAX_SPRITE_IDS[key]) : null;
   const suffix = nom === "Zarbi" ? unownSuffix(forme) : (forme ? DATA.spriteVariants[nom + "|" + forme] : null);
-  // Artwork officiel en priorité (rendu net et grand format, plus lisible sur ordinateur).
+  // § harmonisation (National vs onglets jeu, ex. Rattata d'Alola) : une forme régionale/cosmétique
+  // sans identifiant numérique dédié (`dedicatedId`) n'a pas forcément d'artwork officiel suffixé
+  // disponible sur la source utilisée ici — l'ancien ordre retombait alors silencieusement sur
+  // l'artwork de la forme de base (espèce par défaut, souvent Kanto), qui n'a RIEN à voir avec la
+  // forme demandée (mauvais Pokémon affiché, sans erreur visible). Toujours épuiser toutes les
+  // sources spécifiques à CETTE forme (artwork dédié, artwork suffixé, pixel dédié, pixel suffixé —
+  // ce dernier fonctionnant de façon fiable pour les formes régionales, contrairement à l'artwork
+  // suffixé) avant de retomber sur la forme de base, quitte à afficher un sprite pixelisé plutôt
+  // qu'un artwork HD incorrect.
   if (dedicatedId) urls.push(ARTWORK_BASE + artDir + dedicatedId + ".png");
   if (suffix) urls.push(ARTWORK_BASE + artDir + num + suffix + ".png");
-  urls.push(ARTWORK_BASE + artDir + num + ".png");
-  // Sprites pixelisés en repli, si l'artwork officiel n'existe pas pour cette forme précise.
   if (dedicatedId) urls.push(SPRITE_BASE + dir + dedicatedId + ".png");
   if (suffix) urls.push(SPRITE_BASE + dir + num + suffix + ".png");
-  urls.push(SPRITE_BASE + dir + num + ".png"); // base species fallback
+  // Repli sur la forme de base (espèce par défaut) — seulement si aucune source spécifique à cette
+  // forme n'a pu être tentée ci-dessus (ni dedicatedId, ni suffix).
+  urls.push(ARTWORK_BASE + artDir + num + ".png");
+  urls.push(SPRITE_BASE + dir + num + ".png");
   if (shiny) {
     urls.push(ARTWORK_BASE + num + ".png"); // dernier recours : artwork normal si le shiny manque
     urls.push(SPRITE_BASE + num + ".png"); // dernier recours : sprite normal si tout le reste manque
@@ -1993,6 +2009,15 @@ function isMegaOrGmaxForme(forme) {
   if (!forme) return false;
   const f = String(forme).toLowerCase().replace(/non\s+m[ée]ga/g, "").replace(/non\s+gmax/g, "");
   return f.includes("méga") || f.includes("mega") || f.includes("gmax");
+}
+// Une forme est "concernée" par le filtre Dynamax si son nom de forme contient "Gmax" (insensible
+// à la casse) — "Gmax" = forme active, "Non Gmax" = forme normale associée. Les formes ne
+// mentionnant pas Gmax du tout renvoient null (non concernées, exclues quand le filtre est actif).
+// Module-level (§ harmonisation National/GameView, § demande explicite "adapter les filtres...
+// en fonction de la marque") — anciennement dupliqué localement dans NationalView uniquement.
+function dynamaxInfoFor(forme) {
+  if (!forme || !/gmax/i.test(forme)) return null;
+  return /non\s*gmax/i.test(forme) ? "nonGmax" : "gmax";
 }
 function localFormsForNat(nat) {
   return NAT_ALL_FORMS.filter((f) => f.n === nat && !isMegaOrGmaxForme(f.forme));
@@ -3410,6 +3435,25 @@ function useCardSwipeNav(active, onPrev, onNext) {
   return { onTouchStart, onTouchEnd };
 }
 
+// Bloque le scroll de la liste derrière une fiche modale tant qu'elle reste ouverte (§ demande
+// explicite : "on ne devrait pas pouvoir faire bouger la liste derrière") : un overlay
+// `position: fixed` seul n'empêche pas le scroll tactile du contenu sous-jacent sur
+// Android/Chrome/Samsung Internet — sans ce verrou, un balayage qui démarre sur la fiche peut
+// faire défiler la liste en dessous. `active` : la fiche est actuellement affichée — indépendant
+// de toute navigation entre fiches (contrairement à `useCardSwipeNav`, qui ne s'active que s'il y
+// a plusieurs éléments à parcourir) : une fiche seule, sans navigation possible, doit quand même
+// bloquer le scroll. Capture la valeur précédente d'`overflow` pour la restaurer telle quelle
+// (jamais juste "" en dur), ce qui s'empile correctement si une autre fenêtre modale était déjà
+// ouverte en dessous.
+function useLockBodyScroll(active) {
+  useEffect(() => {
+    if (!active) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prevOverflow; };
+  }, [active]);
+}
+
 // Flèches flottantes (fixées en bas de l'écran, gauche/droite) pour naviguer entre fiches
 // Pokémon — rendu au-dessus de toute modale (zIndex 105 > 100). Visuellement distinctes des
 // éventuels boutons "← Précédent/Suivant →" internes à une fiche (qui gèrent un autre
@@ -3909,6 +3953,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
   const [, forceRefresh] = useState(0);
   const [showEvoChain, setShowEvoChain] = useState(false);
+  useLockBodyScroll(true);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
   const natInfo = natInfoFor(nom, forme);
   const lien = pokepediaLienPourMarque(natInfo.lien, marque);
@@ -4604,6 +4649,11 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [filter, setFilter] = useCachedState(filterCache, gameKey, "filter", "all");
   const [region, setRegion] = useCachedState(filterCache, gameKey, "region", null); // null = toutes, ou Set de régions cochées
   const [alphaFilter, setAlphaFilter] = useCachedState(filterCache, gameKey, "alphaFilter", null); // null = tous, ou Set { "alpha", "nonAlpha" } (LA/LZA uniquement)
+  // Filtre "Dynamax" (§ demande explicite : "adapter les filtres taille et dynamax en fonction de
+  // la marque") — même principe que National (`dynamaxInfoFor`, module-level) : ne proposé que si
+  // la marque contient réellement au moins une forme Gmax/Non Gmax (`hasGmaxForms` plus bas),
+  // jamais affiché sinon (ex. marques sans aucune forme Gmax dans leur Pokédex).
+  const [dynamaxFilter, setDynamaxFilter] = useCachedState(filterCache, gameKey, "dynamaxFilter", null); // null = tous, ou Set { "gmax", "nonGmax" }
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Affichage additionnel : Pokémon capturés en Shiny / via un Event marqués sur cette marque
   // (gameKey), mais absents de la liste structurelle du jeu (rows) — masqués par défaut, activables
@@ -4635,6 +4685,11 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [alphaMap, setAlphaMap] = useState({});
   const effective = flags || baseline;
   const isAlphaGame = gameKey === "LA" || gameKey === "LZA";
+  // Marque contenant au moins une forme Gmax/Non Gmax (§ demande explicite, filtre "Dynamax"
+  // adapté à la marque) — calculé depuis les lignes réelles du Pokédex de cette marque, jamais un
+  // code de marque en dur (contrairement à `isAlphaGame`, qui reste correct tel quel : seules
+  // LA/LZA ont un mécanisme de marquage Alpha par capture, voir `alphaMap`/`toggleAlpha`).
+  const hasGmaxForms = useMemo(() => rows.some((r) => dynamaxInfoFor(r[2]) !== null), [rows]);
   // Suivi "en jeu" par marque (§ fermeture Banque Pokémon) — entièrement modulable, voir
   // useJeuViews. Vide pour toute marque sans vue configurée, donc sans effet ailleurs que là où
   // l'utilisateur en a créé.
@@ -4979,7 +5034,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // contrairement aux jeux Switch/3DS. Renseigné depuis la fiche catalogue (bloc "Jeu vidéo").
   const isGoGame = gameKey === "Go";
   const [sortiFilter, setSortiFilter] = useCachedState(filterCache, gameKey, "sortiFilter", null); // null = tous, ou Set { "oui", "non" }
-  const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || boxGroupFilter !== null || jeuFilter !== null || sortiFilter !== null || dispoFilter !== null;
+  const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || dynamaxFilter !== null || boxGroupFilter !== null || jeuFilter !== null || sortiFilter !== null || dispoFilter !== null;
 
   const toggleAlpha = async (i) => {
     const r = rows[i];
@@ -5066,7 +5121,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   };
   const regionWidth = useMemo(() => charWidth("Région", regions), [regions]);
 
-  useEffect(() => { setLimit(150); }, [search, filter, region, alphaFilter, boxGroupFilter, jeuFilter, dispoFilter, gameKey]);
+  useEffect(() => { setLimit(150); }, [search, filter, region, alphaFilter, dynamaxFilter, boxGroupFilter, jeuFilter, dispoFilter, gameKey]);
 
   useEffect(() => {
     if (ready && flags === null) {
@@ -5084,6 +5139,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     setFilter("all");
     setRegion(null);
     setAlphaFilter(null);
+    setDynamaxFilter(null);
     setBoxGroupFilter(null);
     setJeuFilter(null);
     setSortiFilter(null);
@@ -5115,9 +5171,14 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           const isAlpha = !!alphaMap[alphaKeyFor(r.nom, r.forme)];
           if (!matchesMulti(alphaFilter, isAlpha ? "alpha" : "nonAlpha")) return false;
         }
+        if (hasGmaxForms && dynamaxFilter !== null) {
+          const d = dynamaxInfoFor(r.forme);
+          if (d === null) return false;
+          if (!matchesMulti(dynamaxFilter, d)) return false;
+        }
         return true;
       });
-  }, [rows, sortOrder, boxInfo, extendedRows, extendedSortOrder, extendedBoxInfo, showJeuMerge, search, filter, region, alphaFilter, alphaMap, displayEffective, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
+  }, [rows, sortOrder, boxInfo, extendedRows, extendedSortOrder, extendedBoxInfo, showJeuMerge, search, filter, region, alphaFilter, alphaMap, dynamaxFilter, hasGmaxForms, displayEffective, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
 
   // Filtrage des entrées Shiny/Event additionnelles : mêmes critères recherche/région que la liste
   // normale ; le groupe de boîte et la taille Alpha n'ont pas de sens pour elles (exclues si actifs) ;
@@ -5128,6 +5189,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     if (dispoFilter !== null) return false;
     if (isGoGame && sortiFilter !== null) return false;
     if (isAlphaGame && alphaFilter !== null) return false;
+    if (hasGmaxForms && dynamaxFilter !== null) return false;
     if (!matchesMulti(region, it.region)) return false;
     return true;
   };
@@ -5139,7 +5201,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (!matchesExtraRow(it)) return false;
       return true;
     });
-  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, dispoFilter, alphaFilter, isAlphaGame, isGoGame, sortiFilter]);
+  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, dispoFilter, alphaFilter, dynamaxFilter, hasGmaxForms, isAlphaGame, isGoGame, sortiFilter]);
 
   useInfiniteScroll(viewMode !== "box" && (filtered.length + extraFiltered.length) > limit, () => setLimit((l) => l + 200));
 
@@ -5173,12 +5235,17 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         const isAlpha = !!alphaMap[alphaKeyFor(r[1], r[2])];
         if (!matchesMulti(alphaFilter, isAlpha ? "alpha" : "nonAlpha")) return;
       }
+      if (hasGmaxForms && dynamaxFilter !== null) {
+        const d = dynamaxInfoFor(r[2]);
+        if (d === null) return;
+        if (!matchesMulti(dynamaxFilter, d)) return;
+      }
       matchedTotal++;
       const c = !!(displayEffective && displayEffective[i]);
       if (filter === "missing") { if (!c) matchedCount++; } else { if (c) matchedCount++; }
     });
     return { matchedTotal, matchedCount };
-  }, [rows, extendedRows, boxInfo, extendedBoxInfo, showJeuMerge, search, region, alphaFilter, alphaMap, displayEffective, filter, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
+  }, [rows, extendedRows, boxInfo, extendedBoxInfo, showJeuMerge, search, region, alphaFilter, alphaMap, dynamaxFilter, hasGmaxForms, displayEffective, filter, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
   // Les extras Shiny/Event ne comptent jamais dans les 2 premiers cercles (total/caught, basés sur
   // rows/effective, inchangés ci-dessus) — seulement ajoutés au 3e cercle (compte filtré).
   const combinedStats = {
@@ -5596,17 +5663,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     }}
                   >α</button>
                 )}
-                {showJeuMerge && (() => {
-                  const stats = pairStatsFor(r.nom, r.forme);
-                  if (!stats || stats.max === 0) return null;
-                  return (
-                    <span title="Attrapé dans X jeu(x)/paire(s) sur le nombre total de paires où ce Pokémon est disponible" style={{
-                      flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 800,
-                      color: stats.count > 0 ? PURPLE : MUTED, border: `1px solid ${stats.count > 0 ? PURPLE : LINE}`,
-                      borderRadius: 6, padding: "2px 6px",
-                    }}>{stats.count}/{stats.max}</span>
-                  );
-                })()}
               </div>
             );
           })}
@@ -5733,6 +5789,15 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     options={[["alpha", "Alpha"], ["nonAlpha", "Normal"]]}
                     selected={alphaFilter}
                     onChange={setAlphaFilter}
+                    width="100%"
+                  />
+                )}
+                {hasGmaxForms && (
+                  <MultiSelectFilter
+                    label="Dynamax"
+                    options={[["gmax", "Gmax"], ["nonGmax", "Non Gmax"]]}
+                    selected={dynamaxFilter}
+                    onChange={setDynamaxFilter}
                     width="100%"
                   />
                 )}
@@ -6082,6 +6147,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   // National/Home/onglets jeu, voir FicheFormeEvoRow) — refermée à chaque changement de fiche.
   const [showEvoChain, setShowEvoChain] = useState(false);
   useEffect(() => { setShowEvoChain(false); }, [selected]);
+  useLockBodyScroll(!!selected);
   const cardTotalRef = useRef(1);
   useEffect(() => {
     if (!selected) return;
@@ -6901,6 +6967,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   // navigation "Précédent/Suivant" au lieu du défilement horizontal (§ voir ShinyView, même patron).
   const [cardPos, setCardPos] = useState(0);
   useEffect(() => { setCardPos(0); }, [selected]);
+  useLockBodyScroll(!!selected);
   const cardTotalRef = useRef(1);
   useEffect(() => {
     if (!selected) return;
@@ -7518,6 +7585,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   // Fenêtre "Chaîne d'évolution" (§ harmonisation, comme Shiny/National/Home/Double).
   const [showEvoChain, setShowEvoChain] = useState(false);
   useEffect(() => { setShowEvoChain(false); }, [selected]);
+  useLockBodyScroll(!!selected);
   const [limit, setLimit] = useState(150);
   const [gridCols, setGridCols] = useCachedState(filterCache, "event", "gridCols", 6);
   const windowWidth = useWindowWidth();
@@ -8314,6 +8382,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   }, [initialFilter]);
   const anyFilterActive = shinyFilter !== null || ouFilter !== null || versFilter !== null || marqueFilter !== null || jeuFilter !== null;
   const [selected, setSelected] = useState(null);
+  useLockBodyScroll(!!selected);
   const [limit, setLimit] = useState(150);
   const [gridCols, setGridCols] = useCachedState(filterCache, "interjeu", "gridCols", 6);
   const windowWidth = useWindowWidth();
@@ -9663,42 +9732,63 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
   const setGameNumber = (g, v) => setDraft({ ...draft, gameNumbers: { ...(draft.gameNumbers || {}), [g]: v } });
   const setJeuVideoNumber = (pairKey, v) => setDraft({ ...draft, jeuVideoNumbers: { ...(draft.jeuVideoNumbers || {}), [pairKey]: v } });
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "85vh", overflowY: "auto" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+      <FloatingCardNav
+        hasPrev={false}
+        hasNext={false}
+        onPrev={() => {}}
+        onNext={() => {}}
+        center={(
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {!isNew && onDelete && (
+              <button onClick={() => setConfirmDelete(true)} title="Supprimer" style={{ ...GLASS_ROUND_BTN, color: "#E4572E" }}>🗑</button>
+            )}
+            <button onClick={onCancel} title="Annuler" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
+            <button
+              onClick={onSave}
+              disabled={!draft.nom.trim()}
+              title="Enregistrer"
+              style={{ ...GLASS_ROUND_BTN, background: ACCENT, color: "#fff", border: "none", fontSize: 20, fontWeight: 800, opacity: draft.nom.trim() ? 1 : 0.5 }}
+            >✓</button>
+          </div>
+        )}
+      />
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
         {isNew && (
-          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14.5, color: TXT, marginBottom: 12 }}>
-            Ajouter un Pokémon
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
+            <div style={{
+              width: 46, height: 46, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center",
+              background: PANEL, border: `1px solid ${LINE}`, color: ACCENT, fontSize: 22, fontWeight: 800,
+            }}>＋</div>
           </div>
         )}
         {!isNew && draft.nom && (
-          <React.Fragment>
-            <div style={{
-              display: "flex", justifyContent: "center", alignItems: "center",
-              background: PANEL, border: `1px solid ${LINE}`, borderRadius: 20,
-              padding: 14, marginBottom: 8,
-            }}>
-              <Sprite nom={draft.nom} forme={draft.forme || null} size={96} />
-            </div>
-            <div style={{ textAlign: "center", marginBottom: 12 }}>
-              <a
-                href={`https://www.pokepedia.fr/${encodeURIComponent(draft.nom.replace(/ /g, "_"))}`}
-                target="_blank" rel="noopener noreferrer"
-                style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: ACCENT, textDecoration: "none" }}
-              >Poképédia ↗</a>
-            </div>
-          </React.Fragment>
+          <FicheArtworkBlock n={draft.nat || null}>
+            <Sprite nom={draft.nom} forme={draft.forme || null} size={96} />
+          </FicheArtworkBlock>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
             <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
               Nom
               <input value={draft.nom} onChange={(e) => setDraft({ ...draft, nom: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
             </label>
-            <label style={{ flex: 1.8, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
-              Forme
-              <input value={draft.forme} onChange={(e) => setDraft({ ...draft, forme: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
-            </label>
+            {!isNew && draft.nom && (
+              <a
+                href={`https://www.pokepedia.fr/${encodeURIComponent(draft.nom.replace(/ /g, "_"))}`}
+                target="_blank" rel="noopener noreferrer"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none", whiteSpace: "nowrap",
+                  fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 600, color: ACCENT,
+                  border: `1px solid ${ACCENT}66`, borderRadius: 999, padding: "7px 14px", flexShrink: 0,
+                }}
+              >Poképédia ↗</a>
+            )}
           </div>
+          <label style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
+            Forme
+            <input value={draft.forme} onChange={(e) => setDraft({ ...draft, forme: e.target.value })} style={{ ...miniInput, width: "100%", marginTop: 4, boxSizing: "border-box" }} />
+          </label>
           <div style={{ display: "flex", gap: 10 }}>
             <label style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>
               Numéro national
@@ -9929,15 +10019,6 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
-          {!isNew && onDelete ? (
-            <button onClick={() => setConfirmDelete(true)} style={{ ...btnGhost, color: "#E4572E", borderColor: "#E4572E55" }}>Supprimer</button>
-          ) : <span />}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={onCancel} style={btnGhost}>Annuler</button>
-            <button onClick={onSave} disabled={!draft.nom.trim()} style={{ ...tabActive, background: ACCENT, color: "#fff", opacity: draft.nom.trim() ? 1 : 0.5 }}>Enregistrer</button>
           </div>
         </div>
         {confirmDelete && (
@@ -11600,6 +11681,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   // nouvelle navigation entre ESPÈCES/FORMES DIFFÉRENTES de la liste, voir plus bas).
   const [cardPos, setCardPos] = useState(0);
   useEffect(() => { setCardPos(0); setCatalogEditOpen(false); setEvoChainEditOpen(false); }, [selectedNom, onlyFormKey]);
+  useLockBodyScroll(!!selectedNom);
   const cardTotalRef = useRef(1);
   const savedScroll = useRef(0);
   const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
@@ -11707,14 +11789,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     return games.filter((g, gi) => rows.some((r) => r[8] && r[8][gi]));
   }, [rows, games]);
   const jeuWidth = useMemo(() => charWidth("Jeu", ["Sans jeu", ...jeuOptionsAvailable]), [jeuOptionsAvailable]);
-
-  // Une forme est "concernée" par le filtre Dynamax si son nom de forme contient "Gmax"
-  // (insensible à la casse) — "Gmax" = forme active, "Non Gmax" = forme normale associée.
-  // Les formes ne mentionnant pas Gmax du tout sont exclues quand ce filtre est actif.
-  const dynamaxInfoFor = (forme) => {
-    if (!forme || !/gmax/i.test(forme)) return null;
-    return /non\s*gmax/i.test(forme) ? "nonGmax" : "gmax";
-  };
 
   // Filtre "Jeu" : une forme matche si elle est disponible (r[7]) dans au moins un des jeux
   // cochés ; le pseudo-choix "Sans jeu" cible les formes non liées à un jeu précis (avail
@@ -12144,7 +12218,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           <div style={{ position: "relative", maxWidth: 520, width: "100%" }}>
             <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxHeight: "75vh", overflowY: "auto" }}>
             <FicheArtworkBlock n={selectedForms[0][0]}>
-              <Sprite nom={selectedNom} size={96} />
+              <Sprite nom={selectedNom} forme={currentForm ? currentForm[2] : null} size={96} />
               {shinyForm && (
                 <Sprite nom={shinyForm[1]} forme={shinyForm[2]} size={96} shiny />
               )}
@@ -15891,6 +15965,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
   const [, forceRefresh] = useState(0);
   const [showEvoChain, setShowEvoChain] = useState(false);
+  useLockBodyScroll(true);
   const evoLabel = formatEvolution(DATA.evolutionMode[nom + "|" + (forme || "")]);
   const natInfo = natInfoFor(nom, forme);
   const lien = pokepediaLienPourMarque(natInfo.lien, marque);
