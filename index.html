@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.8.31.14.58";
+const APP_VERSION = "2026.9.1.0.15";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -260,6 +260,57 @@ const GLASS_ROUND_BTN = {
   display: "flex", alignItems: "center", justifyContent: "center",
   fontSize: 18, lineHeight: 1, cursor: "pointer",
 };
+
+// Fond assombri + centrage plein écran des 7 fiches détail modales (National, Shiny, Double,
+// Event, Interjeu, BoxGroupModal, JeuMultiSourceModal — §5septies) : réserve 150px de marge
+// basse pour ne jamais chevaucher les flèches flottantes de navigation (bottom: 92). Mutualisé
+// ici : ce style était auparavant recopié à l'identique à chacun des 7 sites d'appel.
+const FICHE_OVERLAY_STYLE = {
+  position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100,
+  display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px",
+};
+
+// Panneau interne d'une fiche détail modale (§5septies) : même forme partout, seule la couleur
+// de bordure (accent propre à l'onglet) et la largeur max varient d'un site d'appel à l'autre.
+function fichePanelStyle(borderColor, maxWidth) {
+  return {
+    background: PANEL2, border: `1px solid ${borderColor}`, borderRadius: 20, padding: 18,
+    ...(maxWidth ? { maxWidth, width: "100%" } : {}),
+    maxHeight: "75vh", overflowY: "auto",
+  };
+}
+
+// Sélecteur "Par ligne" (nombre de Pokémon par ligne en vue Grille) — mutualisé : ce bloc de
+// 4 éléments (label, moins, compteur, plus) était recopié à l'identique (aux bornes min/max et
+// à la valeur affichée près) dans National, Shiny, Double, Event, Interjeu, Go 1, Home 2 et les
+// onglets jeu. `display` reste un prop séparé de `gridCols` (plutôt que toujours affiché tel
+// quel) car certains appelants affichent la valeur "effective" recalculée pour la largeur
+// d'écran (`effectiveGridCols`, voir useWindowWidth) plutôt que la préférence brute stockée.
+function GridColsStepper({ gridCols, setGridCols, min, max, display }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
+      Par ligne :
+      <button onClick={() => setGridCols(Math.max(min, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
+      <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{display}</span>
+      <button onClick={() => setGridCols(Math.min(max, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
+    </div>
+  );
+}
+
+// Lecture/écriture générique d'une clé JSON de window.storage (jamais partagée entre
+// utilisateurs, cf. ALL_KEYS). Mutualisé ici : ce couple lire/écrire était auparavant
+// redéfini à l'identique (même corps) dans une quinzaine d'endroits séparés (Excel
+// import/export, Paramètres, édition Catalogue...) — un seul endroit désormais.
+async function readJSON(key, fallback) {
+  try {
+    const res = await window.storage.get(key, false);
+    if (res && res.value) return JSON.parse(res.value);
+  } catch (e) {}
+  return fallback;
+}
+async function writeJSON(key, value) {
+  try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {}
+}
 
 function pct(c, t) { return t === 0 ? 0 : Math.round((c / t) * 100); }
 // sel: null (= Tous, aucune restriction) | Set des valeurs cochées (peut être vide = Aucun)
@@ -1505,30 +1556,6 @@ function StatusFilterPills({ value, onChange, options }) {
         <button key={k} onClick={() => onChange(k)} style={value === k ? tabActive : tabInactive}>{l}</button>
       ))}
     </div>
-  );
-}
-
-// Bouton "Filtres" repliable : masque/affiche les filtres secondaires (statut, région,
-// marque, etc.) d'un onglet. `active` indique qu'au moins un filtre est actuellement
-// appliqué — affiche un petit point quand le panneau est replié pour le signaler.
-function FilterToggleButton({ open, setOpen, active }) {
-  return (
-    <button
-      onClick={() => setOpen((o) => !o)}
-      title="Afficher/masquer les filtres"
-      style={{
-        ...(open ? tabActive : tabInactive),
-        display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-        padding: "9px 11px", flexShrink: 0, position: "relative",
-      }}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-        <polygon points="4,4 20,4 14,12 14,19 10,21 10,12" />
-      </svg>
-      {active && !open && (
-        <span style={{ position: "absolute", top: 4, right: 4, width: 6, height: 6, borderRadius: 999, background: ACCENT }} />
-      )}
-    </button>
   );
 }
 
@@ -3878,17 +3905,6 @@ function useJeuViews(marque) {
   return { views, addView, removeView, updateView };
 }
 
-// Ligne compacte "titre à gauche + champ à droite, sur la même ligne" (§ demande explicite :
-// Jeu-DO / Groupe de boîte / No dans les fiches de capture) — remplace l'ancien empilement
-// label au-dessus / champ pleine largeur en dessous, pour gagner de la place verticale.
-function FieldRow({ label, children }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, flexShrink: 0 }}>{label}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
-    </div>
-  );
-}
 // Style des champs Jeu-DO / Groupe de boîte dans les fiches de capture : plus de cadre (fond
 // transparent, pas de bordure) — juste un léger soulignement en tirets pour rappeler que c'est
 // cliquable — pour que la fiche se lise comme une fiche plutôt qu'un formulaire (§ demande
@@ -3960,7 +3976,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   const hasNav = navTotal != null && navTotal > 1;
   const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
   return (
-    <div {...(hasNav ? swipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+    <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
       {(() => {
         // Modifier (crayon seul) / Fermer regroupés sur la ligne du bas, entre les flèches ‹ ›
@@ -3983,7 +3999,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
           />
         );
       })()}
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+      <div style={fichePanelStyle(LINE, 420)}>
         <FicheArtworkBlock
           editableNumero
           numeroValue={numero}
@@ -4370,12 +4386,7 @@ function PairModeBlock({
                 <ViewToggle mode={viewMode} setMode={setViewMode} options={GAME_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
                   <React.Fragment>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                      Par ligne :
-                      <button onClick={() => setGridCols(Math.max(3, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                      <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                      <button onClick={() => setGridCols(Math.min(7, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                    </div>
+                    <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={3} max={7} display={effCols} />
                     <ViewToggle mode={grilleSortMode} setMode={setGrilleSortMode} options={[["boite", "Boîte"], ["numero", "Numéro"]]} />
                   </React.Fragment>
                 )}
@@ -5724,12 +5735,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                 <ViewToggle mode={viewMode} setMode={setViewMode} options={GAME_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
                   <React.Fragment>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                      Par ligne :
-                      <button onClick={() => setGridCols(Math.max(3, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                      <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                      <button onClick={() => setGridCols(Math.min(7, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                    </div>
+                    <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={3} max={7} display={effCols} />
                     <ViewToggle mode={grilleSortMode} setMode={setGrilleSortMode} options={[["boite", "Boîte"], ["numero", "Numéro"]]} />
                   </React.Fragment>
                 )}
@@ -6148,21 +6154,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   const [showEvoChain, setShowEvoChain] = useState(false);
   useEffect(() => { setShowEvoChain(false); }, [selected]);
   useLockBodyScroll(!!selected);
-  const cardTotalRef = useRef(1);
-  useEffect(() => {
-    if (!selected) return;
-    const onKey = (e) => {
-      // Ignore les flèches si le focus est dans un champ de saisie (input date, recherche…) —
-      // sinon la navigation entre cartes interfère avec la navigation normale au clavier dans
-      // ces champs (ex. jours/mois/années d'un <input type="date">).
-      const tag = document.activeElement && document.activeElement.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.key === "ArrowRight") setCardPos((p) => Math.min(p + 1, cardTotalRef.current - 1));
-      else if (e.key === "ArrowLeft") setCardPos((p) => Math.max(p - 1, 0));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
   const [gridCols, setGridCols] = useCachedState(filterCache, "shiny", "gridCols", 6); // nombre de Pokémon par ligne en vue Grille
   const windowWidth = useWindowWidth();
   const effCols = effectiveGridCols(gridCols, windowWidth);
@@ -6578,12 +6569,11 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         const rowsToShow = showingAll
           ? allRecs.map((rec, idx) => ({ rec, idx }))
           : [{ rec: singleRec, idx: allRecs.indexOf(singleRec) }];
-        cardTotalRef.current = rowsToShow.length;
         const cp = Math.min(cardPos, rowsToShow.length - 1);
         const current = rowsToShow[cp];
         const hasShinyNav = filtered.length > 1;
         return (
-        <div {...(hasShinyNav ? shinySwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+        <div {...(hasShinyNav ? shinySwipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
           <FloatingCardNav
             onPrev={() => goShinyNav(-1)}
             onNext={() => goShinyNav(1)}
@@ -6601,7 +6591,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
               </div>
             )}
           />
-          <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+          <div style={fichePanelStyle(`${GOLD}66`, 460)}>
             {(() => {
               const info = natInfoFor(selectedEntry[1], selectedEntry[2]);
               const evoLabel = formatEvolution(DATA.evolutionMode[selectedEntry[1] + "|" + (selectedEntry[2] || "")]);
@@ -6841,12 +6831,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 )}
                 {viewMode === "grille" && (
                   <React.Fragment>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                      Par ligne :
-                      <button onClick={() => setGridCols(Math.max(3, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                      <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                      <button onClick={() => setGridCols(Math.min(7, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                    </div>
+                    <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={3} max={7} display={effCols} />
                     <ViewToggle mode={grilleSortMode} setMode={setGrilleSortMode} options={[["boite", "Boîte"], ["numero", "Numéro"]]} />
                   </React.Fragment>
                 )}
@@ -6968,21 +6953,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   const [cardPos, setCardPos] = useState(0);
   useEffect(() => { setCardPos(0); }, [selected]);
   useLockBodyScroll(!!selected);
-  const cardTotalRef = useRef(1);
-  useEffect(() => {
-    if (!selected) return;
-    const onKey = (e) => {
-      // Ignore les flèches si le focus est dans un champ de saisie (input date, recherche…) —
-      // sinon la navigation entre cartes interfère avec la navigation normale au clavier dans
-      // ces champs (ex. jours/mois/années d'un <input type="date">).
-      const tag = document.activeElement && document.activeElement.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.key === "ArrowRight") setCardPos((p) => Math.min(p + 1, cardTotalRef.current - 1));
-      else if (e.key === "ArrowLeft") setCardPos((p) => Math.max(p - 1, 0));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
   const [limit, setLimit] = useState(150);
   const savedScroll = useRef(0);
   const BOX_SIZE = 30;
@@ -7182,7 +7152,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
         const canToggle = !!singleEntry && allRecs.length > 1;
         const showingAll = detailShowAll || !singleEntry;
         const rowsToShow = showingAll ? allRecs : [singleEntry];
-        cardTotalRef.current = rowsToShow.length;
         const cp = Math.min(cardPos, rowsToShow.length - 1);
         const current = rowsToShow[cp];
         const sepIdx = selected.indexOf("|");
@@ -7192,7 +7161,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
         const evoLabel = formatEvolution(DATA.evolutionMode[selNom + "|" + (selForme || "")]);
         const hasDoubleNav = doubleNavKeys.length > 1;
         return (
-        <div {...(hasDoubleNav ? doubleSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+        <div {...(hasDoubleNav ? doubleSwipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
           <FloatingCardNav
             onPrev={() => goDoubleNav(-1)}
             onNext={() => goDoubleNav(1)}
@@ -7206,7 +7175,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
               </div>
             )}
           />
-          <div style={{ background: PANEL2, border: `1px solid ${GOLD}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+          <div style={fichePanelStyle(`${GOLD}66`, 460)}>
             <FicheArtworkBlock n={info.n}>
               <Sprite nom={selNom} forme={selForme} size={96} shiny={!!(current && current.rec.shiny)} />
             </FicheArtworkBlock>
@@ -7774,7 +7743,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
         const evoLabel = formatEvolution(DATA.evolutionMode[r.nom + "|" + (r.forme || "")]);
         const hasEventNav = filtered.length > 1;
         return (
-        <div {...(hasEventNav ? eventSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+        <div {...(hasEventNav ? eventSwipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
           <FloatingCardNav
             onPrev={() => goEventNav(-1)}
             onNext={() => goEventNav(1)}
@@ -7787,7 +7756,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
               </div>
             )}
           />
-          <div style={{ background: PANEL2, border: `1px solid ${EVENTORANGE}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+          <div style={fichePanelStyle(`${EVENTORANGE}66`, 460)}>
             <FicheArtworkBlock n={r.nat}>
               <Sprite nom={r.nom} forme={r.forme} size={96} shiny={r.shiny} />
             </FicheArtworkBlock>
@@ -8016,12 +7985,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <ViewToggle mode={viewMode} setMode={setViewMode} options={EVENT_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                    Par ligne :
-                    <button onClick={() => setGridCols(Math.max(3, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                    <button onClick={() => setGridCols(Math.min(7, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                  </div>
+                  <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={3} max={7} display={effCols} />
                 )}
               </div>
             ),
@@ -8668,7 +8632,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
         const lien = natInfoFor(r.nomApres, r.formeApres).lien;
         const hasInterjeuNav = filtered.length > 1;
         return (
-        <div {...(hasInterjeuNav ? interjeuSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+        <div {...(hasInterjeuNav ? interjeuSwipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
           <FloatingCardNav
             onPrev={() => goInterjeuNav(-1)}
             onNext={() => goInterjeuNav(1)}
@@ -8681,7 +8645,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
               </div>
             )}
           />
-          <div style={{ background: PANEL2, border: `1px solid ${INTERJEU}66`, borderRadius: 20, padding: 18, maxWidth: 460, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+          <div style={fichePanelStyle(`${INTERJEU}66`, 460)}>
             <FicheArtworkBlock n={natInfoFor(r.nom, r.forme).n}>
               <Sprite nom={r.nom} forme={r.forme} size={90} shiny={r.shiny} />
               <div style={{ fontSize: 22, color: MUTED, fontWeight: 700, flexShrink: 0 }}>→</div>
@@ -9003,12 +8967,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <ViewToggle mode={viewMode} setMode={setViewMode} options={INTERJEU_VIEW_OPTIONS} />
                 {viewMode === "grid" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                    Par ligne :
-                    <button onClick={() => setGridCols(Math.max(3, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                    <button onClick={() => setGridCols(Math.min(7, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                  </div>
+                  <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={3} max={7} display={effCols} />
                 )}
               </div>
             ),
@@ -9066,16 +9025,6 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
 async function cascadeRename(kind, oldValue, newValue, marqueCtx) {
   if (!oldValue || !newValue || oldValue === newValue) return;
 
-  const readJSON = async (key, fallback) => {
-    try {
-      const res = await window.storage.get(key, false);
-      if (res && res.value) return JSON.parse(res.value);
-    } catch (e) {}
-    return fallback;
-  };
-  const writeJSON = async (key, value) => {
-    try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {}
-  };
   const dedupe = (arr) => Array.from(new Set(arr));
 
   if (kind === "marque") {
@@ -9367,11 +9316,6 @@ function cascadeRenameDataStructures(oldNom, oldForme, newNom, newForme) {
 // lors d'une session précédente).
 async function cascadeRenameStorage(oldKey, newKey) {
   if (oldKey === newKey) return;
-  const readJSON = async (key, fallback) => {
-    try { const res = await window.storage.get(key, false); if (res && res.value) return JSON.parse(res.value); } catch (e) {}
-    return fallback;
-  };
-  const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
 
   const shiny = await readJSON("shiny_catches", {});
   if (shiny[oldKey]) {
@@ -9426,10 +9370,6 @@ async function cascadeRenameStorage(oldKey, newKey) {
 // Point d'entrée appelé une fois, avant le premier rendu (voir bas de fichier) : applique les
 // personnalisations de catalogue mémorisées à l'objet `DATA` fraîchement chargé.
 async function applyCatalogCustomizations() {
-  const readJSON = async (key, fallback) => {
-    try { const res = await window.storage.get(key, false); if (res && res.value) return JSON.parse(res.value); } catch (e) {}
-    return fallback;
-  };
   const overrides = await readJSON("catalog_overrides", {});
   const additions = await readJSON("catalog_additions", []);
   const deletions = await readJSON("catalog_deletions", []);
@@ -9732,7 +9672,7 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
   const setGameNumber = (g, v) => setDraft({ ...draft, gameNumbers: { ...(draft.gameNumbers || {}), [g]: v } });
   const setJeuVideoNumber = (pairKey, v) => setDraft({ ...draft, jeuVideoNumbers: { ...(draft.jeuVideoNumbers || {}), [pairKey]: v } });
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+    <div style={FICHE_OVERLAY_STYLE}>
       <FloatingCardNav
         hasPrev={false}
         hasNext={false}
@@ -9753,7 +9693,7 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
           </div>
         )}
       />
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+      <div style={fichePanelStyle(LINE, 420)}>
         {isNew && (
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", marginBottom: 12 }}>
             <div style={{
@@ -10053,13 +9993,7 @@ function buildFullCatalogOverrides() {
     if (!row.__baseKey) return;
     const key = pokemonIdentityKey(row[1], row[2]);
     const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
-    const games = GAME_ORDER.filter((g) => DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key));
-    const gameNumbers = {};
-    games.forEach((g) => {
-      const gi = DATA.gameIndex[g][key];
-      const gnum = DATA.games[g][gi][0];
-      if (String(gnum) !== String(row[0])) gameNumbers[g] = gnum;
-    });
+    const { games, gameNumbers } = gameNumbersFor(row, key);
     // § correctif : cette reconstruction "complète" remplace entièrement la valeur lue en
     // stockage (voir buildExportOut) — tout champ absent d'ici disparaît silencieusement de
     // chaque export JSON ET de chaque synchro Gist (les deux passent par cette fonction).
@@ -10115,11 +10049,22 @@ function findNatIdx(nom, forme) {
 // automatiquement vers `catalog_additions` (si c'est un ajout, identifié par `row.__additionId`)
 // ou vers `catalog_overrides` (clé stable `row.__baseKey`, jamais la position) sinon. Partagé
 // par CatalogQuickEditButton et CatalogEditor pour toute fiche déjà existante (pas une création).
+// Numéros "dans chaque jeu" différents du numéro national pour une fiche du Catalogue (ex.
+// Pokédex régional) — mutualisé : ce calcul (5 lignes) était répété à l'identique à 3 endroits
+// (persistCatalogEdit, persistCatalogDeletion, applyCatalogCustomizations) pour construire la
+// liste des jeux où la fiche existe et ses éventuels numéros divergents du national.
+function gameNumbersFor(row, key) {
+  const games = GAME_ORDER.filter((g) => DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key));
+  const gameNumbers = {};
+  games.forEach((g) => {
+    const gi = DATA.gameIndex[g][key];
+    const gnum = DATA.games[g][gi][0];
+    if (String(gnum) !== String(row[0])) gameNumbers[g] = gnum;
+  });
+  return { games, gameNumbers };
+}
+
 async function persistCatalogEdit(idx, d) {
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const row = DATA.nat[idx];
   if (!row) return;
   const fields = {
@@ -10147,10 +10092,6 @@ async function persistCatalogEdit(idx, d) {
 // marque un ajout comme supprimé dans `catalog_additions` — masque le Pokémon partout
 // (National, onglets jeu, Shiny) sans jamais toucher aux captures déjà enregistrées.
 async function persistCatalogDeletion(idx) {
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const row = DATA.nat[idx];
   if (!row) return;
   if (row.__additionId) {
@@ -10171,13 +10112,7 @@ function catalogDraftForRow(idx) {
   const row = DATA.nat[idx];
   const key = pokemonIdentityKey(row[1], row[2]);
   const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
-  const games = GAME_ORDER.filter((g) => DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key));
-  const gameNumbers = {};
-  games.forEach((g) => {
-    const gi = DATA.gameIndex[g][key];
-    const gnum = DATA.games[g][gi][0];
-    if (String(gnum) !== String(row[0])) gameNumbers[g] = gnum;
-  });
+  const { games, gameNumbers } = gameNumbersFor(row, key);
   return {
     nom: row[1], forme: row[2] != null ? String(row[2]) : "", nat: String(row[0]), region: row[3] || "",
     evolution: DATA.evolutionMode[key] || "-",
@@ -10329,13 +10264,7 @@ function CatalogEditor({ onSaveStateChange }) {
   const draftFromRow = async (idx, row) => {
     const key = pokemonIdentityKey(row[1], row[2]);
     const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
-    const games = GAME_ORDER.filter((g) => DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key));
-    const gameNumbers = {};
-    games.forEach((g) => {
-      const gi = DATA.gameIndex[g][key];
-      const gnum = DATA.games[g][gi][0];
-      if (String(gnum) !== String(row[0])) gameNumbers[g] = gnum;
-    });
+    const { games, gameNumbers } = gameNumbersFor(row, key);
     return {
       idx, isNew: false, addId: null,
       draft: {
@@ -10373,11 +10302,6 @@ function CatalogEditor({ onSaveStateChange }) {
 
   const setDraft = (v) => setEditing((prev) => (prev ? { ...prev, draft: v } : prev));
 
-  const readJSON = async (key, fallback) => {
-    try { const res = await window.storage.get(key, false); if (res && res.value) return JSON.parse(res.value); } catch (e) {}
-    return fallback;
-  };
-  const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
 
   const finishAndReload = () => {
     setEditing(null);
@@ -10999,13 +10923,6 @@ function SettingsView({
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
 
   const loadAll = async () => {
-    const readJSON = async (key, fallback) => {
-      try {
-        const res = await window.storage.get(key, false);
-        if (res && res.value) return JSON.parse(res.value);
-      } catch (e) {}
-      return fallback;
-    };
     const [m, mo, lo, je, sh, db, ev, itj, bg, bgo, de, mm, dm] = await Promise.all([
       readJSON("custom_marques", []),
       readJSON("custom_modes", []),
@@ -11115,7 +11032,6 @@ function SettingsView({
     setSaveState("saving");
     const map = kind === "mode" ? modeMarques : detailMarques;
     const key = kind === "mode" ? "mode_marques" : "detail_marques";
-    const writeJSON = async (k, v) => { try { await window.storage.set(k, JSON.stringify(v), false); } catch (e) {} };
     const cur = map[value] || [];
     const currentlyAvailable = cur.length === 0 || cur.includes(marque);
     const next = currentlyAvailable
@@ -11141,7 +11057,6 @@ function SettingsView({
     const v = (newValue[kind] || "").trim();
     if (!v) return;
     setSaveState("saving");
-    const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
     if (kind === "marque" && !marques.includes(v)) await writeJSON("custom_marques", [...customMarques, v]);
     if (kind === "mode" && !modes.includes(v)) await writeJSON("custom_modes", [...customModes, v]);
     if (kind === "detail" && !details.includes(v)) await writeJSON("custom_details", [...customDetails, v]);
@@ -11159,7 +11074,6 @@ function SettingsView({
 
   const doDelete = async (kind, val) => {
     setSaveState("saving");
-    const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
     if (kind === "marque") await writeJSON("custom_marques", customMarques.filter((m) => m !== val));
     if (kind === "mode") await writeJSON("custom_modes", customModes.filter((m) => m !== val));
     if (kind === "detail") await writeJSON("custom_details", customDetails.filter((d) => d !== val));
@@ -11183,7 +11097,6 @@ function SettingsView({
   // (rendu séparément, position fixe) donc rien de spécial à filtrer ici.
   const doReorder = async (kind, arr, marqueCtx) => {
     setSaveState("saving");
-    const writeJSON = async (key, value) => { try { await window.storage.set(key, JSON.stringify(value), false); } catch (e) {} };
     // Garde-fou générique contre les doublons (voir bug "Jeu-DO qui se multiplient" ci-dessus) —
     // `arr` vient de ce qui est affiché ; le dédupliquer avant d'écrire empêche toute réécriture
     // de propager un doublon déjà présent, quelle qu'en soit l'origine.
@@ -11682,7 +11595,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [cardPos, setCardPos] = useState(0);
   useEffect(() => { setCardPos(0); setCatalogEditOpen(false); setEvoChainEditOpen(false); }, [selectedNom, onlyFormKey]);
   useLockBodyScroll(!!selectedNom);
-  const cardTotalRef = useRef(1);
   const savedScroll = useRef(0);
   const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
   const {
@@ -12192,7 +12104,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         const evoRaw = currentForm ? DATA.evolutionMode[currentForm[1] + "|" + (currentForm[2] || "")] : null;
         const evoLabel = formatEvolution(evoRaw);
         return (
-        <div {...(hasNationalNav ? nationalSwipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+        <div {...(hasNationalNav ? nationalSwipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
           <FloatingCardNav
             onPrev={() => goNationalNav(-1)}
             onNext={() => goNationalNav(1)}
@@ -12216,7 +12128,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             )}
           />
           <div style={{ position: "relative", maxWidth: 520, width: "100%" }}>
-            <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxHeight: "75vh", overflowY: "auto" }}>
+            <div style={fichePanelStyle(LINE)}>
             <FicheArtworkBlock n={selectedForms[0][0]}>
               <Sprite nom={selectedNom} forme={currentForm ? currentForm[2] : null} size={96} />
               {shinyForm && (
@@ -12243,7 +12155,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
             )}
             <div>
             {(() => {
-              cardTotalRef.current = selectedForms.length;
               const cp = currentCp;
               const formsToShow = selectedForms.length > 1 ? [selectedForms[cp]] : selectedForms;
               return formsToShow.map((f, idx) => {
@@ -12541,12 +12452,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                   ))}
                 </div>
                 {viewMode === "grid" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                    Par ligne :
-                    <button onClick={() => setGridCols(Math.max(3, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                    <button onClick={() => setGridCols(Math.min(7, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                  </div>
+                  <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={3} max={7} display={effCols} />
                 )}
               </div>
             ),
@@ -13772,11 +13678,6 @@ function excelParseForme(v) {
   const s = String(v == null ? "" : v).trim();
   return (s === "" || s === "-") ? "" : s;
 }
-function excelFormatDateFR(iso) {
-  if (!iso) return "";
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
-}
 // Cellule Date native (pas du texte) — construite en UTC pour que le jour ne se décale pas
 // d'un cran selon le fuseau horaire du navigateur. SheetJS écrit un objet Date comme une vraie
 // cellule Excel (type 'd'), reconnue par Excel comme une date et non comme du texte ; le format
@@ -14787,10 +14688,6 @@ async function importInterjeuSheet(rows, mode) {
 // les lignes du fichier sont appliquées, en fusion.
 async function importParamsSheet(rows) {
   if (!rows.length) return;
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const overrides = await readJSON("catalog_overrides", {});
   const additions = await readJSON("catalog_additions", []);
 
@@ -14846,10 +14743,6 @@ async function importParamsSheet(rows) {
 // fusion (ajoute ce qui manque, ne retire jamais une valeur existante), même sémantique que le
 // reste de l'import Excel (§ voir importGameSheet).
 async function importListesSheet(rows, mode) {
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const dedupe = (arr) => { const seen = new Set(); return arr.filter((v) => { if (seen.has(v)) return false; seen.add(v); return true; }); };
   const collect = (col) => dedupe(rows.map((r) => String(r[col] || "").trim()).filter(Boolean));
   const cols = { Marque: "custom_marques", Méthode: "custom_modes", Détail: "custom_details", Emplacement: "custom_locations" };
@@ -14862,10 +14755,6 @@ async function importListesSheet(rows, mode) {
 }
 
 async function importJeuxMarqueSheet(rows, mode) {
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const built = {};
   rows.forEach((r) => {
     const marque = String(r.Marque || "").trim();
@@ -14890,10 +14779,6 @@ async function importJeuxMarqueSheet(rows, mode) {
 // perdre les cases déjà cochées dans game_tab_sources (EnJeu_<clé> des feuilles par marque) ;
 // une ligne sans correspondance crée une nouvelle vue.
 async function importJeuVuesSheet(rows, mode) {
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const byMarque = {};
   rows.forEach((r) => {
     const marque = String(r.Marque || "").trim();
@@ -14925,10 +14810,6 @@ async function importJeuVuesSheet(rows, mode) {
 }
 
 async function importBoitesGroupesSheet(rows, mode) {
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const builtGroups = {};
   const builtSettings = {};
   rows.forEach((r) => {
@@ -14959,10 +14840,6 @@ async function importBoitesGroupesSheet(rows, mode) {
 }
 
 async function importDispoSheet(rows, mode) {
-  const readJSON = async (key, fb) => {
-    try { const r = await window.storage.get(key, false); if (r && r.value) return JSON.parse(r.value); } catch (e) {}
-    return fb;
-  };
   const builtMode = {};
   const builtDetail = {};
   rows.forEach((r) => {
@@ -15776,12 +15653,7 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
                       <input type="checkbox" checked={groupByRegion} onChange={(e) => setGroupByRegion(e.target.checked)} />
                       Séparer par région
                     </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                      Par ligne :
-                      <button onClick={() => setGridCols(Math.max(2, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                      <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{gridCols}</span>
-                      <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                    </div>
+                    <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={2} max={8} display={gridCols} />
                   </React.Fragment>
                 )}
               </div>
@@ -15996,7 +15868,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
     </button>
   );
   return (
-    <div {...(hasNav ? swipeHandlers : {})} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px" }}>
+    <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
       {(() => {
         // Modifier (crayon seul) / Fermer regroupés sur la ligne du bas (comme BoxGroupModal) —
@@ -16016,7 +15888,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
           />
         );
       })()}
-      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 420, width: "100%", maxHeight: "75vh", overflowY: "auto" }}>
+      <div style={fichePanelStyle(LINE, 420)}>
         <FicheArtworkBlock
           editableNumero
           numeroValue={numero}
@@ -16424,12 +16296,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <ViewToggle mode={viewMode} setMode={setViewMode} options={HOME2_VIEW_OPTIONS} />
                 {viewMode === "grille" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                    Par ligne :
-                    <button onClick={() => setGridCols(Math.max(2, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                    <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                  </div>
+                  <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={2} max={8} display={effCols} />
                 )}
               </div>
             ),
@@ -16879,12 +16746,7 @@ function Go2View({ filterCache }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <ViewToggle mode={viewMode} setMode={setViewMode} options={HOME2_VIEW_OPTIONS} />
                 {viewMode === "grille" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: MUTED }}>
-                    Par ligne :
-                    <button onClick={() => setGridCols(Math.max(2, gridCols - 1))} style={{ ...btnGhost, padding: "6px 10px" }}>−</button>
-                    <span style={{ color: TXT, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{effCols}</span>
-                    <button onClick={() => setGridCols(Math.min(8, gridCols + 1))} style={{ ...btnGhost, padding: "6px 10px" }}>+</button>
-                  </div>
+                  <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={2} max={8} display={effCols} />
                 )}
                 <button
                   onClick={() => { setShowExclusionsManager(true); close(); }}
