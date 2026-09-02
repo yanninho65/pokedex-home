@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.2.10.40";
+const APP_VERSION = "2026.9.2.14.20";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -631,40 +631,20 @@ function goSortiFor(nom, forme) {
 function goAttrapableFor(nom, forme) {
   return jeuVideoFor(nom, forme).goattrapable === true;
 }
-// Détection automatique par texte de forme (repli pour formTagsFor ci-dessous quand aucun tag
-// explicite n'a encore été saisi) — mêmes conventions que isMegaOrGmaxForme/dynamaxInfoFor plus
-// bas (négations "non méga"/"non gmax" retirées avant recherche du mot), avec en plus la
-// distinction "Gmax gène" (ex. "Gmax gène" chez Crèmy/Chapotus) pour ne jamais la confondre avec
-// "Gmax" simple.
-function autoFormTagsFromText(forme) {
-  if (!forme) return { mega: false, gmax: false, gmaxGene: false };
-  const raw = String(forme).toLowerCase();
-  const withoutNegations = raw.replace(/non\s+m[ée]ga/g, "").replace(/non\s*gmax/g, "");
-  const mega = withoutNegations.includes("méga") || withoutNegations.includes("mega");
-  const hasGmaxWord = withoutNegations.includes("gmax");
-  const isGene = hasGmaxWord && /g[eè]ne/.test(withoutNegations);
-  return { mega, gmax: hasGmaxWord && !isGene, gmaxGene: isGene };
-}
 // Pilules structurelles "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc catalogue "Pokédex
 // Home & Alpha") — distinctes de la détection par texte de forme (isMegaOrGmaxForme/
-// dynamaxInfoFor) : marquage explicite par forme, stocké dans DATA.formTags["nom|forme"] =
-// { mega, gmax, gmaxGene }, fusionné via catalog_overrides/catalog_additions (champs
-// formMega/formGmax/formGmaxGene, même schéma que alphaLA/alphaLZA). "Gmax gène" = le Pokémon
-// porte le gène Gigamax mais ne peut pas (encore) Gigamaxer lui-même (ex. Crèmy) — distinct de
-// "Gmax" (la forme Gigamax elle-même).
-// § correctif explicite ("ça devrait être lié") : un Pokémon déjà détecté Méga/Gmax/Gmax gène par
-// son texte de forme (autoFormTagsFromText, même détection que l'ancien filtre Dynamax par texte)
-// compte désormais TOUJOURS comme tagué, même sans case cochée manuellement au Catalogue — union
-// (jamais un remplacement) avec le tag stocké. Les pilules du Catalogue servent seulement à
-// AJOUTER les cas que le texte ne couvre pas (jamais à retirer un cas détecté par le texte).
+// dynamaxInfoFor, jamais utilisée ici) : uniquement le marquage EXPLICITE saisi à la main par
+// l'utilisateur, stocké dans DATA.formTags["nom|forme"] = { mega, gmax, gmaxGene }, fusionné via
+// catalog_overrides/catalog_additions (champs formMega/formGmax/formGmaxGene, même schéma que
+// alphaLA/alphaLZA). "Gmax gène" = le Pokémon porte le gène Gigamax mais ne peut pas (encore)
+// Gigamaxer lui-même (ex. Crèmy) — distinct de "Gmax" (la forme Gigamax elle-même).
+// § correctif explicite : PAS de détection automatique par texte de forme ici (essayée puis
+// retirée) — ces trois pilules ne reflètent QUE ce que l'utilisateur a coché lui-même au
+// Catalogue, jamais une déduction. Tous les usages de cette fonction (Go 1 Méga/Gmax, filtre
+// Méga National, filtre Dynamax "Gmax gène", export Excel) restent branchés dessus tels quels —
+// seule cette fonction change de comportement, jamais ses appelants.
 function formTagsFor(nom, forme) {
-  const stored = (DATA.formTags && DATA.formTags[pokemonIdentityKey(nom, forme)]) || {};
-  const auto = autoFormTagsFromText(forme);
-  return {
-    mega: !!stored.mega || auto.mega,
-    gmax: !!stored.gmax || auto.gmax,
-    gmaxGene: !!stored.gmaxGene || auto.gmaxGene,
-  };
+  return (DATA.formTags && DATA.formTags[pokemonIdentityKey(nom, forme)]) || {};
 }
 // Édition rapide de la disponibilité "Jeu vidéo" (dont la clé spéciale "home" = disponible sur
 // Pokémon Home, § demande explicite : certains Pokémon sont attrapables en jeu sans être
@@ -3595,10 +3575,10 @@ function useLockBodyScroll(active) {
 // Pokémon — rendu au-dessus de toute modale (zIndex 105 > 100). Visuellement distinctes des
 // éventuels boutons "← Précédent/Suivant →" internes à une fiche (qui gèrent un autre
 // mécanisme, voir useCardSwipeNav) : icônes seules, ancrées aux bords plutôt que centrées.
-// § demande explicite : `center` (crayon/fermer/Enregistrer/Supprimer…) n'est plus centré au
-// milieu de l'écran mais aligné à DROITE, sur la même ligne que les flèches — `paddingRight: 70`
-// laisse toujours la place à la flèche › (46px + 16px de marge + petit espace) même quand elle
-// n'est pas affichée (hasNext=false), pour un alignement identique sur toutes les fiches.
+// `center` (crayon/fermer/Enregistrer/Supprimer…) reste centré au milieu de la bande du bas — le
+// bouton Enregistrer (voir SaveButton) est simplement placé en DERNIER dans ce groupe, donc à
+// droite des autres boutons du groupe (§ correctif explicite : recentrer le groupe, pas toute la
+// barre — seul l'ordre interne au groupe importait).
 function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext, center }) {
   const showArrows = hasPrev || hasNext;
   if (!showArrows && !center) return null;
@@ -3614,13 +3594,14 @@ function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext, center }) {
     <React.Fragment>
       {showArrows && <button onClick={onPrev} disabled={!hasPrev} aria-label="Pokémon précédent" style={{ ...btnStyle(hasPrev), left: 16 }}>‹</button>}
       {center && (
-        // Bande pleine largeur (jamais `transform`, ni `left: 50%` seul) : tout `transform` sur cet
-        // ancestor créerait un nouveau "containing block" pour les descendants en `position: fixed`
-        // (ex. CatalogEntryModal ouvert depuis le bouton Modifier) — ceux-ci se retrouveraient
-        // positionnés/redimensionnés relativement à ce petit conteneur au lieu du viewport entier
-        // (fiche minuscule et coupée, piège déjà rencontré). `pointerEvents: "none"` sur le
-        // conteneur + `"auto"` sur son enfant unique évite de bloquer les clics sur toute la largeur.
-        <div style={{ position: "fixed", bottom: 92, left: 0, right: 0, zIndex: 105, display: "flex", justifyContent: "flex-end", paddingRight: 70, pointerEvents: "none" }}>
+        // Centrage par flexbox pleine largeur (jamais `transform`, ni `left: 50%` seul) : tout
+        // `transform` sur cet ancestor créerait un nouveau "containing block" pour les
+        // descendants en `position: fixed` (ex. CatalogEntryModal ouvert depuis le bouton
+        // Modifier) — ceux-ci se retrouveraient positionnés/redimensionnés relativement à ce
+        // petit conteneur au lieu du viewport entier (fiche minuscule et coupée, piège déjà
+        // rencontré). `pointerEvents: "none"` sur le conteneur + `"auto"` sur son enfant unique
+        // évite de bloquer les clics sur toute la largeur de la bande.
+        <div style={{ position: "fixed", bottom: 92, left: 0, right: 0, zIndex: 105, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
           <div style={{ pointerEvents: "auto" }}>{center}</div>
         </div>
       )}
@@ -10289,10 +10270,8 @@ function catalogDraftForRow(idx) {
     // "Numéro spécifique par jeu vidéo" (§ nouveau) — un numéro par paire/triple JEU_VIDEO_PAIRS,
     // remplace le bloc "Vues Jeu" de Paramètres pour l'édition (voir migration ci-dessus).
     jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
-    // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha") — reflète
-    // la valeur FUSIONNÉE (tag stocké OU détection automatique par texte, voir formTagsFor/
-    // autoFormTagsFromText) pour que la pilule affichée corresponde toujours à ce qu'affichent les
-    // onglets Méga/Gmax de Go 1 et le filtre Dynamax (§ correctif explicite "ça devrait être lié").
+    // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha") — valeur
+    // stockée uniquement (formTagsFor), jamais déduite automatiquement du texte de forme.
     formMega: !!formTagsFor(row[1], row[2]).mega,
     formGmax: !!formTagsFor(row[1], row[2]).gmax,
     formGmaxGene: !!formTagsFor(row[1], row[2]).gmaxGene,
@@ -11570,7 +11549,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [tailleFilter, setTailleFilter] = useCachedState(filterCache, "national", "tailleFilter", null); // null = tous, ou Set { "alpha", "nonAlpha" }
   const [dynamaxFilter, setDynamaxFilter] = useCachedState(filterCache, "national", "dynamaxFilter", null); // null = tous, ou Set { "gmax", "nonGmax" }
   // § demande explicite : filtre "Méga" dédié (indépendant de Dynamax, qui ne couvre que Gmax) —
-  // même détection que le Catalogue/Go 1 (formTagsFor, fusion tag stocké + texte de forme).
+  // même source que le Catalogue/Go 1 (formTagsFor, tag stocké uniquement).
   const [megaFilter, setMegaFilter] = useCachedState(filterCache, "national", "megaFilter", null); // null = tous, ou Set { "mega", "nonMega" }
   const [homeDexFilter, setHomeDexFilter] = useCachedState(filterCache, "national", "homeDexFilter", null); // null = tous, ou Set { "home", "nonHome" }
   const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "national", "shinyFilter", null); // null = tous, ou Set { "oui", "non" }
@@ -13850,8 +13829,7 @@ async function buildNationalSheetRows() {
       AlphaLA: alpha.LA ? 1 : 0, AlphaLZA: alpha.LZA ? 1 : 0,
       HomeDex: (DATA.homeDex && DATA.homeDex[key]) ? 1 : 0,
       // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha") —
-      // valeur FUSIONNÉE (tag stocké OU détection automatique par texte, voir formTagsFor), pour
-      // que l'export reflète toujours ce qu'affichent réellement le Catalogue et Go 1.
+      // valeur stockée uniquement (formTagsFor), jamais déduite du texte de forme.
       FormMega: ft.mega ? 1 : 0, FormGmax: ft.gmax ? 1 : 0, FormGmaxGene: ft.gmaxGene ? 1 : 0,
     };
     for (const g of GAME_ORDER) {
@@ -15604,14 +15582,10 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
 
   const allForms = useMemo(go1AllFormsSorted, []);
   const uniqueSpecies = useMemo(go1UniqueSpecies, []);
-  // Sources des blocs Méga/Gmax (§ demande explicite) : uniquement les formes portant la pilule
-  // structurelle correspondante (formTagsFor, bloc catalogue "Pokédex Home & Alpha") — jamais tout
-  // le Pokédex Go comme Pokédex/Shiny.
   // Formes Méga/Gmax (§ demande explicite : "tous les pokémon tagués... devraient apparaître") —
   // source = TOUT le Pokédex (NAT_ALL_FORMS), pas seulement les formes de la marque Go (allForms) :
-  // une forme peut être taguée Méga/Gmax sans être elle-même attrapable dans Pokémon GO. Fusionné
-  // avec la détection automatique par texte (formTagsFor), donc toujours cohérent avec l'ancien
-  // filtre Dynamax par texte (§ correctif explicite "ça devrait être lié").
+  // une forme peut être taguée Méga/Gmax sans être elle-même attrapable dans Pokémon GO. Uniquement
+  // la pilule structurelle stockée (formTagsFor) — jamais de détection automatique par texte.
   const buildTaggedFormsList = (tagKey) => {
     const list = NAT_ALL_FORMS.filter((f) => formTagsFor(f.nom, f.forme)[tagKey] === true);
     list.sort((a, b) => {
