@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.1.23.15";
+const APP_VERSION = "2026.9.2.10.40";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -260,6 +260,28 @@ const GLASS_ROUND_BTN = {
   display: "flex", alignItems: "center", justifyContent: "center",
   fontSize: 18, lineHeight: 1, cursor: "pointer",
 };
+
+// Bouton "Enregistrer" mutualisé (BoxGroupModal, JeuMultiSourceModal, CatalogEntryModal — icône ✓
+// dans la barre du bas, voir FloatingCardNav) — § demande explicite : coloré en ACCENT uniquement
+// s'il y a des modifications NON encore enregistrées (indicateur visuel de changement en attente),
+// neutre (verre dépoli comme les autres boutons de la barre) sinon. `disabled` (ex. CatalogEntryModal
+// tant que le nom est vide) l'emporte toujours sur la couleur "dirty".
+function SaveButton({ dirty, onClick, disabled }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={dirty && !disabled ? "Enregistrer (modifications non enregistrées)" : "Enregistrer"}
+      style={{
+        ...GLASS_ROUND_BTN, fontSize: 20, fontWeight: 800,
+        background: dirty && !disabled ? ACCENT : GLASS_BG,
+        border: dirty && !disabled ? "none" : GLASS_BORDER,
+        opacity: disabled ? 0.5 : 1,
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >✓</button>
+  );
+}
 
 // Fond assombri + alignement plein écran des 7 fiches détail modales (National, Shiny, Double,
 // Event, Interjeu, BoxGroupModal, JeuMultiSourceModal — §5septies) : réserve 150px de marge
@@ -609,6 +631,20 @@ function goSortiFor(nom, forme) {
 function goAttrapableFor(nom, forme) {
   return jeuVideoFor(nom, forme).goattrapable === true;
 }
+// Détection automatique par texte de forme (repli pour formTagsFor ci-dessous quand aucun tag
+// explicite n'a encore été saisi) — mêmes conventions que isMegaOrGmaxForme/dynamaxInfoFor plus
+// bas (négations "non méga"/"non gmax" retirées avant recherche du mot), avec en plus la
+// distinction "Gmax gène" (ex. "Gmax gène" chez Crèmy/Chapotus) pour ne jamais la confondre avec
+// "Gmax" simple.
+function autoFormTagsFromText(forme) {
+  if (!forme) return { mega: false, gmax: false, gmaxGene: false };
+  const raw = String(forme).toLowerCase();
+  const withoutNegations = raw.replace(/non\s+m[ée]ga/g, "").replace(/non\s*gmax/g, "");
+  const mega = withoutNegations.includes("méga") || withoutNegations.includes("mega");
+  const hasGmaxWord = withoutNegations.includes("gmax");
+  const isGene = hasGmaxWord && /g[eè]ne/.test(withoutNegations);
+  return { mega, gmax: hasGmaxWord && !isGene, gmaxGene: isGene };
+}
 // Pilules structurelles "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc catalogue "Pokédex
 // Home & Alpha") — distinctes de la détection par texte de forme (isMegaOrGmaxForme/
 // dynamaxInfoFor) : marquage explicite par forme, stocké dans DATA.formTags["nom|forme"] =
@@ -616,8 +652,19 @@ function goAttrapableFor(nom, forme) {
 // formMega/formGmax/formGmaxGene, même schéma que alphaLA/alphaLZA). "Gmax gène" = le Pokémon
 // porte le gène Gigamax mais ne peut pas (encore) Gigamaxer lui-même (ex. Crèmy) — distinct de
 // "Gmax" (la forme Gigamax elle-même).
+// § correctif explicite ("ça devrait être lié") : un Pokémon déjà détecté Méga/Gmax/Gmax gène par
+// son texte de forme (autoFormTagsFromText, même détection que l'ancien filtre Dynamax par texte)
+// compte désormais TOUJOURS comme tagué, même sans case cochée manuellement au Catalogue — union
+// (jamais un remplacement) avec le tag stocké. Les pilules du Catalogue servent seulement à
+// AJOUTER les cas que le texte ne couvre pas (jamais à retirer un cas détecté par le texte).
 function formTagsFor(nom, forme) {
-  return (DATA.formTags && DATA.formTags[pokemonIdentityKey(nom, forme)]) || {};
+  const stored = (DATA.formTags && DATA.formTags[pokemonIdentityKey(nom, forme)]) || {};
+  const auto = autoFormTagsFromText(forme);
+  return {
+    mega: !!stored.mega || auto.mega,
+    gmax: !!stored.gmax || auto.gmax,
+    gmaxGene: !!stored.gmaxGene || auto.gmaxGene,
+  };
 }
 // Édition rapide de la disponibilité "Jeu vidéo" (dont la clé spéciale "home" = disponible sur
 // Pokémon Home, § demande explicite : certains Pokémon sont attrapables en jeu sans être
@@ -3548,6 +3595,10 @@ function useLockBodyScroll(active) {
 // Pokémon — rendu au-dessus de toute modale (zIndex 105 > 100). Visuellement distinctes des
 // éventuels boutons "← Précédent/Suivant →" internes à une fiche (qui gèrent un autre
 // mécanisme, voir useCardSwipeNav) : icônes seules, ancrées aux bords plutôt que centrées.
+// § demande explicite : `center` (crayon/fermer/Enregistrer/Supprimer…) n'est plus centré au
+// milieu de l'écran mais aligné à DROITE, sur la même ligne que les flèches — `paddingRight: 70`
+// laisse toujours la place à la flèche › (46px + 16px de marge + petit espace) même quand elle
+// n'est pas affichée (hasNext=false), pour un alignement identique sur toutes les fiches.
 function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext, center }) {
   const showArrows = hasPrev || hasNext;
   if (!showArrows && !center) return null;
@@ -3563,14 +3614,13 @@ function FloatingCardNav({ onPrev, onNext, hasPrev, hasNext, center }) {
     <React.Fragment>
       {showArrows && <button onClick={onPrev} disabled={!hasPrev} aria-label="Pokémon précédent" style={{ ...btnStyle(hasPrev), left: 16 }}>‹</button>}
       {center && (
-        // Centrage par flexbox pleine largeur (jamais `transform`, ni `left: 50%` seul) : tout
-        // `transform` sur cet ancestor créerait un nouveau "containing block" pour les
-        // descendants en `position: fixed` (ex. CatalogEntryModal ouvert depuis le bouton
-        // Modifier) — ceux-ci se retrouveraient positionnés/redimensionnés relativement à ce
-        // petit conteneur au lieu du viewport entier (fiche minuscule et coupée, piège déjà
-        // rencontré). `pointerEvents: "none"` sur le conteneur + `"auto"` sur son enfant unique
-        // évite de bloquer les clics sur toute la largeur de la bande.
-        <div style={{ position: "fixed", bottom: 92, left: 0, right: 0, zIndex: 105, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+        // Bande pleine largeur (jamais `transform`, ni `left: 50%` seul) : tout `transform` sur cet
+        // ancestor créerait un nouveau "containing block" pour les descendants en `position: fixed`
+        // (ex. CatalogEntryModal ouvert depuis le bouton Modifier) — ceux-ci se retrouveraient
+        // positionnés/redimensionnés relativement à ce petit conteneur au lieu du viewport entier
+        // (fiche minuscule et coupée, piège déjà rencontré). `pointerEvents: "none"` sur le
+        // conteneur + `"auto"` sur son enfant unique évite de bloquer les clics sur toute la largeur.
+        <div style={{ position: "fixed", bottom: 92, left: 0, right: 0, zIndex: 105, display: "flex", justifyContent: "flex-end", paddingRight: 70, pointerEvents: "none" }}>
           <div style={{ pointerEvents: "auto" }}>{center}</div>
         </div>
       )}
@@ -4038,15 +4088,18 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
   const lien = pokepediaLienPourMarque(natInfo.lien, marque);
   const hasNav = navTotal != null && navTotal > 1;
   const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
+  // § demande explicite ("indicateur de couleur") : modifications locales pas encore enregistrées.
+  const isDirty = value !== (currentGroup || "")
+    || jeu !== (currentJeu || "")
+    || numero !== (currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
   return (
     <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
       {(() => {
-        // Modifier (crayon seul) / Fermer regroupés sur la ligne du bas, entre les flèches ‹ ›
-        // (comme National, sans bouton "+ Capture" ici — pas de création de capture depuis cette
-        // fenêtre, § demande explicite). "Fermer" route vers onCancel (pas de onClose dédié dans
-        // ce composant) — remplace l'ancien bouton "Annuler" du panneau, "Enregistrer" reste seul
-        // dans le panneau (action de sauvegarde explicite, distincte d'une simple fermeture).
+        // Modifier (crayon) / Fermer / Enregistrer regroupés sur la ligne du bas, à DROITE, entre
+        // les flèches ‹ › (§ demande explicite : "tous les boutons enregistrer... en bas sur la
+        // même ligne que les flèches, tout à droite") — "Fermer" route vers onCancel (pas de
+        // onClose dédié dans ce composant).
         return (
           <FloatingCardNav
             onPrev={onNavPrev}
@@ -4057,6 +4110,7 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CatalogQuickEditButton nom={nom} forme={forme} style={GLASS_ROUND_BTN} />
                 <button onClick={onCancel} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
+                <SaveButton dirty={isDirty} onClick={() => onSave(value, jeu, numero)} />
               </div>
             )}
           />
@@ -4086,9 +4140,6 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
             jeuValue={jeu} onJeuChange={setJeuValue} jeuOptions={jeuOptions}
           />
         )}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-          <button onClick={() => onSave(value, jeu, numero)} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
-        </div>
       </div>
       {showEvoChain && (
         <EvolutionChainModal nom={nom} forme={forme} onClose={() => setShowEvoChain(false)} />
@@ -9745,6 +9796,11 @@ function computeNatSortOrder(additionIdxById) {
 // Formulaire d'édition/ajout, utilisé en modale par CatalogEditor.
 function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // § demande explicite ("indicateur de couleur") : instantané du brouillon à l'ouverture, comparé
+  // au brouillon courant pour savoir si des modifications sont en attente d'enregistrement — capturé
+  // une seule fois au montage (ce composant est toujours remonté à chaque ouverture de fiche).
+  const initialDraftRef = useRef(draft);
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(initialDraftRef.current);
   // Regroupement/dégroupement (§ demande explicite) des sections "Numéro spécifique par marque",
   // "Jeu vidéo" et "Numéro spécifique par jeu vidéo", qui peuvent devenir longues (un jeu par
   // marque cochée, un item par génération) — repliées par défaut à l'ouverture de la fiche.
@@ -9779,12 +9835,7 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
               <button onClick={() => setConfirmDelete(true)} title="Supprimer" style={{ ...GLASS_ROUND_BTN, color: "#E4572E" }}>🗑</button>
             )}
             <button onClick={onCancel} title="Annuler" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
-            <button
-              onClick={onSave}
-              disabled={!draft.nom.trim()}
-              title="Enregistrer"
-              style={{ ...GLASS_ROUND_BTN, background: ACCENT, color: "#fff", border: "none", fontSize: 20, fontWeight: 800, opacity: draft.nom.trim() ? 1 : 0.5 }}
-            >✓</button>
+            <SaveButton dirty={isDirty} disabled={!draft.nom.trim()} onClick={onSave} />
           </div>
         )}
       />
@@ -10238,10 +10289,13 @@ function catalogDraftForRow(idx) {
     // "Numéro spécifique par jeu vidéo" (§ nouveau) — un numéro par paire/triple JEU_VIDEO_PAIRS,
     // remplace le bloc "Vues Jeu" de Paramètres pour l'édition (voir migration ci-dessus).
     jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
-    // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha").
-    formMega: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].mega),
-    formGmax: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmax),
-    formGmaxGene: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmaxGene),
+    // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha") — reflète
+    // la valeur FUSIONNÉE (tag stocké OU détection automatique par texte, voir formTagsFor/
+    // autoFormTagsFromText) pour que la pilule affichée corresponde toujours à ce qu'affichent les
+    // onglets Méga/Gmax de Go 1 et le filtre Dynamax (§ correctif explicite "ça devrait être lié").
+    formMega: !!formTagsFor(row[1], row[2]).mega,
+    formGmax: !!formTagsFor(row[1], row[2]).gmax,
+    formGmaxGene: !!formTagsFor(row[1], row[2]).gmaxGene,
   };
 }
 
@@ -10390,9 +10444,9 @@ function CatalogEditor({ onSaveStateChange }) {
         games, gameNumbers,
         jeuVideo: (DATA.jeuVideo && DATA.jeuVideo[key]) ? { ...DATA.jeuVideo[key] } : {},
         jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
-        formMega: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].mega),
-        formGmax: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmax),
-        formGmaxGene: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmaxGene),
+        formMega: !!formTagsFor(row[1], row[2]).mega,
+        formGmax: !!formTagsFor(row[1], row[2]).gmax,
+        formGmaxGene: !!formTagsFor(row[1], row[2]).gmaxGene,
       },
     };
   };
@@ -11515,11 +11569,14 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, "national", "jeuFilter", null); // null = tous, ou Set (codes de jeu + "__none__" pour "Sans jeu")
   const [tailleFilter, setTailleFilter] = useCachedState(filterCache, "national", "tailleFilter", null); // null = tous, ou Set { "alpha", "nonAlpha" }
   const [dynamaxFilter, setDynamaxFilter] = useCachedState(filterCache, "national", "dynamaxFilter", null); // null = tous, ou Set { "gmax", "nonGmax" }
+  // § demande explicite : filtre "Méga" dédié (indépendant de Dynamax, qui ne couvre que Gmax) —
+  // même détection que le Catalogue/Go 1 (formTagsFor, fusion tag stocké + texte de forme).
+  const [megaFilter, setMegaFilter] = useCachedState(filterCache, "national", "megaFilter", null); // null = tous, ou Set { "mega", "nonMega" }
   const [homeDexFilter, setHomeDexFilter] = useCachedState(filterCache, "national", "homeDexFilter", null); // null = tous, ou Set { "home", "nonHome" }
   const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "national", "shinyFilter", null); // null = tous, ou Set { "oui", "non" }
   const [filtersOpen, setFiltersOpen] = useState(false);
   const anyFilterActive = filter !== "all" || region !== null || jeuFilter !== null
-    || tailleFilter !== null || dynamaxFilter !== null || homeDexFilter !== null || shinyFilter !== null;
+    || tailleFilter !== null || dynamaxFilter !== null || megaFilter !== null || homeDexFilter !== null || shinyFilter !== null;
 
   // Filtre reçu depuis l'onglet Progression (clic sur une cellule région/marque) — appliqué à
   // chaque nouvel envoi, pour fonctionner même si cet onglet reste monté en arrière-plan.
@@ -11819,6 +11876,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     return matchesMulti(dynamaxFilter, d);
   };
 
+  // § demande explicite : filtre "Méga" — toujours "concerné" (contrairement à Dynamax, jamais de
+  // null exclu) puisque n'importe quelle forme est soit Méga, soit non-Méga.
+  const matchesMegaRow = (r) => {
+    if (megaFilter === null) return true;
+    return matchesMulti(megaFilter, formTagsFor(r[1], r[2]).mega ? "mega" : "nonMega");
+  };
+
   const matchesHomeDexRow = (r) => {
     if (homeDexFilter === null) return true;
     const inHome = !!(DATA.homeDex && DATA.homeDex[r[1] + "|" + (r[2] || "")]);
@@ -11843,11 +11907,12 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       if (!matchesJeuRow(r)) return false;
       if (!matchesTailleRow(r)) return false;
       if (!matchesDynamaxRow(r)) return false;
+      if (!matchesMegaRow(r)) return false;
       if (!matchesHomeDexRow(r)) return false;
       if (!matchesShinyRow(r)) return false;
       return true;
     });
-  }, [rows, search, filter, region, jeuFilter, singleMarqueIdx, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, catchMode, gameTabSourcesAll]);
+  }, [rows, search, filter, region, jeuFilter, singleMarqueIdx, tailleFilter, dynamaxFilter, megaFilter, homeDexFilter, shinyFilter, catchMode, gameTabSourcesAll]);
 
   const filteredSpecies = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -11870,6 +11935,10 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         if (concerned.length === 0) return false;
         if (!concerned.some((f) => matchesMulti(dynamaxFilter, dynamaxValueFor(f[1], f[2])))) return false;
       }
+      if (megaFilter !== null) {
+        const forms = bySpecies.get(sp.nom) || [];
+        if (!forms.some((f) => matchesMulti(megaFilter, formTagsFor(f[1], f[2]).mega ? "mega" : "nonMega"))) return false;
+      }
       if (homeDexFilter !== null) {
         const forms = bySpecies.get(sp.nom) || [];
         if (!forms.some(matchesHomeDexRow)) return false;
@@ -11880,7 +11949,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       }
       return true;
     });
-  }, [speciesList, search, filter, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, bySpecies]);
+  }, [speciesList, search, filter, region, jeuFilter, tailleFilter, dynamaxFilter, megaFilter, homeDexFilter, shinyFilter, bySpecies]);
   useInfiniteScroll((mode === "forms" ? filteredForms.length : filteredSpecies.length) > limit, () => setLimit((l) => l + 200));
 
   // Stats "après filtre" : ignore le bouton de statut Tous/Attrapés/Manquants pour le total
@@ -11897,6 +11966,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         if (!matchesJeuRow(r)) return;
         if (!matchesTailleRow(r)) return;
         if (!matchesDynamaxRow(r)) return;
+        if (!matchesMegaRow(r)) return;
         if (!matchesHomeDexRow(r)) return;
         if (!matchesShinyRow(r)) return;
         matchedTotal++;
@@ -11921,6 +11991,10 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           if (concerned.length === 0) return;
           if (!concerned.some((f) => matchesMulti(dynamaxFilter, dynamaxValueFor(f[1], f[2])))) return;
         }
+        if (megaFilter !== null) {
+          const forms = bySpecies.get(sp.nom) || [];
+          if (!forms.some((f) => matchesMulti(megaFilter, formTagsFor(f[1], f[2]).mega ? "mega" : "nonMega"))) return;
+        }
         if (homeDexFilter !== null) {
           const forms = bySpecies.get(sp.nom) || [];
           if (!forms.some(matchesHomeDexRow)) return;
@@ -11934,7 +12008,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       });
     }
     return { matchedTotal, matchedCount };
-  }, [rows, speciesList, search, region, jeuFilter, tailleFilter, dynamaxFilter, homeDexFilter, shinyFilter, filter, mode, bySpecies, singleMarqueIdx, catchMode, gameTabSourcesAll]);
+  }, [rows, speciesList, search, region, jeuFilter, tailleFilter, dynamaxFilter, megaFilter, homeDexFilter, shinyFilter, filter, mode, bySpecies, singleMarqueIdx, catchMode, gameTabSourcesAll]);
 
   const resetFilters = () => {
     setSearch("");
@@ -11943,6 +12017,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     setJeuFilter(null);
     setTailleFilter(null);
     setDynamaxFilter(null);
+    setMegaFilter(null);
     setHomeDexFilter(null);
     setShinyFilter(null);
   };
@@ -12453,6 +12528,13 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                   options={[["gmax", "Gmax"], ["nonGmax", "Non Gmax"], ["gmaxgene", "Gmax gène"]]}
                   selected={dynamaxFilter}
                   onChange={setDynamaxFilter}
+                  width="100%"
+                />
+                <MultiSelectFilter
+                  label="Méga"
+                  options={[["mega", "Méga"], ["nonMega", "Non méga"]]}
+                  selected={megaFilter}
+                  onChange={setMegaFilter}
                   width="100%"
                 />
                 <MultiSelectFilter
@@ -13760,15 +13842,17 @@ async function buildNationalSheetRows() {
     const [nat, nom, forme] = r;
     const key = nom + "|" + (forme || "");
     const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
-    const ft = DATA.formTags && DATA.formTags[key];
+    const ft = formTagsFor(nom, forme);
     // ---- Colonnes Paramètres (catalogue) ----
     const row = {
       Nom: nom, Forme: excelForme(forme), Numero: nat, Region: r[3] || "",
       Evolution: DATA.evolutionMode[key] || "-",
       AlphaLA: alpha.LA ? 1 : 0, AlphaLZA: alpha.LZA ? 1 : 0,
       HomeDex: (DATA.homeDex && DATA.homeDex[key]) ? 1 : 0,
-      // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha").
-      FormMega: (ft && ft.mega) ? 1 : 0, FormGmax: (ft && ft.gmax) ? 1 : 0, FormGmaxGene: (ft && ft.gmaxGene) ? 1 : 0,
+      // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha") —
+      // valeur FUSIONNÉE (tag stocké OU détection automatique par texte, voir formTagsFor), pour
+      // que l'export reflète toujours ce qu'affichent réellement le Catalogue et Go 1.
+      FormMega: ft.mega ? 1 : 0, FormGmax: ft.gmax ? 1 : 0, FormGmaxGene: ft.gmaxGene ? 1 : 0,
     };
     for (const g of GAME_ORDER) {
       const gi = DATA.gameIndex[g] ? DATA.gameIndex[g][key] : undefined;
@@ -15523,8 +15607,22 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
   // Sources des blocs Méga/Gmax (§ demande explicite) : uniquement les formes portant la pilule
   // structurelle correspondante (formTagsFor, bloc catalogue "Pokédex Home & Alpha") — jamais tout
   // le Pokédex Go comme Pokédex/Shiny.
-  const megaForms = useMemo(() => allForms.filter((r) => formTagsFor(r.nom, r.forme).mega === true), [allForms]);
-  const gmaxForms = useMemo(() => allForms.filter((r) => formTagsFor(r.nom, r.forme).gmax === true), [allForms]);
+  // Formes Méga/Gmax (§ demande explicite : "tous les pokémon tagués... devraient apparaître") —
+  // source = TOUT le Pokédex (NAT_ALL_FORMS), pas seulement les formes de la marque Go (allForms) :
+  // une forme peut être taguée Méga/Gmax sans être elle-même attrapable dans Pokémon GO. Fusionné
+  // avec la détection automatique par texte (formTagsFor), donc toujours cohérent avec l'ancien
+  // filtre Dynamax par texte (§ correctif explicite "ça devrait être lié").
+  const buildTaggedFormsList = (tagKey) => {
+    const list = NAT_ALL_FORMS.filter((f) => formTagsFor(f.nom, f.forme)[tagKey] === true);
+    list.sort((a, b) => {
+      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
+      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
+      return an - bn;
+    });
+    return list.map((f, idx) => ({ i: idx, nat: f.n, nom: f.nom, forme: f.forme, region: f.region, key: f.key }));
+  };
+  const megaForms = useMemo(() => buildTaggedFormsList("mega"), []);
+  const gmaxForms = useMemo(() => buildTaggedFormsList("gmax"), []);
   const source = mode === "mega" ? megaForms : mode === "gmax" ? gmaxForms : (isFormsView ? allForms : uniqueSpecies);
 
   // Dictionnaire du mode/sous-vue actuellement affiché (celui qu'on coche directement dans la
@@ -15933,6 +16031,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
   const [home, setHome] = useState(!!homeChecked);
   const [checked, setChecked] = useState(() => new Set(checkedGames || []));
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
+  const initialCheckedRef = useRef(new Set(checkedGames || []));
   const [, forceRefresh] = useState(0);
   const [showEvoChain, setShowEvoChain] = useState(false);
   useLockBodyScroll(true);
@@ -15946,12 +16045,19 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
       return next;
     });
   };
+  // § demande explicite ("indicateur de couleur") : modifications locales pas encore enregistrées.
+  const setsEqual = (a, b) => a.size === b.size && Array.from(a).every((x) => b.has(x));
+  const isDirty = group !== (currentGroup || "")
+    || jeu !== (currentJeu || "")
+    || home !== !!homeChecked
+    || numero !== (currentNumber != null && currentNumber !== "" ? String(currentNumber) : "")
+    || !setsEqual(checked, initialCheckedRef.current);
   return (
     <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
       {(() => {
-        // Modifier (crayon seul) / Fermer regroupés sur la ligne du bas (comme BoxGroupModal) —
-        // "Fermer" route vers onCancel, "Enregistrer" reste seul dans le panneau.
+        // Modifier (crayon) / Fermer / Enregistrer regroupés sur la ligne du bas, à DROITE, entre
+        // les flèches ‹ › (comme BoxGroupModal, § demande explicite) — "Fermer" route vers onCancel.
         return (
           <FloatingCardNav
             onPrev={onNavPrev}
@@ -15962,6 +16068,7 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CatalogQuickEditButton nom={nom} forme={forme} style={GLASS_ROUND_BTN} />
                 <button onClick={onCancel} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
+                <SaveButton dirty={isDirty} onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked), numero })} />
               </div>
             )}
           />
@@ -16004,10 +16111,6 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
               <TogglePill key={g.key} label={g.label} color={PURPLE} checked={checked.has(g.key)} onClick={() => toggleGame(g.key)} />
             ))}
           </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-          <button onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked), numero })} style={{ ...tabActive, background: ACCENT, color: "#fff" }}>Enregistrer</button>
         </div>
       </div>
       {showEvoChain && (
