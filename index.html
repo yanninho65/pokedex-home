@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.1.21.05";
+const APP_VERSION = "2026.9.1.23.15";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -261,13 +261,19 @@ const GLASS_ROUND_BTN = {
   fontSize: 18, lineHeight: 1, cursor: "pointer",
 };
 
-// Fond assombri + centrage plein écran des 7 fiches détail modales (National, Shiny, Double,
+// Fond assombri + alignement plein écran des 7 fiches détail modales (National, Shiny, Double,
 // Event, Interjeu, BoxGroupModal, JeuMultiSourceModal — §5septies) : réserve 150px de marge
 // basse pour ne jamais chevaucher les flèches flottantes de navigation (bottom: 92). Mutualisé
 // ici : ce style était auparavant recopié à l'identique à chacun des 7 sites d'appel.
+// § correctif explicite : alignement en HAUT de page (alignItems: "flex-start"), plus au centre
+// vertical — un centrage vertical plaçait le haut du panneau (donc l'artwork) à une position Y
+// différente selon la hauteur du contenu (ex. beaucoup de jeux "en jeu" cochés vs peu), ce qui
+// faisait "sauter" l'artwork visuellement en naviguant ‹› entre deux Pokémon de tailles de fiche
+// différentes. Toutes les fiches démarrent maintenant au même point fixe (padding-top 20px),
+// qu'elles débordent de la page (scroll interne, voir fichePanelStyle maxHeight/overflowY) ou non.
 const FICHE_OVERLAY_STYLE = {
   position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100,
-  display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 20px 150px",
+  display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "20px 20px 150px",
 };
 
 // Panneau interne d'une fiche détail modale (§5septies) : même forme partout, seule la couleur
@@ -4837,12 +4843,21 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     const list = [];
     marquePairs.forEach((p) => (p.jeuKeys || []).forEach((k) => {
       if (seen.has(k)) return;
+      // § demande explicite : "Go" (attrapable, clé "goattrapable") doit apparaître ENTRE Home et
+      // "Go sorti" dans "Disponible dans", y compris pour les vues déjà créées par l'utilisateur
+      // avant l'ajout de cette clé (jeuKeys ne contenant encore que "go") — insérée ici plutôt que
+      // dans les données stockées (custom_jeu_views), jamais réécrites depuis ce code.
+      if (gameKey === "Go" && k === "go" && !seen.has("goattrapable")) {
+        seen.add("goattrapable");
+        const gaDef = JEU_VIDEO_DEFS.find((d) => d.key === "goattrapable");
+        list.push({ key: "goattrapable", label: (gaDef && gaDef.label) || "Go" });
+      }
       seen.add(k);
       const def = JEU_VIDEO_DEFS.find((d) => d.key === k);
       list.push({ key: k, label: (def && def.label) || k });
     }));
     return list;
-  }, [marquePairs]);
+  }, [marquePairs, gameKey]);
   const marqueGamesWithHome = useMemo(
     () => (allMarqueGames.length > 0 ? [{ key: "home", label: "Home" }, ...allMarqueGames] : []),
     [allMarqueGames]
@@ -15255,20 +15270,16 @@ function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged, navIndex, navTot
   const hasNav = navTotal != null && navTotal > 1;
   const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
 
-  // "Go" (attrapable, clé "goattrapable") / "Go sorti" (clé "go") — §demande explicite : mêmes
-  // pilules "Jeu vidéo" que le Catalogue (bloc "Jeu vidéo", voir JEU_VIDEO_DEFS/JEU_VIDEO_PAIRS),
-  // éditables directement depuis la fiche Go 1 sans passer par le crayon Catalogue — même
-  // mécanisme de persistance que AvailabilityPills (patchJeuVideo, écrit dans
-  // catalog_overrides/catalog_additions ET met à jour DATA.jeuVideo en mémoire immédiatement).
-  // "Go" toujours affiché AU-DESSUS de "Go sorti" (§ demande explicite).
-  const [jeuVideoLive, setJeuVideoLive] = useState(() => jeuVideoFor(nom, forme));
-  useEffect(() => { setJeuVideoLive(jeuVideoFor(nom, forme)); }, [nom, forme]);
-  const toggleJeuVideoFlag = async (key) => {
-    const next = !jeuVideoLive[key];
-    setJeuVideoLive((prev) => ({ ...prev, [key]: next }));
-    await patchJeuVideo(nom, forme, { [key]: next });
-    if (onChanged) onChanged();
-  };
+  // "Disponible dans" (Home/Go/Go sorti) — §demande explicite : même pilule/format que les autres
+  // marques (AvailabilityPills, voir bloc "Jeu vidéo" du Catalogue), affiché AU-DESSUS des statuts
+  // Pokédex/Shiny/… — jamais un rendu ad hoc dupliqué ici. "Go" (attrapable) toujours entre Home
+  // et "Go sorti" (§ demande explicite, même ordre que dans le Catalogue/Home/Home+jeu).
+  const goAvailabilityGames = useMemo(() => ([
+    { key: "home", label: "Home" },
+    { key: "goattrapable", label: (JEU_VIDEO_DEFS.find((d) => d.key === "goattrapable") || {}).label || "Go" },
+    { key: "go", label: (JEU_VIDEO_DEFS.find((d) => d.key === "go") || {}).label || "Go sorti" },
+  ]), []);
+  const [, forceAvailabilityRefresh] = useState(0);
 
   const reload = () => {
     (async () => {
@@ -15349,6 +15360,10 @@ function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged, navIndex, navTot
         <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600, marginBottom: 12 }}>
           {forme || "Forme normale"}
         </div>
+        <AvailabilityPills
+          nom={nom} forme={forme} marque="Go" games={goAvailabilityGames}
+          onChanged={() => { forceAvailabilityRefresh((n) => n + 1); if (onChanged) onChanged(); }}
+        />
         {!dicts || !formDicts ? (
           <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", fontSize: 12.5 }}>Chargement…</div>
         ) : (
@@ -15364,14 +15379,6 @@ function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged, navIndex, navTot
                 ))}
               </div>
             ))}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4, paddingTop: 8, borderTop: `1px solid ${LINE}` }}>
-              <div style={{ display: "flex" }}>
-                <TogglePill label="Go" color={LIGHTBLUE} checked={!!jeuVideoLive.goattrapable} onClick={() => toggleJeuVideoFlag("goattrapable")} />
-              </div>
-              <div style={{ display: "flex" }}>
-                <TogglePill label="Go sorti" color={LIGHTBLUE} checked={!!jeuVideoLive.go} onClick={() => toggleJeuVideoFlag("go")} />
-              </div>
-            </div>
             {(tags.mega || tags.gmax) && (
               <div style={{ display: "flex", gap: 8, marginTop: 4, paddingTop: 8, borderTop: `1px solid ${LINE}` }}>
                 {GO1_FORM_ONLY_MODES.filter((m) => (m.key === "mega" ? tags.mega : tags.gmax)).map((m) => (
@@ -15939,25 +15946,6 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
       return next;
     });
   };
-  const checkRow = (label, isChecked, onToggle, color) => (
-    <button
-      key={label}
-      type="button"
-      onClick={onToggle}
-      style={{
-        display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
-        background: isChecked ? `${color}22` : "transparent", border: `1px solid ${isChecked ? color : LINE}`,
-        borderRadius: 10, padding: "8px 10px", cursor: "pointer", marginBottom: 6,
-      }}
-    >
-      <span style={{
-        width: 18, height: 18, borderRadius: 5, flexShrink: 0, border: `2px solid ${isChecked ? color : MUTED}`,
-        background: isChecked ? color : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
-        color: BG, fontSize: 11, fontWeight: 900,
-      }}>{isChecked ? "✓" : ""}</span>
-      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT, fontWeight: 600 }}>{label}</span>
-    </button>
-  );
   return (
     <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
@@ -16008,8 +15996,14 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
 
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED, marginBottom: 6 }}>Attrapé dans</div>
-          {showHome && checkRow("Home", home, () => setHome((h) => !h), OK)}
-          {games.map((g) => checkRow(g.label, checked.has(g.key), () => toggleGame(g.key), PURPLE))}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {showHome && (
+              <TogglePill label="Home" color={OK} checked={home} onClick={() => setHome((h) => !h)} />
+            )}
+            {games.map((g) => (
+              <TogglePill key={g.key} label={g.label} color={PURPLE} checked={checked.has(g.key)} onClick={() => toggleGame(g.key)} />
+            ))}
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
