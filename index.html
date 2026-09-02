@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.1.0.35";
+const APP_VERSION = "2026.9.1.19.10";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -496,7 +496,15 @@ const JEU_VIDEO_DEFS = [
   { key: "za", label: "Z-A", gen: "Legends" },
   { key: "ecarlate", label: "Écarlate", gen: "9G" },
   { key: "violet", label: "Violet", gen: "9G" },
-  { key: "go", label: "Go", gen: "Autre" },
+  // § demande explicite : renommé "Go" -> "Go sorti" pour plus de clarté (disponibilité générale
+  // du Pokémon dans Pokémon GO, sert notamment au filtre "Sorti" de l'onglet Go/Go 1) ; clé
+  // interne inchangée ("go") pour ne pas perdre les données déjà saisies. "Go attrapable" (nouveau,
+  // même génération) : distinct de "Go sorti" — précise si CETTE forme précise est attrapable
+  // telle quelle dans Pokémon GO, indépendamment de la marque Go/Pokédex Home (ex. Palkia
+  // Originel, attrapable en Go mais non transférable sur Home — même logique que les formes
+  // dominantes Alola, voir goAttrapableFor/go1AllFormsSorted).
+  { key: "go", label: "Go sorti", gen: "Autre" },
+  { key: "goattrapable", label: "Go attrapable", gen: "Autre" },
   // § demande explicite : bloc "Let's Go" (7G, oublié initialement).
   { key: "lgpikachu", label: "Let's Go Pikachu", gen: "Let's Go" },
   { key: "lgevoli", label: "Let's Go Évoli", gen: "Let's Go" },
@@ -583,6 +591,25 @@ function parseJvCell(raw) {
 }
 function goSortiFor(nom, forme) {
   return !!jeuVideoFor(nom, forme).go;
+}
+// "Go attrapable" (§ demande explicite) : distinct de "Go sorti" (ci-dessus, disponibilité
+// générale du Pokémon dans Pokémon GO) — précise si CETTE forme précise est attrapable telle
+// quelle dans Pokémon GO, indépendamment de son appartenance à la marque Go (Pokédex Home). Même
+// logique que les formes dominantes Alola (jeuOnlyFormsFor) : une forme peut être explicitement
+// marquée attrapable ici tout en étant structurellement absente de DATA.games["Go"] (ex. Palkia
+// Originel, attrapable en Go mais non envoyable sur Home) — voir go1AllFormsSorted.
+function goAttrapableFor(nom, forme) {
+  return jeuVideoFor(nom, forme).goattrapable === true;
+}
+// Pilules structurelles "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc catalogue "Pokédex
+// Home & Alpha") — distinctes de la détection par texte de forme (isMegaOrGmaxForme/
+// dynamaxInfoFor) : marquage explicite par forme, stocké dans DATA.formTags["nom|forme"] =
+// { mega, gmax, gmaxGene }, fusionné via catalog_overrides/catalog_additions (champs
+// formMega/formGmax/formGmaxGene, même schéma que alphaLA/alphaLZA). "Gmax gène" = le Pokémon
+// porte le gène Gigamax mais ne peut pas (encore) Gigamaxer lui-même (ex. Crèmy) — distinct de
+// "Gmax" (la forme Gigamax elle-même).
+function formTagsFor(nom, forme) {
+  return (DATA.formTags && DATA.formTags[pokemonIdentityKey(nom, forme)]) || {};
 }
 // Édition rapide de la disponibilité "Jeu vidéo" (dont la clé spéciale "home" = disponible sur
 // Pokémon Home, § demande explicite : certains Pokémon sont attrapables en jeu sans être
@@ -2813,6 +2840,26 @@ function FicheFormeEvoRow({ forme, evoLabel, onEvoClick }) {
     </div>
   );
 }
+// Pilule à sélectionner générique (§ demande explicite, "boutons... pilules à sélectionner" plutôt
+// que des cases à cocher) — un bouton plein, sans checkbox visible, fond/bord colorés à l'état
+// coché. Mutualisée pour éviter la duplication : utilisée par Go1SpeciesModal (Pokédex/Shiny/
+// Chanceux/Parfait/Purifié/Obscur/XXS/XXL, Méga/Gmax).
+function TogglePill({ label, color, checked, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        flex: 1, border: `1px solid ${checked ? color : LINE}`, borderRadius: 12,
+        padding: "8px 10px", cursor: "pointer", minWidth: 0,
+        background: checked ? color + "26" : "transparent",
+        fontFamily: "Inter, sans-serif", fontSize: 12.5, color: checked ? TXT : MUTED,
+        fontWeight: checked ? 700 : 500, textAlign: "center",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      }}
+    >{label}</button>
+  );
+}
 
 function buildAlphaBaseline() {
   // DATA.nat rows: [..., alphaCapableLA(10), alphaCapableLZA(11), alphaCaughtLA(12), alphaCaughtLZA(13)]
@@ -4701,6 +4748,11 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // code de marque en dur (contrairement à `isAlphaGame`, qui reste correct tel quel : seules
   // LA/LZA ont un mécanisme de marquage Alpha par capture, voir `alphaMap`/`toggleAlpha`).
   const hasGmaxForms = useMemo(() => rows.some((r) => dynamaxInfoFor(r[2]) !== null), [rows]);
+  // Filtre "Taille" (§ demande explicite) : la distinction "Gmax gène" (pilule structurelle,
+  // voir formTagsFor) s'ajoute au filtre Taille existant (Alpha/Normal, LA/LZA uniquement) sur
+  // les marques qui en comptent au moins une (ex. Galar) — indépendant de isAlphaGame, ces deux
+  // mécanismes ne se recoupant jamais (une marque n'a jamais à la fois Alpha et Gmax gène).
+  const hasGmaxGeneForms = useMemo(() => rows.some((r) => !!formTagsFor(r[1], r[2]).gmaxGene), [rows]);
   // Suivi "en jeu" par marque (§ fermeture Banque Pokémon) — entièrement modulable, voir
   // useJeuViews. Vide pour toute marque sans vue configurée, donc sans effet ailleurs que là où
   // l'utilisateur en a créé.
@@ -5181,6 +5233,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           if (!canBeAlpha(r.nom, r.forme)) return false;
           const isAlpha = !!alphaMap[alphaKeyFor(r.nom, r.forme)];
           if (!matchesMulti(alphaFilter, isAlpha ? "alpha" : "nonAlpha")) return false;
+        } else if (!isAlphaGame && hasGmaxGeneForms && alphaFilter !== null) {
+          if (!matchesMulti(alphaFilter, formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : "__other__")) return false;
         }
         if (hasGmaxForms && dynamaxFilter !== null) {
           const d = dynamaxInfoFor(r.forme);
@@ -5189,7 +5243,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         }
         return true;
       });
-  }, [rows, sortOrder, boxInfo, extendedRows, extendedSortOrder, extendedBoxInfo, showJeuMerge, search, filter, region, alphaFilter, alphaMap, dynamaxFilter, hasGmaxForms, displayEffective, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
+  }, [rows, sortOrder, boxInfo, extendedRows, extendedSortOrder, extendedBoxInfo, showJeuMerge, search, filter, region, alphaFilter, alphaMap, dynamaxFilter, hasGmaxForms, hasGmaxGeneForms, displayEffective, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
 
   // Filtrage des entrées Shiny/Event additionnelles : mêmes critères recherche/région que la liste
   // normale ; le groupe de boîte et la taille Alpha n'ont pas de sens pour elles (exclues si actifs) ;
@@ -5199,7 +5253,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     if (jeuFilter !== null) return false;
     if (dispoFilter !== null) return false;
     if (isGoGame && sortiFilter !== null) return false;
-    if (isAlphaGame && alphaFilter !== null) return false;
+    if ((isAlphaGame || hasGmaxGeneForms) && alphaFilter !== null) return false;
     if (hasGmaxForms && dynamaxFilter !== null) return false;
     if (!matchesMulti(region, it.region)) return false;
     return true;
@@ -5212,7 +5266,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (!matchesExtraRow(it)) return false;
       return true;
     });
-  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, dispoFilter, alphaFilter, dynamaxFilter, hasGmaxForms, isAlphaGame, isGoGame, sortiFilter]);
+  }, [extraItems, search, filter, region, boxGroupFilter, jeuFilter, dispoFilter, alphaFilter, dynamaxFilter, hasGmaxForms, hasGmaxGeneForms, isAlphaGame, isGoGame, sortiFilter]);
 
   useInfiniteScroll(viewMode !== "box" && (filtered.length + extraFiltered.length) > limit, () => setLimit((l) => l + 200));
 
@@ -5245,6 +5299,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         if (!canBeAlpha(r[1], r[2])) return;
         const isAlpha = !!alphaMap[alphaKeyFor(r[1], r[2])];
         if (!matchesMulti(alphaFilter, isAlpha ? "alpha" : "nonAlpha")) return;
+      } else if (!isAlphaGame && hasGmaxGeneForms && alphaFilter !== null) {
+        if (!matchesMulti(alphaFilter, formTagsFor(r[1], r[2]).gmaxGene ? "gmaxgene" : "__other__")) return;
       }
       if (hasGmaxForms && dynamaxFilter !== null) {
         const d = dynamaxInfoFor(r[2]);
@@ -5256,7 +5312,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       if (filter === "missing") { if (!c) matchedCount++; } else { if (c) matchedCount++; }
     });
     return { matchedTotal, matchedCount };
-  }, [rows, extendedRows, boxInfo, extendedBoxInfo, showJeuMerge, search, region, alphaFilter, alphaMap, dynamaxFilter, hasGmaxForms, displayEffective, filter, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
+  }, [rows, extendedRows, boxInfo, extendedBoxInfo, showJeuMerge, search, region, alphaFilter, alphaMap, dynamaxFilter, hasGmaxForms, hasGmaxGeneForms, displayEffective, filter, isAlphaGame, boxGroupFilter, jeuFilter, dispoFilter, jeuOverrides, isGoGame, sortiFilter, jeuVideoVersion]);
   // Les extras Shiny/Event ne comptent jamais dans les 2 premiers cercles (total/caught, basés sur
   // rows/effective, inchangés ci-dessus) — seulement ajoutés au 3e cercle (compte filtré).
   const combinedStats = {
@@ -5789,10 +5845,13 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     width="100%"
                   />
                 )}
-                {isAlphaGame && (
+                {(isAlphaGame || hasGmaxGeneForms) && (
                   <MultiSelectFilter
                     label="Taille"
-                    options={[["alpha", "Alpha"], ["nonAlpha", "Normal"]]}
+                    options={[
+                      ...(isAlphaGame ? [["alpha", "Alpha"], ["nonAlpha", "Normal"]] : []),
+                      ...(hasGmaxGeneForms ? [["gmaxgene", "Gmax gène"]] : []),
+                    ]}
                     selected={alphaFilter}
                     onChange={setAlphaFilter}
                     width="100%"
@@ -6413,7 +6472,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         if (!matchesMulti(modeFilter, recForRow && recForRow.mode)) return false;
         if (!matchesMulti(locationFilter, recForRow && catchLocation(recForRow))) return false;
         if (!matchesMulti(jeuFilter, recForRow ? (recForRow.jeu || "__none__") : undefined)) return false;
-        if (!matchesMulti(alphaFilter, recForRow ? (recForRow.alpha ? "yes" : "no") : undefined)) return false;
+        if (!matchesMulti(alphaFilter, recForRow ? (formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : (recForRow.alpha ? "yes" : "no")) : undefined)) return false;
         if (!matchesMulti(gmaxFilter, recForRow ? (recForRow.gmax ? "gmax" : recForRow.gmaxable ? "gmaxable" : "no") : undefined)) return false;
         if (!matchesMulti(occFilter, recs.length)) return false;
         if (!matchesMultiAny(detailFilterSel, recForRow ? recForRow.details : undefined)) return false;
@@ -6425,12 +6484,12 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
 
   const filteredStats = useMemo(() => {
     const s = search.trim().toLowerCase();
-    const matchesRecord = (rec) => {
+    const matchesRecord = (rec, nom, forme) => {
       if (!matchesMulti(marque, rec.marque || "__none__")) return false;
       if (!matchesMulti(modeFilter, rec.mode)) return false;
       if (!matchesMulti(locationFilter, catchLocation(rec))) return false;
       if (!matchesMulti(jeuFilter, rec.jeu || "__none__")) return false;
-      if (!matchesMulti(alphaFilter, rec.alpha ? "yes" : "no")) return false;
+      if (!matchesMulti(alphaFilter, formTagsFor(nom, forme).gmaxGene ? "gmaxgene" : (rec.alpha ? "yes" : "no"))) return false;
       if (!matchesMulti(gmaxFilter, rec.gmax ? "gmax" : rec.gmaxable ? "gmaxable" : "no")) return false;
       if (!matchesMultiAny(detailFilterSel, rec.details)) return false;
       return true;
@@ -6450,7 +6509,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
       if (!matchesMulti(region, r[3])) return;
       if (!matchesMulti(occFilter, recordsFor(key).length)) return;
       formsTotal++;
-      const matching = recordsFor(key).filter(matchesRecord);
+      const matching = recordsFor(key).filter((rec) => matchesRecord(rec, r[1], r[2]));
       if (filter === "missing") {
         if (matching.length === 0) forms++;
         return;
@@ -6874,7 +6933,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 />
                 <MultiSelectFilter
                   label="Taille"
-                  options={[["yes", "Alpha"], ["no", "Normal"]]}
+                  options={[["yes", "Alpha"], ["no", "Normal"], ["gmaxgene", "Gmax gène"]]}
                   selected={alphaFilter}
                   onChange={setAlphaFilter}
                   width="100%"
@@ -7646,7 +7705,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
       if (filter === "missing" && r.attrape) return false;
       if (!matchesMulti(shinyFilter, r.shiny ? "yes" : "no")) return false;
       if (!matchesMulti(marqueFilter, r.marque || "")) return false;
-      if (!matchesMulti(tailleFilter, (r.marque === "LA" || r.marque === "LZA") ? "alpha" : "normal")) return false;
+      if (!matchesMulti(tailleFilter, formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : ((r.marque === "LA" || r.marque === "LZA") ? "alpha" : "normal"))) return false;
       if (!matchesMulti(dynamaxFilter, r.gmax ? "gmax" : "nogmax")) return false;
       if (!matchesMulti(boiteFilter, r.enBoite ? "oui" : "non")) return false;
       if (!matchesMulti(doPersoFilter, r.doPerso ? "oui" : "non")) return false;
@@ -8010,7 +8069,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
                 <MultiSelectFilter label="Marque" options={marques} selected={marqueFilter} onChange={setMarqueFilter} width="100%" />
                 <MultiSelectFilter
                   label="Taille"
-                  options={[["alpha", "Alpha"], ["normal", "Normal"]]}
+                  options={[["alpha", "Alpha"], ["normal", "Normal"], ["gmaxgene", "Gmax gène"]]}
                   selected={tailleFilter}
                   onChange={setTailleFilter}
                   width="100%"
@@ -9464,6 +9523,10 @@ async function applyCatalogCustomizations() {
     DATA.nat.push(newRow);
     DATA.evolutionMode[key] = add.evolution || "-";
     DATA.alphaCapable[key] = { LA: add.alphaLA ? 1 : 0, LZA: add.alphaLZA ? 1 : 0 };
+    if (add.formMega || add.formGmax || add.formGmaxGene) {
+      if (!DATA.formTags) DATA.formTags = {};
+      DATA.formTags[key] = { mega: !!add.formMega, gmax: !!add.formGmax, gmaxGene: !!add.formGmaxGene };
+    }
     if (add.jeuVideo) { if (!DATA.jeuVideo) DATA.jeuVideo = {}; DATA.jeuVideo[key] = { ...(DATA.jeuVideo[key] || {}), ...add.jeuVideo }; }
     if (add.jeuVideoNumbers) { if (!DATA.jeuVideoNumbers) DATA.jeuVideoNumbers = {}; DATA.jeuVideoNumbers[key] = { ...(DATA.jeuVideoNumbers[key] || {}), ...add.jeuVideoNumbers }; }
     if (add.inHomeDex) { if (!DATA.homeDex) DATA.homeDex = {}; DATA.homeDex[key] = 1; }
@@ -9523,6 +9586,17 @@ async function applyCatalogCustomizations() {
       DATA.alphaCapable[key] = {
         LA: ov.alphaLA !== undefined ? (ov.alphaLA ? 1 : 0) : prevA.LA,
         LZA: ov.alphaLZA !== undefined ? (ov.alphaLZA ? 1 : 0) : prevA.LZA,
+      };
+    }
+    // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha") — même
+    // schéma de fusion que l'Alpha ci-dessus (booléens indépendants, valeur absente = inchangée).
+    if (ov.formMega !== undefined || ov.formGmax !== undefined || ov.formGmaxGene !== undefined) {
+      if (!DATA.formTags) DATA.formTags = {};
+      const prevT = DATA.formTags[key] || {};
+      DATA.formTags[key] = {
+        mega: ov.formMega !== undefined ? !!ov.formMega : !!prevT.mega,
+        gmax: ov.formGmax !== undefined ? !!ov.formGmax : !!prevT.gmax,
+        gmaxGene: ov.formGmaxGene !== undefined ? !!ov.formGmaxGene : !!prevT.gmaxGene,
       };
     }
     // "Jeu vidéo" (§ nouveau) — bloc distinct de "Marques possibles" : pour l'instant seul "go"
@@ -9763,13 +9837,25 @@ function CatalogEntryModal({ draft, setDraft, isNew, onCancel, onSave, onDelete 
                 { key: "inHomeDex", label: "Pokédex Home" },
                 { key: "alphaLA", label: "α (LA)" },
                 { key: "alphaLZA", label: "α (LZA)" },
+                // § demande explicite : pilules structurelles Méga/Gmax/Gmax gène (bloc "Jeu 1"
+                // Go, voir formTagsFor). "Gmax" et "Gmax gène" restent mutuellement exclusifs
+                // (une forme est soit la forme Gmax elle-même, soit porteuse du gène sans pouvoir
+                // Gigamaxer — jamais les deux) — activer l'une désactive l'autre ; Méga reste
+                // indépendant.
+                { key: "formMega", label: "Méga" },
+                { key: "formGmax", label: "Gmax", exclusiveWith: "formGmaxGene" },
+                { key: "formGmaxGene", label: "Gmax gène", exclusiveWith: "formGmax" },
               ].map((opt) => {
                 const active = !!draft[opt.key];
                 return (
                   <button
                     key={opt.key}
                     type="button"
-                    onClick={() => setDraft({ ...draft, [opt.key]: !active })}
+                    onClick={() => {
+                      const next = { ...draft, [opt.key]: !active };
+                      if (!active && opt.exclusiveWith) next[opt.exclusiveWith] = false;
+                      setDraft(next);
+                    }}
                     style={{
                       border: "none", borderRadius: 999, padding: "5px 12px", cursor: "pointer",
                       fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: active ? 700 : 500,
@@ -10000,6 +10086,7 @@ function buildFullCatalogOverrides() {
     // `jeuVideo` (disponibilité par jeu précis, §5ter/§4) avait été oublié à sa création.
     const jv = DATA.jeuVideo && DATA.jeuVideo[key];
     const jvn = DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key];
+    const ft = DATA.formTags && DATA.formTags[key];
     out[row.__baseKey] = {
       nom: row[1], forme: row[2] || null, nat: row[0], region: row[3] || undefined,
       evolution: DATA.evolutionMode[key] || "-",
@@ -10009,6 +10096,7 @@ function buildFullCatalogOverrides() {
       games, gameNumbers,
       jeuVideo: (jv && Object.keys(jv).length > 0) ? jv : undefined,
       jeuVideoNumbers: (jvn && Object.keys(jvn).length > 0) ? jvn : undefined,
+      formMega: !!(ft && ft.mega), formGmax: !!(ft && ft.gmax), formGmaxGene: !!(ft && ft.gmaxGene),
       storageKey: key, // déjà à jour, aucun renommage en attente pour cette entrée
     };
   });
@@ -10074,6 +10162,7 @@ async function persistCatalogEdit(idx, d) {
     famille: d.famille !== undefined && String(d.famille).trim() !== "" ? Number(d.famille) : null,
     inHomeDex: !!d.inHomeDex, games: d.games || [], gameNumbers: d.gameNumbers || {},
     jeuVideo: d.jeuVideo || {}, jeuVideoNumbers: d.jeuVideoNumbers || {},
+    formMega: !!d.formMega, formGmax: !!d.formGmax, formGmaxGene: !!d.formGmaxGene,
   };
   if (row.__additionId) {
     const arr = await readJSON("catalog_additions", []);
@@ -10128,6 +10217,10 @@ function catalogDraftForRow(idx) {
     // "Numéro spécifique par jeu vidéo" (§ nouveau) — un numéro par paire/triple JEU_VIDEO_PAIRS,
     // remplace le bloc "Vues Jeu" de Paramètres pour l'édition (voir migration ci-dessus).
     jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
+    // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha").
+    formMega: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].mega),
+    formGmax: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmax),
+    formGmaxGene: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmaxGene),
   };
 }
 
@@ -10276,6 +10369,9 @@ function CatalogEditor({ onSaveStateChange }) {
         games, gameNumbers,
         jeuVideo: (DATA.jeuVideo && DATA.jeuVideo[key]) ? { ...DATA.jeuVideo[key] } : {},
         jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
+        formMega: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].mega),
+        formGmax: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmax),
+        formGmaxGene: !!(DATA.formTags && DATA.formTags[key] && DATA.formTags[key].gmaxGene),
       },
     };
   };
@@ -10296,7 +10392,7 @@ function CatalogEditor({ onSaveStateChange }) {
   const openAdd = async () => {
     setEditing({
       idx: null, isNew: true, addId: null,
-      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {}, jeuVideo: {}, jeuVideoNumbers: {} },
+      draft: { nom: "", forme: "", nat: "", region: "Kanto", evolution: "-", alphaLA: false, alphaLZA: false, famille: "", inHomeDex: false, games: [], gameNumbers: {}, jeuVideo: {}, jeuVideoNumbers: {}, formMega: false, formGmax: false, formGmaxGene: false },
     });
   };
 
@@ -10324,6 +10420,7 @@ function CatalogEditor({ onSaveStateChange }) {
         famille: d.famille !== undefined && String(d.famille).trim() !== "" ? Number(d.famille) : null,
         inHomeDex: !!d.inHomeDex, games: d.games || [], gameNumbers: d.gameNumbers || {},
         jeuVideo: d.jeuVideo || {}, jeuVideoNumbers: d.jeuVideoNumbers || {},
+        formMega: !!d.formMega, formGmax: !!d.formGmax, formGmaxGene: !!d.formGmaxGene,
       });
       await writeJSON("catalog_additions", arr);
     } else {
@@ -11689,9 +11786,21 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
 
   const matchesTailleRow = (r) => {
     if (tailleFilter === null) return true;
+    if (formTagsFor(r[1], r[2]).gmaxGene) return matchesMulti(tailleFilter, "gmaxgene");
     const a = alphaInfoFor(r);
     if (!a.capable) return false;
     return matchesMulti(tailleFilter, a.owned > 0 ? "alpha" : "nonAlpha");
+  };
+  // Même logique que matchesTailleRow ci-dessus, au niveau espèce (au moins une forme concernée)
+  // — mutualisé entre filteredSpecies et filteredStats (mode "species") pour éviter la
+  // duplication à l'identique qui existait déjà entre ces deux blocs (§ priorité permanente,
+  // harmonisation/zéro code mort).
+  const matchesTailleSpeciesRow = (sp) => {
+    if (tailleFilter === null) return true;
+    const forms = bySpecies.get(sp.nom) || [];
+    if (forms.some((f) => formTagsFor(f[1], f[2]).gmaxGene)) return matchesMulti(tailleFilter, "gmaxgene");
+    if (!sp.alphaCapable) return false;
+    return matchesMulti(tailleFilter, sp.alphaOwned > 0 ? "alpha" : "nonAlpha");
   };
 
   const matchesDynamaxRow = (r) => {
@@ -11742,10 +11851,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         const forms = bySpecies.get(sp.nom) || [];
         if (!forms.some(matchesJeuRow)) return false;
       }
-      if (tailleFilter !== null) {
-        if (!sp.alphaCapable) return false;
-        if (!matchesMulti(tailleFilter, sp.alphaOwned > 0 ? "alpha" : "nonAlpha")) return false;
-      }
+      if (!matchesTailleSpeciesRow(sp)) return false;
       if (dynamaxFilter !== null) {
         const forms = bySpecies.get(sp.nom) || [];
         const concerned = forms.filter((f) => dynamaxInfoFor(f[2]) !== null);
@@ -11793,10 +11899,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           const forms = bySpecies.get(sp.nom) || [];
           if (!forms.some(matchesJeuRow)) return;
         }
-        if (tailleFilter !== null) {
-          if (!sp.alphaCapable) return;
-          if (!matchesMulti(tailleFilter, sp.alphaOwned > 0 ? "alpha" : "nonAlpha")) return;
-        }
+        if (!matchesTailleSpeciesRow(sp)) return;
         if (dynamaxFilter !== null) {
           const forms = bySpecies.get(sp.nom) || [];
           const concerned = forms.filter((f) => dynamaxInfoFor(f[2]) !== null);
@@ -12325,7 +12428,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 />
                 <MultiSelectFilter
                   label="Taille"
-                  options={[["alpha", "Alpha"], ["nonAlpha", "Normal"]]}
+                  options={[["alpha", "Alpha"], ["nonAlpha", "Normal"], ["gmaxgene", "Gmax gène"]]}
                   selected={tailleFilter}
                   onChange={setTailleFilter}
                   width="100%"
@@ -13642,12 +13745,15 @@ async function buildNationalSheetRows() {
     const [nat, nom, forme] = r;
     const key = nom + "|" + (forme || "");
     const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
+    const ft = DATA.formTags && DATA.formTags[key];
     // ---- Colonnes Paramètres (catalogue) ----
     const row = {
       Nom: nom, Forme: excelForme(forme), Numero: nat, Region: r[3] || "",
       Evolution: DATA.evolutionMode[key] || "-",
       AlphaLA: alpha.LA ? 1 : 0, AlphaLZA: alpha.LZA ? 1 : 0,
       HomeDex: (DATA.homeDex && DATA.homeDex[key]) ? 1 : 0,
+      // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha").
+      FormMega: (ft && ft.mega) ? 1 : 0, FormGmax: (ft && ft.gmax) ? 1 : 0, FormGmaxGene: (ft && ft.gmaxGene) ? 1 : 0,
     };
     for (const g of GAME_ORDER) {
       const gi = DATA.gameIndex[g] ? DATA.gameIndex[g][key] : undefined;
@@ -14376,6 +14482,7 @@ async function importNationalSheet(rows, mode) {
   const hasCol = (c) => Object.prototype.hasOwnProperty.call(sample, c);
   const hasNumero = hasCol("Numero"), hasRegion = hasCol("Region"), hasEvolution = hasCol("Evolution");
   const hasAlphaLA = hasCol("AlphaLA"), hasAlphaLZA = hasCol("AlphaLZA"), hasHomeDex = hasCol("HomeDex");
+  const hasFormMega = hasCol("FormMega"), hasFormGmax = hasCol("FormGmax"), hasFormGmaxGene = hasCol("FormGmaxGene");
   const gameColsPresent = GAME_ORDER.filter(hasCol);
   const applyGames = gameColsPresent.length === GAME_ORDER.length; // jeu de colonnes complet uniquement, par sécurité
 
@@ -14427,6 +14534,9 @@ async function importNationalSheet(rows, mode) {
     if (hasAlphaLA) fields.alphaLA = !!Number(row.AlphaLA);
     if (hasAlphaLZA) fields.alphaLZA = !!Number(row.AlphaLZA);
     if (hasHomeDex) fields.inHomeDex = !!Number(row.HomeDex);
+    if (hasFormMega) fields.formMega = !!Number(row.FormMega);
+    if (hasFormGmax) fields.formGmax = !!Number(row.FormGmax);
+    if (hasFormGmaxGene) fields.formGmaxGene = !!Number(row.FormGmaxGene);
     if (applyGames) {
       const games = GAME_ORDER.filter((g) => row[g] !== "" && row[g] !== undefined);
       const gameNumbers = {};
@@ -14547,6 +14657,7 @@ async function importParamsSheet(rows) {
   const hasCol = (c) => Object.prototype.hasOwnProperty.call(sample, c);
   const hasNumero = hasCol("Numero"), hasRegion = hasCol("Region"), hasEvolution = hasCol("Evolution");
   const hasAlphaLA = hasCol("AlphaLA"), hasAlphaLZA = hasCol("AlphaLZA"), hasHomeDex = hasCol("HomeDex");
+  const hasFormMega = hasCol("FormMega"), hasFormGmax = hasCol("FormGmax"), hasFormGmaxGene = hasCol("FormGmaxGene");
   const gameColsPresent = GAME_ORDER.filter(hasCol);
   const applyGames = gameColsPresent.length === GAME_ORDER.length; // jeu de colonnes complet uniquement, par sécurité
 
@@ -14561,6 +14672,9 @@ async function importParamsSheet(rows) {
     if (hasAlphaLA) fields.alphaLA = !!Number(sheetRow.AlphaLA);
     if (hasAlphaLZA) fields.alphaLZA = !!Number(sheetRow.AlphaLZA);
     if (hasHomeDex) fields.inHomeDex = !!Number(sheetRow.HomeDex);
+    if (hasFormMega) fields.formMega = !!Number(sheetRow.FormMega);
+    if (hasFormGmax) fields.formGmax = !!Number(sheetRow.FormGmax);
+    if (hasFormGmaxGene) fields.formGmaxGene = !!Number(sheetRow.FormGmaxGene);
     if (applyGames) {
       const games = GAME_ORDER.filter((g) => sheetRow[g] !== "" && sheetRow[g] !== undefined);
       const gameNumbers = {};
@@ -14945,11 +15059,24 @@ const GO1_UNIQUE_ONLY_MODES = [
   { key: "xxs", label: "XXS", color: OK },
   { key: "xxl", label: "XXL", color: LIGHTRED },
 ];
+// Modes "forme uniquement" (§ demande explicite, blocs Méga/Gmax de l'onglet Go 1) — contrairement
+// aux 6 modes forme unique ci-dessus (niveau espèce), ceux-ci restent TOUJOURS en forme (pas de
+// bascule "Forme unique" : seule une forme précise peut être Méga/Gmax, pas l'espèce dans son
+// ensemble) et ne listent QUE les formes portant la pilule structurelle correspondante
+// (formTagsFor, bloc catalogue "Pokédex Home & Alpha") — jamais tout le Pokédex Go comme
+// Pokédex/Shiny. Pas de cascade vers go1_pokedex_unique (simple suivi de possession, orthogonal
+// au fait d'avoir "complété" l'espèce).
+const GO1_FORM_ONLY_MODES = [
+  { key: "mega", label: "Méga", color: INFO, storageKey: "go1_mega" },
+  { key: "gmax", label: "Gmax", color: EVENTORANGE, storageKey: "go1_gmax" },
+];
 // Sélecteur de mode (icône Pokédex de la barre flottante) — Pokédex/Shiny en tête (ont une
-// sous-vue toutes formes/forme unique), puis les 6 modes forme unique.
+// sous-vue toutes formes/forme unique), puis Méga/Gmax (toujours en forme), puis les 6 modes
+// forme unique.
 const GO1_MODES = [
   { key: "pokedex", label: "Pokédex", color: LIGHTBLUE },
   { key: "shiny", label: "Shiny", color: GOLD },
+  ...GO1_FORM_ONLY_MODES,
   ...GO1_UNIQUE_ONLY_MODES,
 ];
 // Paires affichées dans la fiche de capture (clic sur un Pokémon), deux coches par ligne.
@@ -14977,13 +15104,31 @@ const GO1_UNIQUE_STORAGE_KEYS = {
   obscur: "go1_obscur", xxs: "go1_xxs", xxl: "go1_xxl",
 };
 
+// Formes "Go attrapable" (§ demande explicite, même logique que les dominants Alola —
+// jeuOnlyFormsFor) : attrapables telles quelles dans Pokémon GO mais structurellement absentes de
+// la marque Go/Pokédex Home (ex. Palkia Originel). Mémoïsé au niveau module (jamais invalidé en
+// session — une édition catalogue recharge toujours la page, voir persistCatalogEdit) pour éviter
+// de rebalayer NAT_ALL_FORMS à chaque appel de go1SpeciesFormKeys (potentiellement des centaines
+// de fois par rendu, une par espèce, en vue "Forme unique").
+let __go1AttrapableOnlyFormsCache = null;
+function go1AttrapableOnlyForms() {
+  if (__go1AttrapableOnlyFormsCache === null) {
+    __go1AttrapableOnlyFormsCache = jeuOnlyFormsFor("Go", ["goattrapable"]);
+  }
+  return __go1AttrapableOnlyFormsCache;
+}
+
 // Toutes les formes de Go, triées par numéro national croissant (demande explicite — l'ordre
-// "boîte"/sortie de jeu par défaut de DATA.games["Go"] n'est plus utilisé ici).
+// "boîte"/sortie de jeu par défaut de DATA.games["Go"] n'est plus utilisé ici). Complétée par les
+// formes "Go attrapable" ci-dessus, ajoutées en fin de liste avant tri, jamais interfolées avec
+// les entrées réelles de la marque (mêmes précautions que jeuOnlyFormsFor partout ailleurs).
 function go1AllFormsSorted() {
   const rows = DATA.games["Go"] || [];
-  return rows
-    .map((r, i) => ({ i, nat: r[0], nom: r[1], forme: r[2], region: r[4], key: r[1] + "|" + (r[2] || "") }))
-    .sort((a, b) => Number(a.nat) - Number(b.nat));
+  const inMarque = rows.map((r, i) => ({ i, nat: r[0], nom: r[1], forme: r[2], region: r[4], key: r[1] + "|" + (r[2] || "") }));
+  const attrapableOnly = go1AttrapableOnlyForms().map((f, idx) => ({
+    i: rows.length + idx, nat: f[0], nom: f[1], forme: f[2], region: f[4], key: f[1] + "|" + (f[2] || ""),
+  }));
+  return [...inMarque, ...attrapableOnly].sort((a, b) => Number(a.nat) - Number(b.nat));
 }
 
 // Une ligne par espèce (numéro national), triée par numéro croissant — attraper Goupix de Kanto
@@ -15003,10 +15148,16 @@ function go1UniqueSpecies() {
 
 // Clés "nom|forme" de toutes les formes d'une espèce donnée (numéro national) — utilisé pour la
 // cascade "une seule forme" (go1CascadeSingleForm) et par le filtre "Sorti" en forme unique.
+// Complétée par les formes "Go attrapable" mémoïsées (go1AttrapableOnlyForms) — jamais un rebalayage
+// complet de go1AllFormsSorted ici (appelé potentiellement une fois par espèce, coût à éviter).
 function go1SpeciesFormKeys(natKey) {
-  return (DATA.games["Go"] || [])
+  const base = (DATA.games["Go"] || [])
     .filter((r) => String(r[0]) === natKey)
     .map((r) => ({ key: r[1] + "|" + (r[2] || ""), nom: r[1], forme: r[2] }));
+  const extra = go1AttrapableOnlyForms()
+    .filter((f) => String(f[0]) === natKey)
+    .map((f) => ({ key: f[1] + "|" + (f[2] || ""), nom: f[1], forme: f[2] }));
+  return [...base, ...extra];
 }
 
 // Si une espèce n'a qu'une seule forme, marque aussi cette forme dans le dictionnaire "toutes
@@ -15083,14 +15234,26 @@ function useGo1Dict(storageKey) {
   return [dict, toggle, set, reload];
 }
 
-// Fiche de capture d'une espèce (clic sur un Pokémon) : 4 lignes de 2 coches — Pokédex/Shiny,
-// Chanceux/Parfait, Purifié/Obscur, XXS/XXL — toutes au niveau espèce (numéro national). Chaque
-// case est une case normale (jamais grisée) ; cocher Shiny/Chanceux/Parfait/Purifié/Obscur/
-// XXS/XXL marque aussi Pokédex, et Shiny marque aussi Pokédex en plus de lui-même (voir
-// go1CascadeToPokedexUnique/go1CascadeToShinyUnique).
-function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged }) {
+// Fiche de capture d'une espèce (clic sur un Pokémon) — harmonisée avec le patron partagé des
+// autres fiches (§ demande explicite, "harmonisées avec le format des autres onglets") :
+// emplacement/nom/forme/numéro, artwork en haut, lien Poképédia, barre du bas défilable (crayon
+// catalogue + fermeture, flèches ‹ › entre Pokémon). 4 lignes de pilules à sélectionner (jamais
+// des cases à cocher, § demande explicite) — Pokédex/Shiny, Chanceux/Parfait, Purifié/Obscur,
+// XXS/XXL — toutes au niveau espèce (numéro national). Cocher Shiny/Chanceux/Parfait/Purifié/
+// Obscur/XXS/XXL marque aussi Pokédex, et Shiny marque aussi Pokédex en plus de lui-même (voir
+// go1CascadeToPokedexUnique/go1CascadeToShinyUnique). Pilules Méga/Gmax (§ demande explicite)
+// ajoutées en plus quand pertinentes pour la forme précise affichée (formTagsFor) — au niveau de
+// la FORME (clé nom|forme), pas de l'espèce, stockage go1_mega/go1_gmax.
+function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged, navIndex, navTotal, onNavPrev, onNavNext }) {
   const [dicts, setDicts] = useState(null);
+  const [formDicts, setFormDicts] = useState(null);
   const natKey = String(nat);
+  const formKey = nom + "|" + (forme || "");
+  const tags = formTagsFor(nom, forme);
+  const natInfo = natInfoFor(nom, forme);
+  useLockBodyScroll(true);
+  const hasNav = navTotal != null && navTotal > 1;
+  const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
 
   const reload = () => {
     (async () => {
@@ -15104,10 +15267,18 @@ function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged }) {
         }
       }
       setDicts(out);
+      const fout = {};
+      for (const m of GO1_FORM_ONLY_MODES) {
+        try {
+          const res = await window.storage.get(m.storageKey, false);
+          fout[m.key] = res && res.value ? JSON.parse(res.value) : {};
+        } catch (e) { fout[m.key] = {}; }
+      }
+      setFormDicts(fout);
     })();
   };
 
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [nat]);
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [nat, nom, forme]);
 
   const toggle = async (m) => {
     const cur = (dicts && dicts[m.key]) || {};
@@ -15124,50 +15295,71 @@ function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged }) {
     if (onChanged) onChanged();
   };
 
+  // Méga/Gmax : suivi de possession au niveau de la FORME précise (formKey), jamais de l'espèce —
+  // aucune cascade vers Pokédex unique (simple suivi, orthogonal à l'espèce "complétée").
+  const toggleForm = async (m) => {
+    const cur = (formDicts && formDicts[m.key]) || {};
+    const turningOn = !cur[formKey];
+    const next = { ...cur };
+    if (turningOn) next[formKey] = 1; else delete next[formKey];
+    setFormDicts((d) => ({ ...d, [m.key]: next }));
+    await window.storage.set(m.storageKey, JSON.stringify(next), false);
+    reload();
+    if (onChanged) onChanged();
+  };
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 20, padding: 18, maxWidth: 400, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-          <Sprite nom={nom} forme={forme} size={44} />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 15, color: TXT }}>
-              N°{nat} {nom}
-            </div>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Toutes les formes de cette espèce</div>
+    <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
+      <FloatingCardNav
+        onPrev={onNavPrev}
+        onNext={onNavNext}
+        hasPrev={hasNav && navIndex > 0}
+        hasNext={hasNav && navIndex < navTotal - 1}
+        center={(
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <CatalogQuickEditButton nom={nom} forme={forme} style={GLASS_ROUND_BTN} />
+            <button onClick={onClose} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
           </div>
-          <button onClick={onClose} style={{ marginLeft: "auto", background: "transparent", border: "none", color: MUTED, fontSize: 18, cursor: "pointer", flexShrink: 0 }}>✕</button>
+        )}
+      />
+      <div style={fichePanelStyle(LIGHTBLUE + "66", 420)}>
+        <FicheArtworkBlock n={nat}>
+          <Sprite nom={nom} forme={forme} size={96} />
+        </FicheArtworkBlock>
+        <FicheNameRow
+          nom={nom}
+          lien={natInfo.lien}
+          extra={<div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>Toutes les formes de cette espèce</div>}
+        />
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: 600, marginBottom: 12 }}>
+          {forme || "Forme normale"}
         </div>
-        {!dicts ? (
+        {!dicts || !formDicts ? (
           <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", fontSize: 12.5 }}>Chargement…</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {GO1_MODAL_PAIRS.map((pair, idx) => (
               <div key={idx} style={{ display: "flex", gap: 8 }}>
-                {pair.map((m) => {
-                  const checked = !!(dicts[m.key] && dicts[m.key][natKey]);
-                  return (
-                    <label
-                      key={m.key}
-                      style={{
-                        flex: 1, display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
-                        padding: "8px 10px", borderRadius: 12,
-                        background: checked ? m.color + "26" : "transparent",
-                        border: `1px solid ${checked ? m.color : LINE}`, minWidth: 0,
-                      }}
-                    >
-                      <input
-                        type="checkbox" checked={checked}
-                        onChange={() => toggle(m)}
-                        style={{ width: 18, height: 18, accentColor: m.color, flexShrink: 0 }}
-                      />
-                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, fontWeight: checked ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {m.label}
-                      </span>
-                    </label>
-                  );
-                })}
+                {pair.map((m) => (
+                  <TogglePill
+                    key={m.key} label={m.label} color={m.color}
+                    checked={!!(dicts[m.key] && dicts[m.key][natKey])}
+                    onClick={() => toggle(m)}
+                  />
+                ))}
               </div>
             ))}
+            {(tags.mega || tags.gmax) && (
+              <div style={{ display: "flex", gap: 8, marginTop: 4, paddingTop: 8, borderTop: `1px solid ${LINE}` }}>
+                {GO1_FORM_ONLY_MODES.filter((m) => (m.key === "mega" ? tags.mega : tags.gmax)).map((m) => (
+                  <TogglePill
+                    key={m.key} label={m.label} color={m.color}
+                    checked={!!(formDicts[m.key] && formDicts[m.key][formKey])}
+                    onClick={() => toggleForm(m)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -15293,16 +15485,23 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
 
   const modeDef = GO1_MODES.find((m) => m.key === mode) || GO1_MODES[0];
   const isFormsMode = mode === "pokedex" || mode === "shiny";
-  const isFormsView = isFormsMode && subView === "forms";
+  const isFormOnlyMode = mode === "mega" || mode === "gmax";
+  const isFormsView = (isFormsMode && subView === "forms") || isFormOnlyMode;
 
   const allForms = useMemo(go1AllFormsSorted, []);
   const uniqueSpecies = useMemo(go1UniqueSpecies, []);
+  // Sources des blocs Méga/Gmax (§ demande explicite) : uniquement les formes portant la pilule
+  // structurelle correspondante (formTagsFor, bloc catalogue "Pokédex Home & Alpha") — jamais tout
+  // le Pokédex Go comme Pokédex/Shiny.
+  const megaForms = useMemo(() => allForms.filter((r) => formTagsFor(r.nom, r.forme).mega === true), [allForms]);
+  const gmaxForms = useMemo(() => allForms.filter((r) => formTagsFor(r.nom, r.forme).gmax === true), [allForms]);
+  const source = mode === "mega" ? megaForms : mode === "gmax" ? gmaxForms : (isFormsView ? allForms : uniqueSpecies);
 
   // Dictionnaire du mode/sous-vue actuellement affiché (celui qu'on coche directement dans la
-  // liste) — Pokédex/Shiny toutes formes utilisent une clé "nom|forme", tout le reste une clé
-  // "numéro national" (chaîne).
-  const currentStorageKey = isFormsView
-    ? (mode === "pokedex" ? "go1_pokedex_forms" : "go1_shiny_forms")
+  // liste) — Pokédex/Shiny toutes formes et Méga/Gmax utilisent une clé "nom|forme", tout le reste
+  // une clé "numéro national" (chaîne).
+  const currentStorageKey = mode === "mega" ? "go1_mega" : mode === "gmax" ? "go1_gmax"
+    : isFormsView ? (mode === "pokedex" ? "go1_pokedex_forms" : "go1_shiny_forms")
     : GO1_UNIQUE_STORAGE_KEYS[mode];
   const [currentDict, toggleCurrent, setCurrent, reloadCurrent] = useGo1Dict(currentStorageKey);
 
@@ -15310,9 +15509,9 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
 
   const regions = useMemo(() => {
     const s = new Set();
-    (isFormsView ? allForms : uniqueSpecies).forEach((r) => { if (r.region) s.add(r.region); });
+    source.forEach((r) => { if (r.region) s.add(r.region); });
     return Array.from(s).sort();
-  }, [isFormsView, allForms, uniqueSpecies]);
+  }, [source]);
 
   // "Sorti" (Pokémon GO ne sort pas tous ses Pokémon d'un coup) — en forme unique, une espèce
   // est considérée "sortie" si au moins une de ses formes l'est (jeuVideoFor/goSortiFor, même
@@ -15325,7 +15524,6 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
   const items = useMemo(() => {
     if (!currentDict) return [];
     const s = search.trim().toLowerCase();
-    const source = isFormsView ? allForms : uniqueSpecies;
     return source
       .filter((r) => {
         if (s && !(String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.nat).toLowerCase().includes(s))) return false;
@@ -15344,9 +15542,9 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
         return true;
       });
     // eslint-disable-next-line
-  }, [currentDict, isFormsView, allForms, uniqueSpecies, search, region, sortiFilter, statusFilter]);
+  }, [currentDict, isFormsView, source, search, region, sortiFilter, statusFilter]);
 
-  const totalCount = (isFormsView ? allForms : uniqueSpecies).length;
+  const totalCount = source.length;
   const caughtCount = currentDict ? Object.keys(currentDict).length : 0;
   const shownCaught = items.filter((it) => it.checked).length;
 
@@ -15358,7 +15556,9 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
     toggleCurrent(isFormsView ? it.key : it.nat);
     if (!turningOn) return;
     if (mode === "shiny") await go1CascadeToShinyUnique(natKey);
-    await go1CascadeToPokedexUnique(natKey);
+    // Méga/Gmax = simple suivi de possession de la forme, orthogonal au fait d'avoir "complété"
+    // l'espèce (§ demande explicite) — jamais de cascade vers go1_pokedex_unique pour ces 2 modes.
+    if (mode !== "mega" && mode !== "gmax") await go1CascadeToPokedexUnique(natKey);
   };
 
   const anyFilterActive = region !== null || sortiFilter !== null || statusFilter !== "all";
@@ -15453,13 +15653,24 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
         </div>
       )}
 
-      {modalTarget && (
-        <Go1SpeciesModal
-          nat={modalTarget.nat} nom={modalTarget.nom} forme={modalTarget.forme}
-          onClose={() => setModalTarget(null)}
-          onChanged={reloadCurrent}
-        />
-      )}
+      {modalTarget && (() => {
+        // Navigation ‹ › entre Pokémon (§ harmonisation, comme les autres fiches) — au sein de la
+        // liste actuellement affichée (items, avant troncature par `limit`), jamais au-delà.
+        const modalNavIndex = items.findIndex((it) => it.nat === modalTarget.nat && (it.key || null) === (modalTarget.key || null));
+        const goModalNav = (delta) => {
+          const next = modalNavIndex + delta;
+          if (next >= 0 && next < items.length) setModalTarget(items[next]);
+        };
+        return (
+          <Go1SpeciesModal
+            nat={modalTarget.nat} nom={modalTarget.nom} forme={modalTarget.forme}
+            onClose={() => setModalTarget(null)}
+            onChanged={reloadCurrent}
+            navIndex={modalNavIndex} navTotal={items.length}
+            onNavPrev={() => goModalNav(-1)} onNavNext={() => goModalNav(1)}
+          />
+        );
+      })()}
 
       <FloatingActionBar
         search={search}
@@ -15472,7 +15683,6 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
           getSuggestions: (q) => {
             const s = q.trim().toLowerCase();
             if (!s) return [];
-            const source = isFormsView ? allForms : uniqueSpecies;
             return source
               .filter((r) => String(r.nom).toLowerCase().includes(s) || (r.forme && String(r.forme).toLowerCase().includes(s)) || String(r.nat).toLowerCase().includes(s))
               .slice(0, 8)
@@ -15564,11 +15774,12 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
 // réellement stocké (déjà mis à jour par les cascades automatiques) — pas de distinction
 // manuel/auto à l'export ni à l'import.
 async function buildGo1SheetRows() {
-  const [pokedexForms, shinyForms, pokedexUnique, shinyUnique, chanceux, parfait, purifie, obscur, xxs, xxl] = await Promise.all([
+  const [pokedexForms, shinyForms, pokedexUnique, shinyUnique, chanceux, parfait, purifie, obscur, xxs, xxl, mega, gmax] = await Promise.all([
     storageGetJSON("go1_pokedex_forms", {}), storageGetJSON("go1_shiny_forms", {}),
     storageGetJSON("go1_pokedex_unique", {}), storageGetJSON("go1_shiny_unique", {}),
     storageGetJSON("go1_chanceux", {}), storageGetJSON("go1_parfait", {}), storageGetJSON("go1_purifie", {}),
     storageGetJSON("go1_obscur", {}), storageGetJSON("go1_xxs", {}), storageGetJSON("go1_xxl", {}),
+    storageGetJSON("go1_mega", {}), storageGetJSON("go1_gmax", {}),
   ]);
   return go1AllFormsSorted().map((r) => {
     const natKey = String(r.nat);
@@ -15579,15 +15790,21 @@ async function buildGo1SheetRows() {
       Chanceux: chanceux[natKey] ? 1 : 0, Parfait: parfait[natKey] ? 1 : 0,
       Purifie: purifie[natKey] ? 1 : 0, Obscur: obscur[natKey] ? 1 : 0,
       XXS: xxs[natKey] ? 1 : 0, XXL: xxl[natKey] ? 1 : 0,
+      // Méga/Gmax (§ demande explicite) : clés par FORME (comme Pokedex/Shiny toutes formes),
+      // jamais par espèce — seules les formes réellement Méga/Gmax (formTagsFor) portent ces
+      // colonnes à 1 dans la pratique, mais la colonne existe sur toutes les lignes par cohérence
+      // avec Pokedex/Shiny.
+      Mega: mega[r.key] ? 1 : 0, Gmax: gmax[r.key] ? 1 : 0,
     };
   });
 }
 
 async function importGo1Sheet(rows, mode) {
   const readCur = async (key) => (mode === "replace" ? {} : await storageGetJSON(key, {}));
-  const [pokedexForms, shinyForms, pokedexUnique, shinyUnique, chanceux, parfait, purifie, obscur, xxs, xxl] = await Promise.all([
+  const [pokedexForms, shinyForms, pokedexUnique, shinyUnique, chanceux, parfait, purifie, obscur, xxs, xxl, mega, gmax] = await Promise.all([
     readCur("go1_pokedex_forms"), readCur("go1_shiny_forms"), readCur("go1_pokedex_unique"), readCur("go1_shiny_unique"),
     readCur("go1_chanceux"), readCur("go1_parfait"), readCur("go1_purifie"), readCur("go1_obscur"), readCur("go1_xxs"), readCur("go1_xxl"),
+    readCur("go1_mega"), readCur("go1_gmax"),
   ]);
   const has = (row, col) => Object.prototype.hasOwnProperty.call(row, col);
   const setBool = (dict, key, val) => { if (Number(val)) dict[key] = 1; else delete dict[key]; };
@@ -15635,6 +15852,8 @@ async function importGo1Sheet(rows, mode) {
     // traitement ligne par ligne inchangé.
     if (has(row, "Pokedex")) { setBool(pokedexForms, key, row.Pokedex); if (Number(row.Pokedex)) markPokedexUnique(natKey); }
     if (has(row, "Shiny")) { setBool(shinyForms, key, row.Shiny); if (Number(row.Shiny)) { markShinyUnique(natKey); markPokedexUnique(natKey); } }
+    if (has(row, "Mega")) setBool(mega, key, row.Mega);
+    if (has(row, "Gmax")) setBool(gmax, key, row.Gmax);
     if (!natKey) return;
     if (has(row, "PokedexUnique") && Number(row.PokedexUnique)) markPokedexUnique(natKey);
     speciesCols.forEach(([col]) => {
@@ -15667,6 +15886,8 @@ async function importGo1Sheet(rows, mode) {
     window.storage.set("go1_obscur", JSON.stringify(obscur), false),
     window.storage.set("go1_xxs", JSON.stringify(xxs), false),
     window.storage.set("go1_xxl", JSON.stringify(xxl), false),
+    window.storage.set("go1_mega", JSON.stringify(mega), false),
+    window.storage.set("go1_gmax", JSON.stringify(gmax), false),
   ]);
 }
 
@@ -16922,6 +17143,8 @@ function App() {
     "go1_obscur",
     "go1_xxs",
     "go1_xxl",
+    "go1_mega",
+    "go1_gmax",
     "shiny_catches",
     "double_catches",
     "manual_caught",
