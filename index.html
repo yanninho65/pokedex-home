@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.2.14.20";
+const APP_VERSION = "2026.9.2.8.55";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2816,7 +2816,20 @@ function EvolutionLabelButton({ label, onClick, style }) {
 // JeuMultiSourceModal...) : le numéro national (`n`) est affiché en haut à gauche du cadre, gras,
 // plus gros, en blanc — plus de libellé "Numéro" ni de "#" devant. Reste modifiable comme avant
 // (crayon Modifier de la barre du bas, §5septies) mais rien dans l'affichage ne le signale.
-function FicheArtworkBlock({ n, children, editableNumero, numeroValue, onNumeroChange, numeroPlaceholder }) {
+// Badge Attrapé/Manquant (§ demande explicite, déplacé depuis le corps de la fiche National vers
+// ce cadre partagé, en bas à droite — même emplacement/format sur toutes les fiches détail qui le
+// fournissent) : `caught` absent (undefined/null) = pas de badge affiché ; sinon booléen. Cliquable
+// uniquement si `onToggleCaught` est fourni (pertinent seulement quand le statut correspond à une
+// action de bascule non ambiguë — ex. absent en National, où le statut agrège plusieurs jeux/marques
+// déjà éditables individuellement plus bas dans la fiche).
+function FicheArtworkBlock({ n, children, editableNumero, numeroValue, onNumeroChange, numeroPlaceholder, caught, onToggleCaught }) {
+  const showCaughtBadge = caught === true || caught === false;
+  const caughtBadgeStyle = {
+    position: "absolute", bottom: 8, right: 12,
+    fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 10.5, padding: "2px 7px", borderRadius: 999,
+    background: caught ? "rgba(76,175,131,0.15)" : "rgba(228,87,46,0.15)",
+    color: caught ? OK : ACCENT, border: "none", lineHeight: 1.4,
+  };
   return (
     <div style={{
       position: "relative",
@@ -2846,6 +2859,18 @@ function FicheArtworkBlock({ n, children, editableNumero, numeroValue, onNumeroC
         )
       )}
       {children}
+      {showCaughtBadge && (
+        onToggleCaught ? (
+          <button
+            type="button"
+            onClick={onToggleCaught}
+            title={caught ? "Attrapé — clique pour décocher" : "Manquant — clique pour cocher"}
+            style={{ ...caughtBadgeStyle, cursor: "pointer" }}
+          >{caught ? "Attrapé" : "Manquant"}</button>
+        ) : (
+          <span style={caughtBadgeStyle}>{caught ? "Attrapé" : "Manquant"}</span>
+        )
+      )}
     </div>
   );
 }
@@ -4057,7 +4082,7 @@ function NumeroGroupeRow({ showNumber = true, numero, setNumero, numberPlacehold
     </div>
   );
 }
-function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, onCancel, onSave, navIndex, navTotal, onNavPrev, onNavNext }) {
+function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, caught, onToggleCaught, onCancel, onSave, navIndex, navTotal, onNavPrev, onNavNext }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
@@ -4077,10 +4102,11 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
     <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
       {(() => {
-        // Modifier (crayon) / Fermer / Enregistrer regroupés sur la ligne du bas, à DROITE, entre
-        // les flèches ‹ › (§ demande explicite : "tous les boutons enregistrer... en bas sur la
-        // même ligne que les flèches, tout à droite") — "Fermer" route vers onCancel (pas de
-        // onClose dédié dans ce composant).
+        // Modifier (crayon) / bascule Attrapé (§ demande explicite, "bouton plus... en bas au
+        // milieu", écrit immédiatement, hors du flux Enregistrer) / Fermer / Enregistrer regroupés
+        // sur la ligne du bas, à DROITE, entre les flèches ‹ › (§ demande explicite : "tous les
+        // boutons enregistrer... en bas sur la même ligne que les flèches, tout à droite") —
+        // "Fermer" route vers onCancel (pas de onClose dédié dans ce composant).
         return (
           <FloatingCardNav
             onPrev={onNavPrev}
@@ -4090,6 +4116,13 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
             center={(
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CatalogQuickEditButton nom={nom} forme={forme} style={GLASS_ROUND_BTN} />
+                {onToggleCaught && (
+                  <button
+                    onClick={onToggleCaught}
+                    title={caught ? "Attrapé — clique pour décocher" : "Marquer comme attrapé"}
+                    style={{ ...GLASS_ROUND_BTN, background: caught ? OK : GOLD, color: BG, border: "none", fontSize: 20, fontWeight: 800 }}
+                  >{caught ? "✓" : "+"}</button>
+                )}
                 <button onClick={onCancel} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
                 <SaveButton dirty={isDirty} onClick={() => onSave(value, jeu, numero)} />
               </div>
@@ -4103,6 +4136,8 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
           numeroValue={numero}
           onNumeroChange={setNumero}
           numeroPlaceholder={numberPlaceholder}
+          caught={caught}
+          onToggleCaught={onToggleCaught}
         >
           <Sprite nom={nom} forme={forme} size={96} />
         </FicheArtworkBlock>
@@ -4338,6 +4373,8 @@ function PairModeBlock({
             showNumber
             currentNumber={numberOverrides && numberOverrides[multiDetailKey]}
             numberPlaceholder={marqueNumber}
+            caught={isInPairKey(multiDetailKey)}
+            onToggleCaught={() => toggleQuick(multiDetailKey)}
             navIndex={navIdx}
             navTotal={filtered.length}
             onNavPrev={() => goNav(-1)}
@@ -5501,6 +5538,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           showNumber
           currentNumber={numberOverridesHome && numberOverridesHome[boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2])]}
           numberPlaceholder={rows[groupEditTarget][0]}
+          caught={!!displayEffective[groupEditTarget]}
+          onToggleCaught={() => toggle(groupEditTarget)}
           navIndex={homeNavIdx}
           navTotal={filtered.length}
           onNavPrev={() => goHomeNav(-1)}
@@ -6709,7 +6748,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
               const evoLabel = formatEvolution(DATA.evolutionMode[selectedEntry[1] + "|" + (selectedEntry[2] || "")]);
               return (
               <React.Fragment>
-                <FicheArtworkBlock n={info.n}>
+                <FicheArtworkBlock n={info.n} caught={allRecs.length > 0}>
                   <Sprite nom={selectedEntry[1]} forme={selectedEntry[2]} size={96} shiny />
                 </FicheArtworkBlock>
                 <FicheNameRow
@@ -7288,6 +7327,11 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
             )}
           />
           <div style={fichePanelStyle(`${GOLD}66`, 460)}>
+            {/* Pas de badge Attrapé/Manquant ici (§ demande explicite du 2026-09-02, "attrapé
+                partout") : une fiche Double représente toujours un exemplaire déjà réellement
+                possédé (le "+" ci-dessus en ajoute un, "Supprimer" plus bas en retire un) — il
+                n'existe pas de statut "manquant" pour une entrée de ce catalogue, contrairement à
+                National/Shiny/Event/Home/jeux. */}
             <FicheArtworkBlock n={info.n}>
               <Sprite nom={selNom} forme={selForme} size={96} shiny={!!(current && current.rec.shiny)} />
             </FicheArtworkBlock>
@@ -7864,12 +7908,17 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
             center={(
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CatalogQuickEditButton nom={r.nom} forme={r.forme} style={GLASS_ROUND_BTN} />
+                <button
+                  onClick={() => updateCustom(r.idx, "attrape", !r.attrape)}
+                  title={r.attrape ? "Attrapé — clique pour décocher" : "Marquer comme attrapé"}
+                  style={{ ...GLASS_ROUND_BTN, background: r.attrape ? OK : GOLD, color: BG, border: "none", fontSize: 20, fontWeight: 800 }}
+                >{r.attrape ? "✓" : "+"}</button>
                 <button onClick={closeEntry} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
               </div>
             )}
           />
           <div style={fichePanelStyle(`${EVENTORANGE}66`, 460)}>
-            <FicheArtworkBlock n={r.nat}>
+            <FicheArtworkBlock n={r.nat} caught={r.attrape} onToggleCaught={() => updateCustom(r.idx, "attrape", !r.attrape)}>
               <Sprite nom={r.nom} forme={r.forme} size={96} shiny={r.shiny} />
             </FicheArtworkBlock>
             <FicheNameRow
@@ -7877,13 +7926,6 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
               lien={lien}
               extra={(
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
-                  <span title={r.attrape ? "Attrapé" : "Non attrapé"} style={{
-                    width: 18, height: 18, borderRadius: 5, flexShrink: 0,
-                    border: `2px solid ${r.attrape ? OK : MUTED}`,
-                    background: r.attrape ? OK : "transparent",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    color: BG, fontSize: 11, fontWeight: 900,
-                  }}>{r.attrape ? "✓" : ""}</span>
                   {showAlpha && <span style={{ fontSize: 13, fontWeight: 900, color: "#E85D6B" }}>α</span>}
                   {r.shiny && <span style={{ fontSize: 14, fontWeight: 900, color: GOLD }}>✦</span>}
                   {r.gmax && (
@@ -8758,6 +8800,10 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
             )}
           />
           <div style={fichePanelStyle(`${INTERJEU}66`, 460)}>
+            {/* Pas de badge Attrapé/Manquant ici (§ demande explicite du 2026-09-02) : une entrée
+                Interjeu est un transfert en cours (avant → après, deux artworks), pas un statut
+                de possession pour UN Pokémon — le bloc "Déjà attrapé ?" plus bas couvre déjà la
+                vérification pertinente pour cette fiche. */}
             <FicheArtworkBlock n={natInfoFor(r.nom, r.forme).n}>
               <Sprite nom={r.nom} forme={r.forme} size={90} shiny={r.shiny} />
               <div style={{ fontSize: 22, color: MUTED, fontWeight: 700, flexShrink: 0 }}>→</div>
@@ -12061,6 +12107,10 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   // bloc de marques) comme dans le bloc de marques lui-même, sans dupliquer le calcul.
   const currentCp = selectedForms ? Math.min(cardPos, selectedForms.length - 1) : 0;
   const currentForm = selectedForms ? selectedForms[currentCp] : null;
+  // Statut Attrapé/Manquant de la forme affichée (§ demande explicite, déplacé dans le cadre
+  // d'artwork, FicheArtworkBlock) — agrège plusieurs jeux/marques (isCaughtEff), donc affiché en
+  // lecture seule ici : le détail par jeu reste éditable plus bas via les boutons ronds ✓/✗.
+  const currentFormCaught = currentForm ? isCaughtEff(currentForm) : null;
 
   return (
     <div style={{ paddingBottom: 100 }}>
@@ -12149,7 +12199,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           />
           <div style={{ position: "relative", maxWidth: 520, width: "100%" }}>
             <div style={fichePanelStyle(LINE)}>
-            <FicheArtworkBlock n={selectedForms[0][0]}>
+            <FicheArtworkBlock n={selectedForms[0][0]} caught={currentFormCaught}>
               <Sprite nom={selectedNom} forme={currentForm ? currentForm[2] : null} size={96} />
               {shinyForm && (
                 <Sprite nom={shinyForm[1]} forme={shinyForm[2]} size={96} shiny />
@@ -12183,7 +12233,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
               const availableGames = games.map((g, gi) => ({ g, gi })).filter(({ gi }) => f[7][gi]);
               const genericCaught = !!f[10];
               const genericShiny = !!f[11];
-              const formIsCaught = isCaughtEff(f);
               const isJeuMode = cardMode === "jeu";
               // Bouton rond partagé par les pilules de marque en mode Home/Home+Jeu (§ nouveau :
               // contour pilule moins haut, boutons ronds sur une seule ligne sous le titre en gras).
@@ -12215,11 +12264,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                         {m.owned}/{m.total}
                       </span>
                     )}
-                    <span style={{
-                      fontFamily: "Inter, sans-serif", fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
-                      background: formIsCaught ? "rgba(76,175,131,0.15)" : "rgba(228,87,46,0.15)",
-                      color: formIsCaught ? OK : ACCENT,
-                    }}>{formIsCaught ? "Attrapé" : "Manquant"}</span>
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: isJeuMode ? "repeat(auto-fill, minmax(130px, 1fr))" : "repeat(auto-fill, minmax(84px, 1fr))", gap: 8 }}>
@@ -16030,8 +16074,11 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
     <div {...(hasNav ? swipeHandlers : {})} style={FICHE_OVERLAY_STYLE}>
       <style>{`.pkdx-numero-input::placeholder { color: ${TXT}; opacity: 1; }`}</style>
       {(() => {
-        // Modifier (crayon) / Fermer / Enregistrer regroupés sur la ligne du bas, à DROITE, entre
-        // les flèches ‹ › (comme BoxGroupModal, § demande explicite) — "Fermer" route vers onCancel.
+        // Modifier (crayon) / bascule Attrapé (§ demande explicite — reflète/modifie le même
+        // état local `home` que la pilule "Home" de la section "Attrapé dans" plus bas, écrit à
+        // l'Enregistrer comme le reste de la fiche, jamais immédiat ici) / Fermer / Enregistrer
+        // regroupés sur la ligne du bas, à DROITE, entre les flèches ‹ › (comme BoxGroupModal,
+        // § demande explicite) — "Fermer" route vers onCancel.
         return (
           <FloatingCardNav
             onPrev={onNavPrev}
@@ -16041,6 +16088,13 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
             center={(
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CatalogQuickEditButton nom={nom} forme={forme} style={GLASS_ROUND_BTN} />
+                {showHome && (
+                  <button
+                    onClick={() => setHome((h) => !h)}
+                    title={home ? "Attrapé — clique pour décocher" : "Marquer comme attrapé"}
+                    style={{ ...GLASS_ROUND_BTN, background: home ? OK : GOLD, color: BG, border: "none", fontSize: 20, fontWeight: 800 }}
+                  >{home ? "✓" : "+"}</button>
+                )}
                 <button onClick={onCancel} title="Fermer" style={{ ...GLASS_ROUND_BTN, fontSize: 20 }}>×</button>
                 <SaveButton dirty={isDirty} onClick={() => onSave({ group, jeu, home, gameKeys: Array.from(checked), numero })} />
               </div>
@@ -16054,6 +16108,8 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
           numeroValue={numero}
           onNumeroChange={setNumero}
           numeroPlaceholder={numberPlaceholder}
+          caught={showHome ? home : null}
+          onToggleCaught={showHome ? () => setHome((h) => !h) : undefined}
         >
           <Sprite nom={nom} forme={forme} size={96} />
         </FicheArtworkBlock>
