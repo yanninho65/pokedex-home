@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.1.19.10";
+const APP_VERSION = "2026.9.1.21.05";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -498,13 +498,14 @@ const JEU_VIDEO_DEFS = [
   { key: "violet", label: "Violet", gen: "9G" },
   // § demande explicite : renommé "Go" -> "Go sorti" pour plus de clarté (disponibilité générale
   // du Pokémon dans Pokémon GO, sert notamment au filtre "Sorti" de l'onglet Go/Go 1) ; clé
-  // interne inchangée ("go") pour ne pas perdre les données déjà saisies. "Go attrapable" (nouveau,
-  // même génération) : distinct de "Go sorti" — précise si CETTE forme précise est attrapable
-  // telle quelle dans Pokémon GO, indépendamment de la marque Go/Pokédex Home (ex. Palkia
-  // Originel, attrapable en Go mais non transférable sur Home — même logique que les formes
-  // dominantes Alola, voir goAttrapableFor/go1AllFormsSorted).
+  // interne inchangée ("go") pour ne pas perdre les données déjà saisies. "Go" (nouveau, même
+  // génération, clé interne "goattrapable") : distinct de "Go sorti" — précise si CETTE forme
+  // précise est attrapable telle quelle dans Pokémon GO, indépendamment de la marque Go/Pokédex
+  // Home (ex. Palkia Originel, attrapable en Go mais non transférable sur Home — même logique que
+  // les formes dominantes Alola, voir goAttrapableFor/go1AllFormsSorted). Affiché à GAUCHE de
+  // "Go sorti" (§ demande explicite, voir ordre dans JEU_VIDEO_PAIRS ci-dessous).
   { key: "go", label: "Go sorti", gen: "Autre" },
-  { key: "goattrapable", label: "Go attrapable", gen: "Autre" },
+  { key: "goattrapable", label: "Go", gen: "Autre" },
   // § demande explicite : bloc "Let's Go" (7G, oublié initialement).
   { key: "lgpikachu", label: "Let's Go Pikachu", gen: "Let's Go" },
   { key: "lgevoli", label: "Let's Go Évoli", gen: "Let's Go" },
@@ -541,7 +542,8 @@ const JEU_VIDEO_PAIRS = [
   ["diamantetincelant", "perlescintillante"],
   { keys: ["arceus", "za"], sharedNumber: false },
   ["ecarlate", "violet"],
-  ["go"],
+  // "Go" (attrapable) affiché à gauche de "Go sorti" (§ demande explicite).
+  ["goattrapable", "go"],
   ["lgpikachu", "lgevoli"],
   ["rougefeuswitch", "vertfeuilleswitch"],
   ["vents", "vagues"],
@@ -2072,6 +2074,14 @@ function isMegaOrGmaxForme(forme) {
 function dynamaxInfoFor(forme) {
   if (!forme || !/gmax/i.test(forme)) return null;
   return /non\s*gmax/i.test(forme) ? "nonGmax" : "gmax";
+}
+// Valeur du filtre Dynamax pour une forme donnée, pilule structurelle "Gmax gène" prioritaire sur
+// la détection par texte (§ demande explicite, corrigé : Gmax gène doit être distingué dans le
+// filtre Dynamax, pas Taille — une forme comme "Crèmy" (forme texte "Gmax gène") matchait à tort
+// "gmax" via dynamaxInfoFor, la pilule formTags.gmaxGene permet de la distinguer explicitement).
+function dynamaxValueFor(nom, forme) {
+  if (formTagsFor(nom, forme).gmaxGene) return "gmaxgene";
+  return dynamaxInfoFor(forme);
 }
 function localFormsForNat(nat) {
   return NAT_ALL_FORMS.filter((f) => f.n === nat && !isMegaOrGmaxForme(f.forme));
@@ -4748,10 +4758,10 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // code de marque en dur (contrairement à `isAlphaGame`, qui reste correct tel quel : seules
   // LA/LZA ont un mécanisme de marquage Alpha par capture, voir `alphaMap`/`toggleAlpha`).
   const hasGmaxForms = useMemo(() => rows.some((r) => dynamaxInfoFor(r[2]) !== null), [rows]);
-  // Filtre "Taille" (§ demande explicite) : la distinction "Gmax gène" (pilule structurelle,
-  // voir formTagsFor) s'ajoute au filtre Taille existant (Alpha/Normal, LA/LZA uniquement) sur
-  // les marques qui en comptent au moins une (ex. Galar) — indépendant de isAlphaGame, ces deux
-  // mécanismes ne se recoupant jamais (une marque n'a jamais à la fois Alpha et Gmax gène).
+  // Filtre "Dynamax" (§ correctif explicite : "Gmax gène" doit être distingué dans le filtre
+  // Dynamax, pas Taille) : marque contenant au moins une forme portant la pilule structurelle
+  // "Gmax gène" (formTagsFor) — indépendant de hasGmaxForms (une forme "Gmax gène" ne matche pas
+  // toujours dynamaxInfoFor, ex. si son libellé de forme ne contient pas "Gmax" du tout).
   const hasGmaxGeneForms = useMemo(() => rows.some((r) => !!formTagsFor(r[1], r[2]).gmaxGene), [rows]);
   // Suivi "en jeu" par marque (§ fermeture Banque Pokémon) — entièrement modulable, voir
   // useJeuViews. Vide pour toute marque sans vue configurée, donc sans effet ailleurs que là où
@@ -5233,11 +5243,9 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           if (!canBeAlpha(r.nom, r.forme)) return false;
           const isAlpha = !!alphaMap[alphaKeyFor(r.nom, r.forme)];
           if (!matchesMulti(alphaFilter, isAlpha ? "alpha" : "nonAlpha")) return false;
-        } else if (!isAlphaGame && hasGmaxGeneForms && alphaFilter !== null) {
-          if (!matchesMulti(alphaFilter, formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : "__other__")) return false;
         }
-        if (hasGmaxForms && dynamaxFilter !== null) {
-          const d = dynamaxInfoFor(r.forme);
+        if ((hasGmaxForms || hasGmaxGeneForms) && dynamaxFilter !== null) {
+          const d = dynamaxValueFor(r.nom, r.forme);
           if (d === null) return false;
           if (!matchesMulti(dynamaxFilter, d)) return false;
         }
@@ -5253,8 +5261,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     if (jeuFilter !== null) return false;
     if (dispoFilter !== null) return false;
     if (isGoGame && sortiFilter !== null) return false;
-    if ((isAlphaGame || hasGmaxGeneForms) && alphaFilter !== null) return false;
-    if (hasGmaxForms && dynamaxFilter !== null) return false;
+    if (isAlphaGame && alphaFilter !== null) return false;
+    if ((hasGmaxForms || hasGmaxGeneForms) && dynamaxFilter !== null) return false;
     if (!matchesMulti(region, it.region)) return false;
     return true;
   };
@@ -5299,11 +5307,9 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
         if (!canBeAlpha(r[1], r[2])) return;
         const isAlpha = !!alphaMap[alphaKeyFor(r[1], r[2])];
         if (!matchesMulti(alphaFilter, isAlpha ? "alpha" : "nonAlpha")) return;
-      } else if (!isAlphaGame && hasGmaxGeneForms && alphaFilter !== null) {
-        if (!matchesMulti(alphaFilter, formTagsFor(r[1], r[2]).gmaxGene ? "gmaxgene" : "__other__")) return;
       }
-      if (hasGmaxForms && dynamaxFilter !== null) {
-        const d = dynamaxInfoFor(r[2]);
+      if ((hasGmaxForms || hasGmaxGeneForms) && dynamaxFilter !== null) {
+        const d = dynamaxValueFor(r[1], r[2]);
         if (d === null) return;
         if (!matchesMulti(dynamaxFilter, d)) return;
       }
@@ -5360,7 +5366,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     return <Go1View filterCache={filterCache} mode={go1Mode} setMode={setGo1Mode} modeMenuItem={modeMenuItem} autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined} />;
   }
   if (gameKey === "Go" && goSubView === "go2") {
-    return <Go2View filterCache={filterCache} />;
+    return <Go2View filterCache={filterCache} modeMenuItem={modeMenuItem} autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined} />;
   }
 
   if (currentPair) {
@@ -5845,22 +5851,22 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     width="100%"
                   />
                 )}
-                {(isAlphaGame || hasGmaxGeneForms) && (
+                {isAlphaGame && (
                   <MultiSelectFilter
                     label="Taille"
-                    options={[
-                      ...(isAlphaGame ? [["alpha", "Alpha"], ["nonAlpha", "Normal"]] : []),
-                      ...(hasGmaxGeneForms ? [["gmaxgene", "Gmax gène"]] : []),
-                    ]}
+                    options={[["alpha", "Alpha"], ["nonAlpha", "Normal"]]}
                     selected={alphaFilter}
                     onChange={setAlphaFilter}
                     width="100%"
                   />
                 )}
-                {hasGmaxForms && (
+                {(hasGmaxForms || hasGmaxGeneForms) && (
                   <MultiSelectFilter
                     label="Dynamax"
-                    options={[["gmax", "Gmax"], ["nonGmax", "Non Gmax"]]}
+                    options={[
+                      ["gmax", "Gmax"], ["nonGmax", "Non Gmax"],
+                      ...(hasGmaxGeneForms ? [["gmaxgene", "Gmax gène"]] : []),
+                    ]}
                     selected={dynamaxFilter}
                     onChange={setDynamaxFilter}
                     width="100%"
@@ -6472,8 +6478,8 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         if (!matchesMulti(modeFilter, recForRow && recForRow.mode)) return false;
         if (!matchesMulti(locationFilter, recForRow && catchLocation(recForRow))) return false;
         if (!matchesMulti(jeuFilter, recForRow ? (recForRow.jeu || "__none__") : undefined)) return false;
-        if (!matchesMulti(alphaFilter, recForRow ? (formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : (recForRow.alpha ? "yes" : "no")) : undefined)) return false;
-        if (!matchesMulti(gmaxFilter, recForRow ? (recForRow.gmax ? "gmax" : recForRow.gmaxable ? "gmaxable" : "no") : undefined)) return false;
+        if (!matchesMulti(alphaFilter, recForRow ? (recForRow.alpha ? "yes" : "no") : undefined)) return false;
+        if (!matchesMulti(gmaxFilter, recForRow ? (formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : (recForRow.gmax ? "gmax" : recForRow.gmaxable ? "gmaxable" : "no")) : undefined)) return false;
         if (!matchesMulti(occFilter, recs.length)) return false;
         if (!matchesMultiAny(detailFilterSel, recForRow ? recForRow.details : undefined)) return false;
         if (viewMode === "list" && listSubMode === "forme" && occIdx !== 0) return false;
@@ -6489,8 +6495,8 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
       if (!matchesMulti(modeFilter, rec.mode)) return false;
       if (!matchesMulti(locationFilter, catchLocation(rec))) return false;
       if (!matchesMulti(jeuFilter, rec.jeu || "__none__")) return false;
-      if (!matchesMulti(alphaFilter, formTagsFor(nom, forme).gmaxGene ? "gmaxgene" : (rec.alpha ? "yes" : "no"))) return false;
-      if (!matchesMulti(gmaxFilter, rec.gmax ? "gmax" : rec.gmaxable ? "gmaxable" : "no")) return false;
+      if (!matchesMulti(alphaFilter, rec.alpha ? "yes" : "no")) return false;
+      if (!matchesMulti(gmaxFilter, formTagsFor(nom, forme).gmaxGene ? "gmaxgene" : (rec.gmax ? "gmax" : rec.gmaxable ? "gmaxable" : "no"))) return false;
       if (!matchesMultiAny(detailFilterSel, rec.details)) return false;
       return true;
     };
@@ -6933,14 +6939,14 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
                 />
                 <MultiSelectFilter
                   label="Taille"
-                  options={[["yes", "Alpha"], ["no", "Normal"], ["gmaxgene", "Gmax gène"]]}
+                  options={[["yes", "Alpha"], ["no", "Normal"]]}
                   selected={alphaFilter}
                   onChange={setAlphaFilter}
                   width="100%"
                 />
                 <MultiSelectFilter
                   label="Dynamax"
-                  options={[["gmax", "Gmax"], ["gmaxable", "Gmaxable"], ["no", "Ni l'un ni l'autre"]]}
+                  options={[["gmax", "Gmax"], ["gmaxable", "Gmaxable"], ["no", "Ni l'un ni l'autre"], ["gmaxgene", "Gmax gène"]]}
                   selected={gmaxFilter}
                   onChange={setGmaxFilter}
                   width="100%"
@@ -7705,8 +7711,8 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
       if (filter === "missing" && r.attrape) return false;
       if (!matchesMulti(shinyFilter, r.shiny ? "yes" : "no")) return false;
       if (!matchesMulti(marqueFilter, r.marque || "")) return false;
-      if (!matchesMulti(tailleFilter, formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : ((r.marque === "LA" || r.marque === "LZA") ? "alpha" : "normal"))) return false;
-      if (!matchesMulti(dynamaxFilter, r.gmax ? "gmax" : "nogmax")) return false;
+      if (!matchesMulti(tailleFilter, (r.marque === "LA" || r.marque === "LZA") ? "alpha" : "normal")) return false;
+      if (!matchesMulti(dynamaxFilter, formTagsFor(r.nom, r.forme).gmaxGene ? "gmaxgene" : (r.gmax ? "gmax" : "nogmax"))) return false;
       if (!matchesMulti(boiteFilter, r.enBoite ? "oui" : "non")) return false;
       if (!matchesMulti(doPersoFilter, r.doPerso ? "oui" : "non")) return false;
       if (!matchesMulti(jeuDOFilter, r.jeuDO || "__none__")) return false;
@@ -8069,14 +8075,14 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
                 <MultiSelectFilter label="Marque" options={marques} selected={marqueFilter} onChange={setMarqueFilter} width="100%" />
                 <MultiSelectFilter
                   label="Taille"
-                  options={[["alpha", "Alpha"], ["normal", "Normal"], ["gmaxgene", "Gmax gène"]]}
+                  options={[["alpha", "Alpha"], ["normal", "Normal"]]}
                   selected={tailleFilter}
                   onChange={setTailleFilter}
                   width="100%"
                 />
                 <MultiSelectFilter
                   label="Dynamax"
-                  options={[["gmax", "Gmax"], ["nogmax", "Non Gmax"]]}
+                  options={[["gmax", "Gmax"], ["nogmax", "Non Gmax"], ["gmaxgene", "Gmax gène"]]}
                   selected={dynamaxFilter}
                   onChange={setDynamaxFilter}
                   width="100%"
@@ -11786,26 +11792,14 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
 
   const matchesTailleRow = (r) => {
     if (tailleFilter === null) return true;
-    if (formTagsFor(r[1], r[2]).gmaxGene) return matchesMulti(tailleFilter, "gmaxgene");
     const a = alphaInfoFor(r);
     if (!a.capable) return false;
     return matchesMulti(tailleFilter, a.owned > 0 ? "alpha" : "nonAlpha");
   };
-  // Même logique que matchesTailleRow ci-dessus, au niveau espèce (au moins une forme concernée)
-  // — mutualisé entre filteredSpecies et filteredStats (mode "species") pour éviter la
-  // duplication à l'identique qui existait déjà entre ces deux blocs (§ priorité permanente,
-  // harmonisation/zéro code mort).
-  const matchesTailleSpeciesRow = (sp) => {
-    if (tailleFilter === null) return true;
-    const forms = bySpecies.get(sp.nom) || [];
-    if (forms.some((f) => formTagsFor(f[1], f[2]).gmaxGene)) return matchesMulti(tailleFilter, "gmaxgene");
-    if (!sp.alphaCapable) return false;
-    return matchesMulti(tailleFilter, sp.alphaOwned > 0 ? "alpha" : "nonAlpha");
-  };
 
   const matchesDynamaxRow = (r) => {
     if (dynamaxFilter === null) return true;
-    const d = dynamaxInfoFor(r[2]);
+    const d = dynamaxValueFor(r[1], r[2]);
     if (d === null) return false;
     return matchesMulti(dynamaxFilter, d);
   };
@@ -11851,12 +11845,15 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         const forms = bySpecies.get(sp.nom) || [];
         if (!forms.some(matchesJeuRow)) return false;
       }
-      if (!matchesTailleSpeciesRow(sp)) return false;
+      if (tailleFilter !== null) {
+        if (!sp.alphaCapable) return false;
+        if (!matchesMulti(tailleFilter, sp.alphaOwned > 0 ? "alpha" : "nonAlpha")) return false;
+      }
       if (dynamaxFilter !== null) {
         const forms = bySpecies.get(sp.nom) || [];
-        const concerned = forms.filter((f) => dynamaxInfoFor(f[2]) !== null);
+        const concerned = forms.filter((f) => dynamaxValueFor(f[1], f[2]) !== null);
         if (concerned.length === 0) return false;
-        if (!concerned.some((f) => matchesMulti(dynamaxFilter, dynamaxInfoFor(f[2])))) return false;
+        if (!concerned.some((f) => matchesMulti(dynamaxFilter, dynamaxValueFor(f[1], f[2])))) return false;
       }
       if (homeDexFilter !== null) {
         const forms = bySpecies.get(sp.nom) || [];
@@ -11899,12 +11896,15 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
           const forms = bySpecies.get(sp.nom) || [];
           if (!forms.some(matchesJeuRow)) return;
         }
-        if (!matchesTailleSpeciesRow(sp)) return;
+        if (tailleFilter !== null) {
+          if (!sp.alphaCapable) return;
+          if (!matchesMulti(tailleFilter, sp.alphaOwned > 0 ? "alpha" : "nonAlpha")) return;
+        }
         if (dynamaxFilter !== null) {
           const forms = bySpecies.get(sp.nom) || [];
-          const concerned = forms.filter((f) => dynamaxInfoFor(f[2]) !== null);
+          const concerned = forms.filter((f) => dynamaxValueFor(f[1], f[2]) !== null);
           if (concerned.length === 0) return;
-          if (!concerned.some((f) => matchesMulti(dynamaxFilter, dynamaxInfoFor(f[2])))) return;
+          if (!concerned.some((f) => matchesMulti(dynamaxFilter, dynamaxValueFor(f[1], f[2])))) return;
         }
         if (homeDexFilter !== null) {
           const forms = bySpecies.get(sp.nom) || [];
@@ -12428,14 +12428,14 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
                 />
                 <MultiSelectFilter
                   label="Taille"
-                  options={[["alpha", "Alpha"], ["nonAlpha", "Normal"], ["gmaxgene", "Gmax gène"]]}
+                  options={[["alpha", "Alpha"], ["nonAlpha", "Normal"]]}
                   selected={tailleFilter}
                   onChange={setTailleFilter}
                   width="100%"
                 />
                 <MultiSelectFilter
                   label="Dynamax"
-                  options={[["gmax", "Gmax"], ["nonGmax", "Non Gmax"]]}
+                  options={[["gmax", "Gmax"], ["nonGmax", "Non Gmax"], ["gmaxgene", "Gmax gène"]]}
                   selected={dynamaxFilter}
                   onChange={setDynamaxFilter}
                   width="100%"
@@ -15255,6 +15255,21 @@ function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged, navIndex, navTot
   const hasNav = navTotal != null && navTotal > 1;
   const swipeHandlers = useCardSwipeNav(hasNav, () => { if (onNavPrev) onNavPrev(); }, () => { if (onNavNext) onNavNext(); });
 
+  // "Go" (attrapable, clé "goattrapable") / "Go sorti" (clé "go") — §demande explicite : mêmes
+  // pilules "Jeu vidéo" que le Catalogue (bloc "Jeu vidéo", voir JEU_VIDEO_DEFS/JEU_VIDEO_PAIRS),
+  // éditables directement depuis la fiche Go 1 sans passer par le crayon Catalogue — même
+  // mécanisme de persistance que AvailabilityPills (patchJeuVideo, écrit dans
+  // catalog_overrides/catalog_additions ET met à jour DATA.jeuVideo en mémoire immédiatement).
+  // "Go" toujours affiché AU-DESSUS de "Go sorti" (§ demande explicite).
+  const [jeuVideoLive, setJeuVideoLive] = useState(() => jeuVideoFor(nom, forme));
+  useEffect(() => { setJeuVideoLive(jeuVideoFor(nom, forme)); }, [nom, forme]);
+  const toggleJeuVideoFlag = async (key) => {
+    const next = !jeuVideoLive[key];
+    setJeuVideoLive((prev) => ({ ...prev, [key]: next }));
+    await patchJeuVideo(nom, forme, { [key]: next });
+    if (onChanged) onChanged();
+  };
+
   const reload = () => {
     (async () => {
       const out = {};
@@ -15349,6 +15364,14 @@ function Go1SpeciesModal({ nat, nom, forme, onClose, onChanged, navIndex, navTot
                 ))}
               </div>
             ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4, paddingTop: 8, borderTop: `1px solid ${LINE}` }}>
+              <div style={{ display: "flex" }}>
+                <TogglePill label="Go" color={LIGHTBLUE} checked={!!jeuVideoLive.goattrapable} onClick={() => toggleJeuVideoFlag("goattrapable")} />
+              </div>
+              <div style={{ display: "flex" }}>
+                <TogglePill label="Go sorti" color={LIGHTBLUE} checked={!!jeuVideoLive.go} onClick={() => toggleJeuVideoFlag("go")} />
+              </div>
+            </div>
             {(tags.mega || tags.gmax) && (
               <div style={{ display: "flex", gap: 8, marginTop: 4, paddingTop: 8, borderTop: `1px solid ${LINE}` }}>
                 {GO1_FORM_ONLY_MODES.filter((m) => (m.key === "mega" ? tags.mega : tags.gmax)).map((m) => (
@@ -16581,7 +16604,7 @@ function Go2ExclusionsManager({ excluded, onSetExcluded, onClose }) {
   );
 }
 
-function Go2View({ filterCache }) {
+function Go2View({ filterCache, modeMenuItem, autoOpenKey }) {
   const { caught, excluded, ready, toggle, setExcluded } = useGo2();
   const [viewMode, setViewMode] = useCachedState(filterCache, "go2", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "go2", "search", "");
@@ -16807,7 +16830,9 @@ function Go2View({ filterCache }) {
         search={search}
         setSearch={setSearch}
         searchPlaceholder="Rechercher…"
+        autoOpenKey={autoOpenKey}
         menus={[
+          ...(modeMenuItem ? [modeMenuItem] : []),
           {
             key: "view", title: "Vue", icon: BarIcon.view,
             render: (close) => (
