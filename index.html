@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.2.8.55";
+const APP_VERSION = "2026.9.9.19.42";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -584,6 +584,20 @@ function jeuVideoPairKeyFor(keys) {
   const sorted = (keys || []).slice().sort().join("|");
   const found = JEU_VIDEO_PAIRS.find((g) => g.keys.slice().sort().join("|") === sorted);
   return (found && found.sharedNumber) ? found.pairKey : null;
+}
+// Acronyme lisible d'un groupe de jeux (§ export Excel National, colonnes "No_<marque>_<ACRONYME>"
+// — remplace l'ancien "NumeroVue_<marque>_<vueKey aléatoire>", peu lisible) : initiale de chaque
+// mot du libellé JEU_VIDEO_DEFS de chaque jeu du groupe, accents retirés, concaténées dans l'ordre
+// des clés du groupe (ex. ["saphiralpha","rubisomega"] → "Saphir Alpha"+"Rubis Oméga" → "SA"+"RO"
+// = "SARO"). Jamais stocké — recalculé à l'identique à l'export et à l'import (voir
+// buildNationalSheetRows/importNationalSheet), donc aucune migration nécessaire.
+function jeuVideoGroupAcronym(keys) {
+  return (keys || []).map((k) => {
+    const def = JEU_VIDEO_DEFS.find((d) => d.key === k);
+    if (!def) return "";
+    return def.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w[0].toUpperCase()).join("");
+  }).join("");
 }
 function jeuVideoFor(nom, forme) {
   return (DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")]) || {};
@@ -9551,7 +9565,7 @@ async function applyCatalogCustomizations() {
   // (clé `jeuVideoNumbers`, indexée par paire JEU_VIDEO_PAIRS) quand une vue correspond
   // EXACTEMENT aux jeux d'une paire/triple connue (jeuKeys identiques, ordre indifférent).
   // Idempotent (flag `jeuVideoNumbers_migrated`) — ne touche jamais `game_view_number_overrides`
-  // lui-même (compatibilité descendante conservée pour l'export Excel "NumeroVue_<jeu>_<vue>").
+  // lui-même (compatibilité descendante conservée pour l'export Excel, colonnes "No_<marque>_<ACRONYME>" — § voir buildNationalSheetRows).
   let additionsChangedByMigration = false;
   try {
     const migRes = await window.storage.get("jeuVideoNumbers_migrated", false);
@@ -13829,9 +13843,10 @@ async function buildGameSheetRows(g) {
     marquePairs.forEach((p) => {
       row["EnJeu_" + p.key] = (sourcesForGame[key] || []).includes(p.key) ? 1 : 0;
       // Numéro spécifique à une vue (§ centralisation, § voir doc) : déplacé dans la feuille
-      // "National" (colonnes "NumeroVue_<jeu>_<vue>") — ne fait plus partie de cet onglet de
-      // marque à l'export. La lecture reste tolérante en import (voir importGameSheet) pour ne
-      // pas perdre les données d'un ancien fichier déjà exporté avec cette colonne ici.
+      // "National" (colonnes "No_<marque>_<ACRONYME>", § voir buildNationalSheetRows) — ne fait
+      // plus partie de cet onglet de marque à l'export. La lecture reste tolérante en import (voir
+      // importGameSheet) pour ne pas perdre les données d'un ancien fichier déjà exporté avec
+      // cette colonne ici.
       const ovg = (boxGroupsForMarqueByView[p.key] || {})[key];
       row["GroupeVue_" + p.key] = ovg !== undefined && ovg !== null ? ovg : "";
     });
@@ -13843,20 +13858,54 @@ async function buildGameSheetRows(g) {
 // qui réunit désormais les deux : colonnes Paramètres d'abord (catalogue éditable : Numero, Region,
 // Evolution, AlphaLA/AlphaLZA, HomeDex, numéro par jeu), puis colonnes National (disponibilité
 // structurelle par jeu — renommées "Dispo_<jeu>" pour ne pas entrer en collision avec les colonnes
-// de numéro par jeu ci-dessus —, Forme(manuel), JV_<clé>). AlphaLA/AlphaLZA n'apparaissent qu'une
-// fois (position Paramètres) puisque c'est la même information dans les deux anciennes feuilles.
-// Les colonnes "NumeroVue_<jeu>_<vue>" (numéros spécifiques par vue Jeu, paires/triples) sont
-// également centralisées ici — auparavant dispersées dans chaque onglet de marque, ce qui les
-// rendait difficiles à repérer et à maintenir cohérentes entre marques (§ demande explicite).
+// de numéro par jeu ci-dessus —, Forme(manuel)). AlphaLA/AlphaLZA n'apparaissent qu'une fois
+// (position Paramètres) puisque c'est la même information dans les deux anciennes feuilles.
 // Colonnes Dispo_<jeu> et AlphaLA/AlphaLZA : purement informatives, jamais relues à l'import (la
 // disponibilité se modifie via le Catalogue, §21bis) — toutes les autres colonnes sont éditables.
+//
+// ---- Bloc "Jeu vidéo" (§ demande explicite de réorganisation, remplace l'ancien double bloc plat
+// "JV_<clé>" (tous les jeux à la suite) + "NumeroVue_<jeu>_<vueKey aléatoire>" (à la fin, peu
+// lisible)) : un groupe de colonnes par paire/triple JEU_VIDEO_PAIRS (déjà dans l'ordre "1G → 10G"
+// utilisé partout ailleurs dans l'app pour ces jeux — fiche Catalogue, pilules "Jeu vidéo"), de
+// gauche à droite dans cet ordre :
+//   No_<marque>_<ACRONYME>  (numéro spécifique à la vue Jeu correspondante, § voir doc §5ter —
+//                             uniquement si une vue existe, toutes marques confondues, avec
+//                             EXACTEMENT les jeux du groupe ; absent sinon)
+//   JV_<clé1>, JV_<clé2>, [JV_<clé3>]  (disponibilité, une par jeu du groupe — déplacées ici
+//                             depuis l'ancien bloc plat pour rester à côté de leur "No")
+//   <colonne vide>           (séparateur visuel entre groupes, en-tête espaces uniquement)
+// L'acronyme (jeuVideoGroupAcronym, § voir plus haut) est recalculé à chaque export à partir des
+// libellés JEU_VIDEO_DEFS des jeux de la vue — jamais stocké, donc aucune migration de nom de
+// colonne nécessaire (voir importNationalSheet, qui le recalcule à l'identique pour retrouver la
+// vue). Un groupe sans vue configurée (pas de "No") garde quand même ses colonnes JV_<clé> et son
+// séparateur, pour une structure uniforme sur toute la plage 1G → 10G.
+// Coloration des en-têtes par groupe (demandée) : non réalisable avec la bibliothèque SheetJS
+// gratuite chargée ici (xlsx.full.min.js) — l'écriture de styles de cellule (couleurs de fond) est
+// réservée à la version payante "Pro" de SheetJS ; seule la lecture de styles existants est
+// supportée. Le regroupement + séparateurs ci-dessus reste donc le seul repère visuel disponible.
 async function buildNationalSheetRows() {
   const manual = await storageGetJSON("manual_caught", {});
   const jeuViewsAll = await storageGetJSON("custom_jeu_views", {});
   const numberOverridesAll = await storageGetJSON("game_view_number_overrides", {});
-  const numeroVueCols = [];
-  GAME_ORDER.forEach((g) => {
-    (jeuViewsAll[g] || []).forEach((v) => numeroVueCols.push({ g, viewKey: v.key, col: "NumeroVue_" + g + "_" + v.key }));
+
+  const usedNoCols = new Set();
+  const jvGroups = JEU_VIDEO_PAIRS.map((grp) => {
+    let match = null;
+    if (grp.sharedNumber) {
+      for (const g of GAME_ORDER) {
+        const v = (jeuViewsAll[g] || []).find((vv) => (vv.jeuKeys || []).slice().sort().join("|") === grp.keys.slice().sort().join("|"));
+        if (v) { match = { marque: g, viewKey: v.key }; break; }
+      }
+    }
+    let noCol = null;
+    if (match) {
+      const base = "No_" + match.marque + "_" + jeuVideoGroupAcronym(grp.keys);
+      let name = base, n = 2;
+      while (usedNoCols.has(name)) { name = base + (n++); }
+      usedNoCols.add(name);
+      noCol = name;
+    }
+    return { keys: grp.keys, match, noCol };
   });
 
   const order = DATA.natSortOrder || DATA.nat.map((_, i) => i);
@@ -13885,15 +13934,19 @@ async function buildNationalSheetRows() {
       row["Dispo_" + g] = (DATA.gameIndex[g] && Object.prototype.hasOwnProperty.call(DATA.gameIndex[g], key)) ? 1 : 0;
     }
     row["Forme(manuel)"] = manual["Forme|" + key] ? 1 : 0;
+    // ---- Bloc "Jeu vidéo" groupé par paire/triple, 1G -> 10G (§ voir commentaire ci-dessus) ----
     const jv = jeuVideoFor(nom, forme);
-    JEU_VIDEO_DEFS.forEach((def) => {
-      const v = jv[def.key];
-      row["JV_" + def.key] = isJvTextNote(v) ? v : (v ? 1 : 0);
-    });
-    // ---- Numéros spécifiques par vue Jeu (paires/triples), toutes marques confondues ----
-    numeroVueCols.forEach((c) => {
-      const ov = ((numberOverridesAll[c.g] || {})[c.viewKey] || {})[key];
-      row[c.col] = ov !== undefined && ov !== null ? ov : "";
+    let spacerN = 1;
+    jvGroups.forEach((grp) => {
+      if (grp.noCol) {
+        const ov = ((numberOverridesAll[grp.match.marque] || {})[grp.match.viewKey] || {})[key];
+        row[grp.noCol] = ov !== undefined && ov !== null ? ov : "";
+      }
+      grp.keys.forEach((k) => {
+        const v = jv[k];
+        row["JV_" + k] = isJvTextNote(v) ? v : (v ? 1 : 0);
+      });
+      row[" ".repeat(spacerN++)] = ""; // colonne vide de séparation entre groupes
     });
     return row;
   });
@@ -14584,8 +14637,12 @@ async function importGameSheet(g, rows, mode) {
 //    catalog_overrides/catalog_additions, jamais de suppression de fiche via cette feuille.
 //  - "JV_<clé>" (Jeu vidéo) → catalog_overrides/catalog_additions (jeuVideo). "JV_go" relit aussi
 //    l'ancienne colonne "GoSorti" (compatibilité descendante).
-//  - "NumeroVue_<jeu>_<vue>" (numéros spécifiques par vue Jeu, paires/triples — anciennement dans
-//    les onglets de marque) → game_view_number_overrides.
+//  - "No_<marque>_<ACRONYME>" (numéros spécifiques par vue Jeu, paires/triples — anciennement
+//    "NumeroVue_<jeu>_<vueKey>", § voir buildNationalSheetRows) → game_view_number_overrides.
+//    L'acronyme n'étant jamais stocké, il est recalculé ici (jeuVideoGroupAcronym) pour chaque vue
+//    existante de la marque afin de retrouver sa clé de stockage réelle — un ancien fichier
+//    exporté avant ce changement (colonnes "NumeroVue_") n'est plus reconnu ici (transition
+//    volontairement sans historique, § demande explicite : JSON conservé par ailleurs).
 // Colonnes "Dispo_<jeu>" et AlphaLA/AlphaLZA : volontairement IGNORÉES à l'import — ce sont des
 // colonnes structurelles informatives (disponibilité, pas possession), non éditables depuis cette
 // feuille (la disponibilité se modifie via le Catalogue, §21bis). caught_<jeu> et alpha_caught
@@ -14607,15 +14664,23 @@ async function importNationalSheet(rows, mode) {
   const gameColsPresent = GAME_ORDER.filter(hasCol);
   const applyGames = gameColsPresent.length === GAME_ORDER.length; // jeu de colonnes complet uniquement, par sécurité
 
-  // Colonnes "NumeroVue_<jeu>_<vue>" présentes dans le fichier, regroupées par marque pour
-  // minimiser les lectures/écritures storage.
+  // Colonnes "No_<marque>_<ACRONYME>" présentes dans le fichier, regroupées par marque pour
+  // minimiser les lectures/écritures storage. L'acronyme (jeuVideoGroupAcronym) est recalculé
+  // pour chaque vue déjà configurée de la marque afin de retrouver sa clé de stockage interne
+  // (viewKey) — une vue non reconnue (jeux différents depuis l'export, ou pas encore créée dans
+  // cet environnement) est silencieusement ignorée, comme une colonne absente.
   const numeroVueColsByGame = {};
-  Object.keys(sample).forEach((col) => {
-    const m = /^NumeroVue_([^_]+)_(.+)$/.exec(col);
-    if (m && GAME_ORDER.includes(m[1])) {
-      (numeroVueColsByGame[m[1]] || (numeroVueColsByGame[m[1]] = [])).push({ col, viewKey: m[2] });
-    }
-  });
+  const noColsPresent = Object.keys(sample).filter((c) => c.startsWith("No_"));
+  if (noColsPresent.length > 0) {
+    const jeuViewsAllForImport = await storageGetJSON("custom_jeu_views", {});
+    noColsPresent.forEach((col) => {
+      const m = /^No_([^_]+)_([A-Za-zÀ-ÖØ-öø-ÿ0-9]+)$/.exec(col);
+      if (!m || !GAME_ORDER.includes(m[1])) return;
+      const marque = m[1], acronym = m[2];
+      const v = (jeuViewsAllForImport[marque] || []).find((vv) => jeuVideoGroupAcronym(vv.jeuKeys || []) === acronym);
+      if (v) (numeroVueColsByGame[marque] || (numeroVueColsByGame[marque] = [])).push({ col, viewKey: v.key });
+    });
+  }
   let numberOverridesAll = null;
   if (Object.keys(numeroVueColsByGame).length > 0) {
     numberOverridesAll = await storageGetJSON("game_view_number_overrides", {});
