@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.10.0.31";
+const APP_VERSION = "2026.9.10.13.5";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -481,49 +481,60 @@ async function fetchEncountersByVersion(natId) {
 // deux marque Paldea) un Pokémon est disponible. Rangé par génération dans l'éditeur de
 // catalogue. `key` = identifiant de stockage stable (DATA.jeuVideo, catalog_overrides, colonnes
 // Excel "JV_<key>") ; `go` reprend la clé de l'ancien "Go déjà sorti" pour ne pas perdre les
-// données déjà saisies.
-const JEU_VIDEO_DEFS = [
-  { key: "rouge", label: "Rouge", gen: "1G" },
-  { key: "bleu", label: "Bleu", gen: "1G" },
-  { key: "jaune", label: "Jaune", gen: "1G" },
-  { key: "or", label: "Or", gen: "2G" },
-  { key: "argent", label: "Argent", gen: "2G" },
-  { key: "cristal", label: "Cristal", gen: "2G" },
-  { key: "rubis", label: "Rubis", gen: "3G" },
-  { key: "saphir", label: "Saphir", gen: "3G" },
-  { key: "emeraude", label: "Émeraude", gen: "3G" },
-  { key: "rougefeu", label: "Rouge Feu", gen: "3G" },
-  { key: "vertfeuille", label: "Vert Feuille", gen: "3G" },
-  { key: "diamant", label: "Diamant", gen: "4G" },
-  { key: "perle", label: "Perle", gen: "4G" },
-  { key: "platine", label: "Platine", gen: "4G" },
+// données déjà saisies. `marques` = marque(s) GAME_ORDER/custom_marques où ce jeu précis se
+// range (§ demande explicite, éditable dans Paramètres → "Jeu vidéo") — seuls les jeux déjà
+// rattachés à une marque via une vue par défaut (DEFAULT_JEU_VIEWS) sont pré-remplis ci-dessous ;
+// les autres démarrent à `[]`, à compléter par Yann.
+// DEFAULT_JEU_VIDEO_DEFS/DEFAULT_JEU_VIDEO_GROUPS/DEFAULT_JEU_VIDEO_GENS (ci-dessous) ne sont que
+// la graine de démarrage : dès le premier chargement, `applyJeuVideoCustomizations()` les copie
+// dans `custom_jeu_video_defs`/`custom_jeu_video_groups`/`custom_jeu_video_gens` (storage), qui
+// devient alors la seule source vivante — ces trois constantes ne sont plus jamais relues après
+// la migration (même principe que DEFAULT_JEU_VIEWS pour `custom_jeu_views`). `JEU_VIDEO_DEFS`/
+// `JEU_VIDEO_PAIRS`/`JEU_VIDEO_GENS` (liaisons `let` plus bas) sont réaffectées avec le contenu du
+// storage avant le tout premier rendu (voir bootstrap en fin de fichier) : tout le reste du code
+// continue de les lire tel quel, sans changement.
+const DEFAULT_JEU_VIDEO_DEFS = [
+  { key: "rouge", label: "Rouge", gen: "1G", marques: [] },
+  { key: "bleu", label: "Bleu", gen: "1G", marques: [] },
+  { key: "jaune", label: "Jaune", gen: "1G", marques: [] },
+  { key: "or", label: "Or", gen: "2G", marques: [] },
+  { key: "argent", label: "Argent", gen: "2G", marques: [] },
+  { key: "cristal", label: "Cristal", gen: "2G", marques: [] },
+  { key: "rubis", label: "Rubis", gen: "3G", marques: [] },
+  { key: "saphir", label: "Saphir", gen: "3G", marques: [] },
+  { key: "emeraude", label: "Émeraude", gen: "3G", marques: [] },
+  { key: "rougefeu", label: "Rouge Feu", gen: "3G", marques: [] },
+  { key: "vertfeuille", label: "Vert Feuille", gen: "3G", marques: [] },
+  { key: "diamant", label: "Diamant", gen: "4G", marques: [] },
+  { key: "perle", label: "Perle", gen: "4G", marques: [] },
+  { key: "platine", label: "Platine", gen: "4G", marques: [] },
   // § demande explicite : paire Or HeartGold/Argent SoulSilver (remakes 2G sortis en 4G,
   // classés ici par génération de sortie réelle — contrairement à Diamant Étincelant/Perle
   // Scintillante, sortis bien plus tard en 8G malgré leur contenu 4G, voir plus bas).
-  { key: "orheartgold", label: "Or HeartGold", gen: "4G" },
-  { key: "argentsoulsilver", label: "Argent SoulSilver", gen: "4G" },
-  { key: "noir", label: "Noir", gen: "5G" },
-  { key: "blanc", label: "Blanc", gen: "5G" },
-  { key: "noir2", label: "Noir 2", gen: "5G" },
-  { key: "blanc2", label: "Blanc 2", gen: "5G" },
-  { key: "x", label: "X", gen: "6G" },
-  { key: "y", label: "Y", gen: "6G" },
-  { key: "saphiralpha", label: "Saphir Alpha", gen: "6G" },
-  { key: "rubisomega", label: "Rubis Oméga", gen: "6G" },
-  { key: "soleil", label: "Soleil", gen: "7G" },
-  { key: "lune", label: "Lune", gen: "7G" },
-  { key: "ultrasoleil", label: "Ultra-Soleil", gen: "7G" },
-  { key: "ultralune", label: "Ultra-Lune", gen: "7G" },
-  { key: "bouclier", label: "Bouclier", gen: "8G" },
-  { key: "epee", label: "Épée", gen: "8G" },
+  { key: "orheartgold", label: "Or HeartGold", gen: "4G", marques: [] },
+  { key: "argentsoulsilver", label: "Argent SoulSilver", gen: "4G", marques: [] },
+  { key: "noir", label: "Noir", gen: "5G", marques: [] },
+  { key: "blanc", label: "Blanc", gen: "5G", marques: [] },
+  { key: "noir2", label: "Noir 2", gen: "5G", marques: [] },
+  { key: "blanc2", label: "Blanc 2", gen: "5G", marques: [] },
+  { key: "x", label: "X", gen: "6G", marques: ["VI"] },
+  { key: "y", label: "Y", gen: "6G", marques: ["VI"] },
+  { key: "saphiralpha", label: "Saphir Alpha", gen: "6G", marques: ["VI"] },
+  { key: "rubisomega", label: "Rubis Oméga", gen: "6G", marques: ["VI"] },
+  { key: "soleil", label: "Soleil", gen: "7G", marques: [] },
+  { key: "lune", label: "Lune", gen: "7G", marques: [] },
+  { key: "ultrasoleil", label: "Ultra-Soleil", gen: "7G", marques: [] },
+  { key: "ultralune", label: "Ultra-Lune", gen: "7G", marques: [] },
+  { key: "bouclier", label: "Bouclier", gen: "8G", marques: [] },
+  { key: "epee", label: "Épée", gen: "8G", marques: [] },
   // § demande explicite : Diamant Étincelant/Perle Scintillante rangés dans le bloc 8G (remakes
   // sortis dans l'ère 8G malgré leur contenu 4G).
-  { key: "diamantetincelant", label: "Diamant Étincelant", gen: "8G" },
-  { key: "perlescintillante", label: "Perle Scintillante", gen: "8G" },
-  { key: "arceus", label: "Arceus", gen: "Legends" },
-  { key: "za", label: "Z-A", gen: "Legends" },
-  { key: "ecarlate", label: "Écarlate", gen: "9G" },
-  { key: "violet", label: "Violet", gen: "9G" },
+  { key: "diamantetincelant", label: "Diamant Étincelant", gen: "8G", marques: [] },
+  { key: "perlescintillante", label: "Perle Scintillante", gen: "8G", marques: [] },
+  { key: "arceus", label: "Arceus", gen: "Legends", marques: [] },
+  { key: "za", label: "Z-A", gen: "Legends", marques: [] },
+  { key: "ecarlate", label: "Écarlate", gen: "9G", marques: [] },
+  { key: "violet", label: "Violet", gen: "9G", marques: [] },
   // § demande explicite : renommé "Go" -> "Go sorti" pour plus de clarté (disponibilité générale
   // du Pokémon dans Pokémon GO, sert notamment au filtre "Sorti" de l'onglet Go/Go 1) ; clé
   // interne inchangée ("go") pour ne pas perdre les données déjà saisies. "Go" (nouveau, même
@@ -532,26 +543,36 @@ const JEU_VIDEO_DEFS = [
   // Home (ex. Palkia Originel, attrapable en Go mais non transférable sur Home — même logique que
   // les formes dominantes Alola, voir goAttrapableFor/go1AllFormsSorted). Affiché à GAUCHE de
   // "Go sorti" (§ demande explicite, voir ordre dans JEU_VIDEO_PAIRS ci-dessous).
-  { key: "go", label: "Go sorti", gen: "Autre" },
-  { key: "goattrapable", label: "Go", gen: "Autre" },
+  { key: "go", label: "Go sorti", gen: "Autre", marques: ["Go"] },
+  { key: "goattrapable", label: "Go", gen: "Autre", marques: ["Go"] },
   // § demande explicite : bloc "Let's Go" (7G, oublié initialement).
-  { key: "lgpikachu", label: "Let's Go Pikachu", gen: "Let's Go" },
-  { key: "lgevoli", label: "Let's Go Évoli", gen: "Let's Go" },
+  { key: "lgpikachu", label: "Let's Go Pikachu", gen: "Let's Go", marques: [] },
+  { key: "lgevoli", label: "Let's Go Évoli", gen: "Let's Go", marques: [] },
   // § demande explicite : marque GBA (remakes 3G sur Switch).
-  { key: "rougefeuswitch", label: "Rouge Feu Switch", gen: "GBA" },
-  { key: "vertfeuilleswitch", label: "Vert Feuille Switch", gen: "GBA" },
+  { key: "rougefeuswitch", label: "Rouge Feu Switch", gen: "GBA", marques: ["GBA"] },
+  { key: "vertfeuilleswitch", label: "Vert Feuille Switch", gen: "GBA", marques: ["GBA"] },
   // § demande explicite : marque VV (10G).
-  { key: "vents", label: "Vents", gen: "10G" },
-  { key: "vagues", label: "Vagues", gen: "10G" },
+  { key: "vents", label: "Vents", gen: "10G", marques: ["VV"] },
+  { key: "vagues", label: "Vagues", gen: "10G", marques: ["VV"] },
 ];
-// Regroupement visuel par paire/triple (§ demande explicite : alignement des pilules "Jeu vidéo"
-// et lignes du bloc "Numéro spécifique par jeu vidéo") — un item = une ligne affichée ensemble.
-// `pairKey` = clé de stockage pour le numéro partagé de la paire (jointure des clés triée pour
-// rester stable même si l'ordre ci-dessous change), voir `draft.jeuVideoNumbers`. `sharedNumber`
-// (true par défaut) : les jeux du groupe partagent le même numéro nat/spécifique (vraie paire de
-// même Pokédex) — mis à `false` pour Arceus/Z-A (§ demande explicite : alignés sur la même ligne
-// pour "Jeu vidéo" mais PAS une vraie paire, numérotation toujours saisie séparément).
-const JEU_VIDEO_PAIRS = [
+// Ordre d'affichage des blocs de génération (§ demande explicite : "pouvoir rajouter des blocs
+// comme 1G, 2G...") — liste explicite et éditable (Paramètres → "Jeu vidéo"), plutôt que déduite
+// implicitement de l'ordre d'apparition dans JEU_VIDEO_DEFS comme auparavant : permet d'ajouter un
+// bloc de génération encore vide (aucun jeu dedans pour l'instant).
+const DEFAULT_JEU_VIDEO_GENS = ["1G", "2G", "3G", "4G", "5G", "6G", "7G", "8G", "Legends", "9G", "Autre", "Let's Go", "GBA", "10G"];
+let JEU_VIDEO_DEFS = DEFAULT_JEU_VIDEO_DEFS;
+let JEU_VIDEO_GENS = DEFAULT_JEU_VIDEO_GENS;
+// Regroupement paire/triple à numéro partagé (§ demande explicite : alignement des pilules "Jeu
+// vidéo" et lignes du bloc "Numéro spécifique par jeu vidéo") — un item = un groupe de jeux qui
+// partagent le même numéro spécifique. `pairKey` = clé de stockage (jointure triée des clés,
+// stable tant que la composition du groupe ne change pas — voir `DATA.jeuVideoNumbers`).
+// `acronym` = nom court utilisé dans les en-têtes Excel "No_<ACRONYME>" (§ export National),
+// éditable dans Paramètres → "Jeu vidéo". Arceus/Z-A (§ demande explicite du 2026-09 : "aligné
+// sur la même ligne mais pas une vraie paire") sont maintenant deux groupes à un seul jeu chacun
+// (plus besoin du flag `sharedNumber` d'avant : un groupe à un seul jeu partage trivialement son
+// numéro avec lui-même) — Yann peut les refusionner en un vrai groupe partagé depuis Paramètres
+// s'il le souhaite un jour.
+const DEFAULT_JEU_VIDEO_GROUPS = [
   ["rouge", "bleu", "jaune"],
   ["or", "argent", "cristal"],
   ["rubis", "saphir"],
@@ -568,27 +589,22 @@ const JEU_VIDEO_PAIRS = [
   ["ultrasoleil", "ultralune"],
   ["epee", "bouclier"],
   ["diamantetincelant", "perlescintillante"],
-  { keys: ["arceus", "za"], sharedNumber: false },
+  ["arceus"],
+  ["za"],
   ["ecarlate", "violet"],
   // "Go" (attrapable) affiché à gauche de "Go sorti" (§ demande explicite).
   ["goattrapable", "go"],
   ["lgpikachu", "lgevoli"],
   ["rougefeuswitch", "vertfeuilleswitch"],
   ["vents", "vagues"],
-].map((entry) => {
-  const keys = Array.isArray(entry) ? entry : entry.keys;
-  const sharedNumber = Array.isArray(entry) ? true : entry.sharedNumber !== false;
-  return { keys, sharedNumber, pairKey: keys.slice().sort().join("_") };
-});
+];
 // Acronyme PAR DÉFAUT d'un groupe de jeux (§ export Excel National, colonnes "No_<ACRONYME>" —
 // remplace l'ancien "NumeroVue_<marque>_<vueKey aléatoire>", peu lisible) : initiale de chaque mot
 // du libellé JEU_VIDEO_DEFS de chaque jeu du groupe, accents retirés, concaténées dans l'ordre des
 // clés du groupe (ex. ["saphiralpha","rubisomega"] → "Saphir Alpha"+"Rubis Oméga" → "SA"+"RO" =
-// "SARO"). Seulement un point de départ : Yann corrige librement dans Paramètres → "Acronymes Jeu
-// vidéo" (jeu_video_group_acronyms, § voir SettingsView) — cette fonction ne sert alors que de
-// valeur affichée tant qu'aucun override explicite n'existe pour ce groupe, jamais persistée
-// elle-même (pour qu'une future correction de cette fonction reste visible sur tout groupe non
-// encore corrigé à la main).
+// "SARO"). Seulement un point de départ pour un NOUVEAU groupe créé depuis Paramètres → "Jeu
+// vidéo" — un groupe déjà existant garde l'acronyme stocké tel quel (jamais recalculé
+// automatiquement après coup, même si sa composition change ensuite).
 function defaultJeuVideoGroupAcronym(keys) {
   return (keys || []).map((k) => {
     const def = JEU_VIDEO_DEFS.find((d) => d.key === k);
@@ -597,29 +613,14 @@ function defaultJeuVideoGroupAcronym(keys) {
       .split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w[0].toUpperCase()).join("");
   }).join("");
 }
+let JEU_VIDEO_PAIRS = DEFAULT_JEU_VIDEO_GROUPS.map((keys) => ({
+  keys, pairKey: keys.slice().sort().join("_"), acronym: defaultJeuVideoGroupAcronym(keys),
+}));
 function jeuVideoPairKeyFor(keys) {
   const sorted = (keys || []).slice().sort().join("|");
   const found = JEU_VIDEO_PAIRS.find((g) => g.keys.slice().sort().join("|") === sorted);
-  return (found && found.sharedNumber) ? found.pairKey : null;
+  return found ? found.pairKey : null;
 }
-// "Groupes numéro Jeu vidéo" (§ demande explicite : "c'est lié aux paires/triple, pas aux vues Jeu
-// que je vais créer") — une entrée par regroupement à numéro PARTAGÉ de JEU_VIDEO_PAIRS (clé de
-// stockage = pairKey), et une entrée PAR JEU pour les groupes non partagés (Arceus/Z-A : chacun
-// son propre numéro, clé de stockage = sa propre clé JEU_VIDEO_DEFS). Entièrement dérivé de
-// JEU_VIDEO_PAIRS/JEU_VIDEO_DEFS (constantes fixes) — AUCUN lien avec `custom_jeu_views` (les
-// "vues" que Yann crée/supprime librement par marque pour l'arrangement des boîtes, § doc §5ter) :
-// ne varie jamais selon les vues existantes. Sert à l'export Excel National (colonnes "No_...") et
-// à la liste éditable "Acronymes Jeu vidéo" de Paramètres.
-const JEU_VIDEO_NUMBER_GROUPS = JEU_VIDEO_PAIRS.flatMap((grp) => {
-  if (grp.sharedNumber) {
-    const label = grp.keys.map((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).label).filter(Boolean).join(" / ");
-    return [{ storageKey: grp.pairKey, keys: grp.keys, label }];
-  }
-  return grp.keys.map((k) => {
-    const def = JEU_VIDEO_DEFS.find((d) => d.key === k);
-    return { storageKey: k, keys: [k], label: def ? def.label : k };
-  });
-});
 function jeuVideoFor(nom, forme) {
   return (DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")]) || {};
 }
@@ -1542,6 +1543,52 @@ function Picker({ value, onChange, options, placeholder, buttonStyle, panelWidth
                 fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer",
               }}
             >{o}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Menu déroulant multi-sélection (§ demande explicite : "menu déroulant comme pour les
+// générations" pour les marques d'un jeu vidéo, § Paramètres → "Jeu vidéo") — même
+// comportement d'ouverture/fermeture que Picker ci-dessus (ancré sous le bouton, ferme au clic
+// extérieur), mais `value` est un tableau et chaque option coche/décoche au lieu de remplacer.
+function MultiPicker({ value, onChange, options, placeholder, buttonStyle, panelWidth }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+  const summary = (value || []).length === 0 ? (placeholder || "—") : value.join(", ");
+  const toggle = (o) => {
+    const has = (value || []).includes(o);
+    onChange(has ? value.filter((v) => v !== o) : [...(value || []), o]);
+  };
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{ ...buttonStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >{summary}</button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 30,
+          background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 8, padding: 6,
+          minWidth: panelWidth || 160, maxHeight: 260, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+        }}>
+          {options.map((o) => (
+            <label
+              key={o}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderRadius: 6, cursor: "pointer", fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT }}
+            >
+              <input type="checkbox" checked={(value || []).includes(o)} onChange={() => toggle(o)} />
+              {o}
+            </label>
           ))}
         </div>
       )}
@@ -9825,6 +9872,57 @@ async function applyCatalogCustomizations() {
   DATA.natSortOrder = computeNatSortOrder(DATA.__additionIdxById);
 }
 
+// Génère une clé stable à partir d'un libellé (minuscules, accents retirés, non-alphanumériques
+// supprimés) pour un nouveau "jeu vidéo" créé depuis Paramètres ou importé sans "Cle" fournie —
+// même esprit que les clés JEU_VIDEO_DEFS existantes ("saphiralpha", "rougefeuswitch"...).
+// Garantit l'unicité vis-à-vis de `taken` (Set de clés déjà utilisées) en ajoutant un suffixe
+// numérique si besoin.
+function slugifyJeuVideoKey(label, taken) {
+  const base = String(label || "jeu").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "") || "jeu";
+  let key = base, n = 2;
+  while (taken.has(key)) { key = base + n; n++; }
+  taken.add(key);
+  return key;
+}
+
+// Rend "Jeu vidéo" (jeux précis, blocs de génération, regroupement paire/triple + acronyme)
+// entièrement personnalisable (§ demande explicite : "pouvoir éditer les jeux vidéo... rajouter
+// des blocs... indiquer dans quelles marques il sont") tout en gardant la RÉTROACTIVITÉ demandée :
+// au tout premier chargement (aucune des 3 clés storage encore écrite), les listes par défaut
+// DEFAULT_JEU_VIDEO_DEFS/DEFAULT_JEU_VIDEO_GROUPS/DEFAULT_JEU_VIDEO_GENS sont copiées telles
+// quelles dans le storage (mêmes clés, mêmes regroupements, mêmes générations qu'avant cette
+// mise à jour — aucune donnée existante, `DATA.jeuVideo`/`DATA.jeuVideoNumbers`/colonnes Excel
+// JV_<clé>, ne change de sens). L'ancien override d'acronyme `jeu_video_group_acronyms` (§ passe
+// précédente) est fusionné une seule fois dans l'acronyme du groupe correspondant, puis n'est
+// plus jamais relu (remplacé par le champ `acronym` du groupe lui-même). Une fois ces clés
+// écrites, elles seules font foi — DEFAULT_JEU_VIDEO_DEFS/GROUPS/GENS ne sont plus relues.
+// Réaffecte les liaisons `let JEU_VIDEO_DEFS`/`JEU_VIDEO_PAIRS`/`JEU_VIDEO_GENS` avant le tout
+// premier rendu (voir bootstrap en fin de fichier) : tout le reste du code (Catalogue, export
+// National, Vues Jeu...) continue de les lire tel quel, sans changement, qu'elles viennent de la
+// graine par défaut ou du storage personnalisé.
+async function applyJeuVideoCustomizations() {
+  let defs = await readJSON("custom_jeu_video_defs", null);
+  let groups = await readJSON("custom_jeu_video_groups", null);
+  let gens = await readJSON("custom_jeu_video_gens", null);
+  if (!defs || !groups || !gens) {
+    const legacyAcronyms = await readJSON("jeu_video_group_acronyms", {});
+    defs = DEFAULT_JEU_VIDEO_DEFS.map((d) => ({ key: d.key, label: d.label, gen: d.gen, marques: (d.marques || []).slice() }));
+    groups = DEFAULT_JEU_VIDEO_GROUPS.map((keys) => {
+      const pairKey = keys.slice().sort().join("_");
+      const acronym = legacyAcronyms[pairKey] || defaultJeuVideoGroupAcronym(keys);
+      return { keys: keys.slice(), acronym };
+    });
+    gens = DEFAULT_JEU_VIDEO_GENS.slice();
+    await writeJSON("custom_jeu_video_defs", defs);
+    await writeJSON("custom_jeu_video_groups", groups);
+    await writeJSON("custom_jeu_video_gens", gens);
+  }
+  JEU_VIDEO_DEFS = defs;
+  JEU_VIDEO_PAIRS = groups.map((g) => ({ keys: g.keys, pairKey: g.keys.slice().sort().join("_"), acronym: g.acronym }));
+  JEU_VIDEO_GENS = gens;
+}
+
 // Ordre d'affichage de National : les entrées structurelles gardent leur ordre d'origine tel
 // quel (jamais réordonnées, y compris après un renommage — seul le contenu change) ; chaque
 // nouvelle forme ajoutée au catalogue est insérée juste après la dernière forme déjà
@@ -10982,7 +11080,11 @@ function SettingsView({
   const [detailMarques, setDetailMarques] = useState({});
   const [customBoxGroups, setCustomBoxGroups] = useState({});
   const [boxGroupOverridesAll, setBoxGroupOverridesAll] = useState({});
-  const [jvAcronymOverrides, setJvAcronymOverrides] = useState({});
+  const [jvDefs, setJvDefs] = useState([]);
+  const [jvGroups, setJvGroups] = useState([]);
+  const [jvGens, setJvGens] = useState([]);
+  const [newJvLabelByGen, setNewJvLabelByGen] = useState({});
+  const [newJvGenLabel, setNewJvGenLabel] = useState("");
   const [shinyCatches, setShinyCatchesState] = useState({});
   const [doubleCatches, setDoubleCatchesState] = useState({});
   const [events, setEventsState] = useState([]);
@@ -10994,7 +11096,7 @@ function SettingsView({
   const [modeAddOpen, setModeAddOpen] = useState(false);
   const [detailAddOpen, setDetailAddOpen] = useState(false);
   const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
-  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, jvAcronyms: true, catalog: true, detail: true, restrict: true, gist: true });
+  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, jeuVideo: true, catalog: true, detail: true, restrict: true, gist: true });
   const [gistTokenDraft, setGistTokenDraft] = useState(gistToken || "");
   const [gistIdDraft, setGistIdDraft] = useState(gistId || "");
   useEffect(() => { setGistTokenDraft(gistToken || ""); }, [gistToken]);
@@ -11004,7 +11106,7 @@ function SettingsView({
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
 
   const loadAll = async () => {
-    const [m, mo, lo, je, sh, db, ev, itj, bg, bgo, de, mm, dm, jva] = await Promise.all([
+    const [m, mo, lo, je, sh, db, ev, itj, bg, bgo, de, mm, dm] = await Promise.all([
       readJSON("custom_marques", []),
       readJSON("custom_modes", []),
       readJSON("custom_locations", []),
@@ -11018,7 +11120,6 @@ function SettingsView({
       readJSON("custom_details", []),
       readJSON("mode_marques", {}),
       readJSON("detail_marques", {}),
-      readJSON("jeu_video_group_acronyms", {}),
     ]);
     // Voir useCustomLists : même complétion automatique, pour que Paramètres affiche la bonne
     // liste même si c'est le premier écran ouvert dans la session.
@@ -11041,7 +11142,12 @@ function SettingsView({
     setCustomDetails(de);
     setModeMarques(mm);
     setDetailMarques(dm);
-    setJvAcronymOverrides(jva);
+    // "Jeu vidéo" (§ Paramètres → "Jeu vidéo") : JEU_VIDEO_DEFS/JEU_VIDEO_PAIRS/JEU_VIDEO_GENS
+    // sont déjà la source vivante (réaffectées par applyJeuVideoCustomizations au démarrage, § voir
+    // plus haut) — on part directement de ces liaisons `let` plutôt que de relire le storage.
+    setJvDefs(JEU_VIDEO_DEFS);
+    setJvGroups(JEU_VIDEO_PAIRS.map((g) => ({ keys: g.keys, acronym: g.acronym })));
+    setJvGens(JEU_VIDEO_GENS);
     setReady(true);
   };
 
@@ -11196,17 +11302,64 @@ function SettingsView({
     setSaveState("saved");
   };
 
-  // Acronymes "Jeu vidéo" (§ JEU_VIDEO_NUMBER_GROUPS, demande explicite : "stocker l'acronyme...
-  // lié aux paires/triple, pas aux vues Jeu") — override explicite par groupe, écriture immédiate
-  // (comme le token Gist plus bas), jamais de bouton "Enregistrer" séparé. Une valeur vidée retire
-  // l'override plutôt que de stocker une chaîne vide : le groupe retombe alors sur
-  // defaultJeuVideoGroupAcronym (§ voir buildNationalSheetRows) — utile si Yann change d'avis.
-  const doSetJvAcronym = async (storageKey, raw) => {
+  // "Jeu vidéo" (§ Paramètres → "Jeu vidéo", demande explicite : "éditer les jeux vidéo... changer
+  // paire/triple... rajouter des blocs... indiquer dans quelles marques il sont") — écriture
+  // immédiate dans `custom_jeu_video_defs`/`custom_jeu_video_groups`/`custom_jeu_video_gens`,
+  // jamais de bouton "Enregistrer" séparé (comme le reste de Paramètres), et réaffectation des
+  // liaisons `let JEU_VIDEO_DEFS`/`JEU_VIDEO_PAIRS`/`JEU_VIDEO_GENS` pour que le reste de l'app
+  // (Catalogue, export National, pilules) reflète le changement dès son prochain rendu, sans
+  // attendre un rechargement de page.
+  const applyJvDefs = async (next) => {
+    setJvDefs(next);
+    JEU_VIDEO_DEFS = next;
+    await writeJSON("custom_jeu_video_defs", next);
+  };
+  const applyJvGroups = async (next) => {
+    setJvGroups(next);
+    JEU_VIDEO_PAIRS = next.map((g) => ({ keys: g.keys, pairKey: g.keys.slice().sort().join("_"), acronym: g.acronym }));
+    await writeJSON("custom_jeu_video_groups", next);
+  };
+  const applyJvGens = async (next) => {
+    setJvGens(next);
+    JEU_VIDEO_GENS = next;
+    await writeJSON("custom_jeu_video_gens", next);
+  };
+
+  const renameJvGame = (key, label) => applyJvDefs(jvDefs.map((d) => (d.key === key ? { ...d, label } : d)));
+  const setJvGameGen = (key, gen) => applyJvDefs(jvDefs.map((d) => (d.key === key ? { ...d, gen } : d)));
+  const setJvGroupAcronym = (pairKeyOf, raw) => {
     const v = raw.trim().toUpperCase();
-    const next = { ...jvAcronymOverrides };
-    if (v) next[storageKey] = v; else delete next[storageKey];
-    setJvAcronymOverrides(next);
-    await writeJSON("jeu_video_group_acronyms", next);
+    applyJvGroups(jvGroups.map((g) => (g.keys.slice().sort().join("_") === pairKeyOf ? { ...g, acronym: v } : g)));
+  };
+  // Déplace `key` hors de son groupe actuel puis, si `targetIdx` est fourni (index dans jvGroups
+  // AVANT le retrait), l'ajoute à ce groupe cible ; sinon `key` redevient son propre groupe seul.
+  const moveJvGameToGroup = (key, targetIdx) => {
+    const withoutKey = jvGroups.map((g, i) => (i === targetIdx ? g : { ...g, keys: g.keys.filter((k) => k !== key) }));
+    let next = withoutKey.filter((g, i) => i === targetIdx || g.keys.length > 0);
+    if (targetIdx === undefined || targetIdx === null) {
+      next = next.filter((g) => !g.keys.includes(key));
+      next = [...next, { keys: [key], acronym: defaultJeuVideoGroupAcronym([key]) }];
+    } else {
+      next = next.map((g, i) => (i === targetIdx ? { ...g, keys: g.keys.includes(key) ? g.keys : [...g.keys, key] } : g));
+    }
+    applyJvGroups(next);
+  };
+  const addJvGame = (gen, rawLabel) => {
+    const label = rawLabel.trim();
+    if (!label) return;
+    let base = label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (!base) base = "jeu";
+    let key = base, n = 2;
+    while (jvDefs.some((d) => d.key === key)) key = base + (n++);
+    applyJvDefs([...jvDefs, { key, label, gen, marques: [] }]); // réaffecte JEU_VIDEO_DEFS avant la ligne suivante (voir applyJvDefs)
+    applyJvGroups([...jvGroups, { keys: [key], acronym: defaultJeuVideoGroupAcronym([key]) }]);
+    setNewJvLabelByGen((s) => ({ ...s, [gen]: "" }));
+  };
+  const addJvGen = () => {
+    const label = newJvGenLabel.trim();
+    if (!label || jvGens.includes(label)) return;
+    applyJvGens([...jvGens, label]);
+    setNewJvGenLabel("");
   };
 
   if (!ready) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
@@ -11410,39 +11563,114 @@ function SettingsView({
 
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
         <button
-          onClick={() => toggleSection("jvAcronyms")}
+          onClick={() => toggleSection("jeuVideo")}
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
             background: "transparent", border: "none", cursor: "pointer", padding: 0,
-            marginBottom: collapsed.jvAcronyms ? 0 : 10,
+            marginBottom: collapsed.jeuVideo ? 0 : 10,
           }}
         >
-          <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: LIGHTBLUE }}>Acronymes Jeu vidéo</span>
-          <span style={{ color: MUTED, fontSize: 12, transform: collapsed.jvAcronyms ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+          <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: LIGHTBLUE }}>Jeu vidéo</span>
+          <span style={{ color: MUTED, fontSize: 12, transform: collapsed.jeuVideo ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
         </button>
-        {!collapsed.jvAcronyms && (
+        {!collapsed.jeuVideo && (
         <React.Fragment>
         <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
-          Nom court utilisé dans les colonnes "No_..." de l'export Excel National (numéro spécifique par paire/triple, fiche Catalogue → "Jeu vidéo"). Un groupe non modifié ici garde une valeur calculée automatiquement (initiales des jeux) — lié uniquement aux paires/triples de jeux, jamais aux vues Jeu que tu crées par marque.
+          Les jeux précis (bloc "Jeu vidéo" de la fiche Catalogue) sont ici entièrement personnalisables : renomme un jeu, change son bloc de génération, coche les marques où il se range, regroupe/sépare des jeux qui partagent le même numéro (acronyme utilisé dans les colonnes "No_..." de l'export National). Rien de tout ça n'est lié aux vues Jeu que tu crées par marque pour l'arrangement des boîtes.
         </div>
-        {Array.from(new Set(JEU_VIDEO_DEFS.map((jv) => jv.gen))).map((gen) => (
-          <div key={gen} style={{ marginBottom: 10 }}>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>{gen}</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {JEU_VIDEO_NUMBER_GROUPS.filter((grp) => grp.keys.some((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).gen === gen)).map((grp) => (
-                <div key={grp.storageKey} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{grp.label}</span>
-                  <input
-                    value={jvAcronymOverrides[grp.storageKey] !== undefined ? jvAcronymOverrides[grp.storageKey] : defaultJeuVideoGroupAcronym(grp.keys)}
-                    onChange={(e) => doSetJvAcronym(grp.storageKey, e.target.value)}
-                    maxLength={12}
-                    style={{ ...miniInput, width: 90, flexShrink: 0, boxSizing: "border-box", textTransform: "uppercase" }}
-                  />
-                </div>
-              ))}
+        {jvGens.map((gen) => (
+          <div key={gen} style={{ marginBottom: 14 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 12.5, color: TXT, marginBottom: 6 }}>{gen}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {jvGroups.map((grp, gIdx) => {
+                if (!grp.keys.some((k) => (jvDefs.find((d) => d.key === k) || {}).gen === gen)) return null;
+                const pairKeyOf = grp.keys.slice().sort().join("_");
+                const otherGames = jvDefs.filter((d) => !grp.keys.includes(d.key));
+                return (
+                  <div key={pairKeyOf} style={{ border: `1px solid ${LINE}`, borderRadius: 10, padding: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED }}>Acronyme (No_...)</span>
+                      <input
+                        value={grp.acronym}
+                        onChange={(e) => setJvGroupAcronym(pairKeyOf, e.target.value)}
+                        maxLength={12}
+                        style={{ ...miniInput, width: 80, flexShrink: 0, boxSizing: "border-box", textTransform: "uppercase" }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {grp.keys.map((k) => {
+                        const def = jvDefs.find((d) => d.key === k) || { key: k, label: k, gen, marques: [] };
+                        return (
+                          <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, paddingBottom: 4, borderBottom: grp.keys.length > 1 ? `1px dashed ${LINE}` : "none" }}>
+                            <input
+                              value={def.label}
+                              onChange={(e) => renameJvGame(k, e.target.value)}
+                              style={{ ...miniInput, flex: 1, minWidth: 0 }}
+                            />
+                            <Picker
+                              value={def.gen}
+                              onChange={(v) => v && setJvGameGen(k, v)}
+                              options={jvGens}
+                              buttonStyle={{ ...selectStyle, minWidth: 64, flexShrink: 0 }}
+                              panelWidth={140}
+                            />
+                            <MultiPicker
+                              value={def.marques || []}
+                              onChange={(next) => applyJvDefs(jvDefs.map((d) => (d.key === k ? { ...d, marques: next } : d)))}
+                              options={GAME_ORDER}
+                              placeholder="Marques"
+                              buttonStyle={{ ...selectStyle, width: 84, flexShrink: 0 }}
+                              panelWidth={160}
+                            />
+                            {grp.keys.length > 1 && (
+                              <button
+                                onClick={() => moveJvGameToGroup(k, undefined)}
+                                title="Retirer du groupe (redevient seul)"
+                                style={{ background: "transparent", border: `1px solid ${LINE}`, borderRadius: 8, width: 26, height: 26, flexShrink: 0, color: MUTED, cursor: "pointer" }}
+                              >✕</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {otherGames.length > 0 && (
+                      <div style={{ marginTop: 6 }}>
+                        <Picker
+                          value=""
+                          onChange={(v) => { const found = otherGames.find((d) => d.label === v); if (found) moveJvGameToGroup(found.key, gIdx); }}
+                          options={otherGames.map((d) => d.label)}
+                          placeholder="+ fusionner un jeu ici…"
+                          buttonStyle={{ ...selectStyle, width: "100%", textAlign: "left" }}
+                          panelWidth={220}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <input
+                value={newJvLabelByGen[gen] || ""}
+                onChange={(e) => setNewJvLabelByGen((s) => ({ ...s, [gen]: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter") addJvGame(gen, newJvLabelByGen[gen] || ""); }}
+                placeholder="Nouveau jeu…"
+                style={{ ...miniInput, flex: 1 }}
+              />
+              <button onClick={() => addJvGame(gen, newJvLabelByGen[gen] || "")} style={{ ...tabActive, flexShrink: 0 }}>+ Ajouter</button>
             </div>
           </div>
         ))}
+        <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+          <input
+            value={newJvGenLabel}
+            onChange={(e) => setNewJvGenLabel(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addJvGen(); }}
+            placeholder="Nouveau bloc de génération…"
+            style={{ ...miniInput, flex: 1 }}
+          />
+          <button onClick={addJvGen} style={{ ...tabActive, flexShrink: 0 }}>+ Ajouter un bloc</button>
+        </div>
         </React.Fragment>
         )}
       </div>
@@ -13795,6 +14023,8 @@ function FloatingBackButton({ onClick }) {
 // les deux premières colonnes de chaque feuille — voir doc §21.
 const EXCEL_SHEETS = [
   { key: "national", label: "National" },
+  { key: "jeuvideo", label: "Jeu vidéo" },
+  { key: "jeuvideogens", label: "Générations JV" },
   { key: "home2", label: "Home 2" },
   { key: "go2", label: "Go 2" },
   { key: "shiny", label: "Shiny" },
@@ -13941,40 +14171,35 @@ async function buildGameSheetRows(g) {
 //
 // ---- Bloc "Jeu vidéo" (§ demande explicite : "lié aux paires/triple, pas aux vues Jeu que je vais
 // créer" — remplace l'ancien double bloc plat "JV_<clé>" (tous les jeux à la suite) +
-// "NumeroVue_<jeu>_<vueKey aléatoire>" (à la fin, dépendait de `custom_jeu_views` donc absent tant
-// qu'aucune vue n'était configurée pour la marque, et coupait les triples en deux si une vue ne
-// couvrait que 2 des 3 jeux)) : un groupe de colonnes par entrée JEU_VIDEO_PAIRS (déjà dans l'ordre
-// "1G → 10G" utilisé partout ailleurs dans l'app pour ces jeux), de gauche à droite dans cet ordre :
-//   No_<ACRONYME>[, No_<ACRONYME2>...]  (numéro spécifique, § JEU_VIDEO_NUMBER_GROUPS — TOUJOURS
-//                             présent pour un groupe à numéro partagé (paire/triple réel) ; pour un
-//                             groupe non partagé, ex. Arceus/Z-A, un "No" par jeu du groupe, chacun
-//                             son numéro propre)
+// "NumeroVue_<jeu>_<vueKey aléatoire>" (à la fin, dépendait de `custom_jeu_views`)) : un groupe de
+// colonnes par entrée JEU_VIDEO_PAIRS (personnalisable, § Paramètres → "Jeu vidéo" —
+// applyJeuVideoCustomizations), déjà dans l'ordre "1G → 10G" utilisé partout ailleurs dans l'app
+// pour ces jeux, de gauche à droite dans cet ordre :
+//   No_<ACRONYME>            (numéro spécifique du groupe, depuis DATA.jeuVideoNumbers[pairKey] —
+//                             INDÉPENDANT de `custom_jeu_views`, § voir doc §5ter qui reste sur
+//                             game_view_number_overrides pour l'arrangement des boîtes, plus
+//                             exporté ici)
 //   JV_<clé1>, JV_<clé2>, [JV_<clé3>]  (disponibilité, une par jeu du groupe — déplacées ici
 //                             depuis l'ancien bloc plat pour rester à côté de leur "No")
 //   <colonne vide>           (séparateur visuel entre groupes, en-tête espaces uniquement)
-// Numéros lus depuis DATA.jeuVideoNumbers (bloc Catalogue "Numéro spécifique par jeu vidéo", clé
-// pairKey/JEU_VIDEO_DEFS — § voir persistCatalogEdit) : INDÉPENDANT de `custom_jeu_views`, donc
-// toujours présent quel que soit l'état des vues créées/supprimées par marque pour l'arrangement
-// des boîtes (§ doc §5ter, mécanisme distinct qui reste sur game_view_number_overrides, plus
-// exporté ici). L'acronyme vient de `jeu_video_group_acronyms` (§ Paramètres → "Acronymes Jeu
-// vidéo") avec repli sur defaultJeuVideoGroupAcronym tant que Yann n'a rien corrigé pour ce groupe.
+// L'acronyme vit directement sur le groupe (JEU_VIDEO_PAIRS[].acronym, éditable dans Paramètres →
+// "Jeu vidéo") — plus de lecture séparée nécessaire ici.
 // Coloration des en-têtes par groupe (demandée) : non réalisable avec la bibliothèque SheetJS
 // gratuite chargée ici (xlsx.full.min.js) — l'écriture de styles de cellule (couleurs de fond) est
 // réservée à la version payante "Pro" de SheetJS ; seule la lecture de styles existants est
 // supportée. Le regroupement + séparateurs ci-dessus reste donc le seul repère visuel disponible.
 async function buildNationalSheetRows() {
   const manual = await storageGetJSON("manual_caught", {});
-  const acronymOverrides = await storageGetJSON("jeu_video_group_acronyms", {});
 
   const usedNoCols = new Set();
   const noColFor = {};
-  JEU_VIDEO_NUMBER_GROUPS.forEach((grp) => {
-    const acr = acronymOverrides[grp.storageKey] || defaultJeuVideoGroupAcronym(grp.keys) || grp.storageKey;
+  JEU_VIDEO_PAIRS.forEach((grp) => {
+    const acr = grp.acronym || defaultJeuVideoGroupAcronym(grp.keys) || grp.pairKey;
     const base = "No_" + acr;
     let name = base, n = 2;
     while (usedNoCols.has(name)) { name = base + (n++); }
     usedNoCols.add(name);
-    noColFor[grp.storageKey] = name;
+    noColFor[grp.pairKey] = name;
   });
 
   const order = DATA.natSortOrder || DATA.nat.map((_, i) => i);
@@ -14008,15 +14233,8 @@ async function buildNationalSheetRows() {
     const jvn = (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) || {};
     let spacerN = 1;
     JEU_VIDEO_PAIRS.forEach((grp) => {
-      if (grp.sharedNumber) {
-        const ov = jvn[grp.pairKey];
-        row[noColFor[grp.pairKey]] = ov !== undefined && ov !== null ? ov : "";
-      } else {
-        grp.keys.forEach((k) => {
-          const ov = jvn[k];
-          row[noColFor[k]] = ov !== undefined && ov !== null ? ov : "";
-        });
-      }
+      const ov = jvn[grp.pairKey];
+      row[noColFor[grp.pairKey]] = ov !== undefined && ov !== null ? ov : "";
       grp.keys.forEach((k) => {
         const v = jv[k];
         row["JV_" + k] = isJvTextNote(v) ? v : (v ? 1 : 0);
@@ -14183,6 +14401,33 @@ async function buildJeuxMarqueSheetRows() {
 // (labels JEU_VIDEO_DEFS, ex. "Saphir Alpha, Rubis Oméga"). Ne couvre que les DÉFINITIONS des
 // vues (nom + jeux qui la composent) — le statut "attrapé dans cette vue" par Pokémon reste dans
 // les colonnes EnJeu_<clé> de la feuille de chaque marque (déjà géré, voir buildGameSheetRows).
+// ---- Feuille "Jeu vidéo" (§ demande explicite : "tout doit être dans Json et Excel" pour les
+// jeux vidéo personnalisables — défs, regroupement paire/triple, marques) — une ligne par jeu
+// vidéo (JEU_VIDEO_DEFS), colonnes Cle/Nom/Generation/Marques/Groupe. "Groupe" = l'acronyme du
+// groupe JEU_VIDEO_PAIRS auquel ce jeu appartient (les jeux qui partagent la même valeur dans
+// cette colonne forment un même groupe à numéro partagé, § voir importJeuVideoSheet) — sert aussi
+// de colonne "No_<Groupe>" dans la feuille National (§ buildNationalSheetRows), donc pas de
+// colonne Acronyme séparée. "Cle" = identifiant stable (DATA.jeuVideo/jeuVideoNumbers, colonnes
+// "JV_<clé>"), jamais réécrit pour une ligne déjà reconnue — laissé vide pour une nouvelle ligne,
+// une clé est alors générée depuis "Nom" (comme l'ajout manuel dans Paramètres → "Jeu vidéo").
+async function buildJeuVideoSheetRows() {
+  return JEU_VIDEO_DEFS.map((d) => {
+    const grp = JEU_VIDEO_PAIRS.find((g) => g.keys.includes(d.key));
+    return {
+      Cle: d.key, Nom: d.label, Generation: d.gen,
+      Marques: (d.marques || []).join(", "),
+      Groupe: grp ? grp.acronym : "",
+    };
+  });
+}
+// Feuille "Générations JV" — un bloc de génération par ligne, dans l'ordre d'affichage
+// (JEU_VIDEO_GENS, § Paramètres → "Jeu vidéo" → "+ Ajouter un bloc"). Séparée de la feuille
+// "Jeu vidéo" ci-dessus pour qu'un bloc encore vide (aucun jeu dedans) ne disparaisse pas de
+// l'export faute de ligne à laquelle s'accrocher.
+async function buildJeuVideoGensSheetRows() {
+  return JEU_VIDEO_GENS.map((g) => ({ Generation: g }));
+}
+
 async function buildJeuVuesSheetRows() {
   const all = await storageGetJSON("custom_jeu_views", {});
   const rows = [];
@@ -14509,6 +14754,8 @@ async function buildExcelWorkbook(selectedKeys) {
     if (!selectedKeys.has(sheetDef.key)) continue;
     let rows;
     if (sheetDef.key === "national") rows = await buildNationalSheetRows();
+    else if (sheetDef.key === "jeuvideo") rows = await buildJeuVideoSheetRows();
+    else if (sheetDef.key === "jeuvideogens") rows = await buildJeuVideoGensSheetRows();
     else if (sheetDef.key === "home2") rows = await buildHome2SheetRows();
     else if (sheetDef.key === "go2") rows = await buildGo2SheetRows();
     else if (sheetDef.key === "shiny") rows = await buildShinySheetRows();
@@ -14712,15 +14959,14 @@ async function importGameSheet(g, rows, mode) {
 //    catalog_overrides/catalog_additions, jamais de suppression de fiche via cette feuille.
 //  - "JV_<clé>" (Jeu vidéo) → catalog_overrides/catalog_additions (jeuVideo). "JV_go" relit aussi
 //    l'ancienne colonne "GoSorti" (compatibilité descendante).
-//  - "No_<ACRONYME>" (numéros par paire/triple Jeu vidéo, § JEU_VIDEO_NUMBER_GROUPS — INDÉPENDANT
-//    de `custom_jeu_views`, § demande explicite) → catalog_overrides/catalog_additions
-//    (jeuVideoNumbers), même mécanisme de fusion que jeuVideo ci-dessus. L'acronyme n'étant
-//    résolu qu'au moment de l'export/import (jeu_video_group_acronyms avec repli sur
-//    defaultJeuVideoGroupAcronym), une colonne dont l'acronyme ne correspond plus à aucun groupe
-//    (jamais censé arriver en usage normal) est silencieusement ignorée, comme une colonne
-//    absente — un ancien fichier avec des colonnes "NumeroVue_<jeu>_<vue>" (avant ce changement)
-//    n'est plus reconnu ici (transition volontairement sans historique, § demande explicite :
-//    JSON conservé par ailleurs).
+//  - "No_<ACRONYME>" (numéros par paire/triple Jeu vidéo, § JEU_VIDEO_PAIRS — INDÉPENDANT de
+//    `custom_jeu_views`, § demande explicite) → catalog_overrides/catalog_additions
+//    (jeuVideoNumbers), même mécanisme de fusion que jeuVideo ci-dessus. L'acronyme vit
+//    directement sur le groupe (JEU_VIDEO_PAIRS[].acronym) — une colonne dont l'acronyme ne
+//    correspond plus à aucun groupe actuel (groupe renommé/supprimé depuis l'export) est
+//    silencieusement ignorée, comme une colonne absente — un ancien fichier avec des colonnes
+//    "NumeroVue_<jeu>_<vue>" (avant ce changement) n'est plus reconnu ici (transition
+//    volontairement sans historique, § demande explicite : JSON conservé par ailleurs).
 // Colonnes "Dispo_<jeu>" et AlphaLA/AlphaLZA : volontairement IGNORÉES à l'import — ce sont des
 // colonnes structurelles informatives (disponibilité, pas possession), non éditables depuis cette
 // feuille (la disponibilité se modifie via le Catalogue, §21bis). caught_<jeu> et alpha_caught
@@ -14742,16 +14988,13 @@ async function importNationalSheet(rows, mode) {
   const gameColsPresent = GAME_ORDER.filter(hasCol);
   const applyGames = gameColsPresent.length === GAME_ORDER.length; // jeu de colonnes complet uniquement, par sécurité
 
-  // Colonnes "No_<ACRONYME>" présentes dans le fichier → groupe JEU_VIDEO_NUMBER_GROUPS
-  // correspondant (storageKey = pairKey pour un groupe à numéro partagé, ou la clé JEU_VIDEO_DEFS
-  // elle-même pour un groupe non partagé comme Arceus/Z-A), résolu via l'acronyme effectif
-  // (override stocké ou defaultJeuVideoGroupAcronym) — même résolution qu'à l'export.
-  const acronymOverridesForImport = await storageGetJSON("jeu_video_group_acronyms", {});
+  // Colonnes "No_<ACRONYME>" présentes dans le fichier → groupe JEU_VIDEO_PAIRS correspondant,
+  // résolu par son acronyme actuel (même résolution qu'à l'export, § voir buildNationalSheetRows).
   const noColToStorageKey = {};
   Object.keys(sample).filter((c) => c.startsWith("No_")).forEach((col) => {
     const acr = col.slice(3);
-    const grp = JEU_VIDEO_NUMBER_GROUPS.find((g) => (acronymOverridesForImport[g.storageKey] || defaultJeuVideoGroupAcronym(g.keys)) === acr);
-    if (grp) noColToStorageKey[col] = grp.storageKey;
+    const grp = JEU_VIDEO_PAIRS.find((g) => (g.acronym || defaultJeuVideoGroupAcronym(g.keys)) === acr);
+    if (grp) noColToStorageKey[col] = grp.pairKey;
   });
 
   rows.forEach((row) => {
@@ -14966,6 +15209,77 @@ async function importListesSheet(rows, mode) {
   }
 }
 
+// Miroir de buildJeuVideoSheetRows ci-dessus. Une ligne "Cle" déjà reconnue met à jour
+// Nom/Generation/Marques du jeu correspondant ; une ligne sans "Cle" (ou "Cle" inconnue) crée un
+// nouveau jeu vidéo (clé générée depuis "Nom", garantie unique — même mécanisme que "+ Ajouter un
+// jeu" dans Paramètres). Jamais de suppression de jeu via cette feuille (comme National, §
+// demande implicite de sécurité déjà appliquée ailleurs). Colonne "Groupe" : les jeux du fichier
+// partageant la même valeur (non vide) forment un même groupe à numéro partagé (acronym = cette
+// valeur) — un jeu retiré de son ancien groupe suite à cet import (groupe changé) laisse son
+// ancien groupe se réduire ou disparaître si vide ; un jeu à "Groupe" vide redevient son propre
+// groupe seul. Mode "replace" : les jeux absents du fichier restent inchangés (seuls ceux présents
+// sont réorganisés) — seule la feuille "Générations JV" ci-dessous connaît un vrai "replace" total.
+async function importJeuVideoSheet(rows, mode) {
+  if (!rows.length) return;
+  let defs = (await readJSON("custom_jeu_video_defs", [])).map((d) => ({ ...d, marques: (d.marques || []).slice() }));
+  let groups = (await readJSON("custom_jeu_video_groups", [])).map((g) => ({ ...g, keys: g.keys.slice() }));
+  const touched = []; // { key, groupeVal }, dans l'ordre du fichier
+  rows.forEach((row) => {
+    const nom = String(row.Nom || "").trim();
+    if (!nom) return;
+    let key = String(row.Cle || "").trim();
+    const existingIdx = key ? defs.findIndex((d) => d.key === key) : -1;
+    if (!key || existingIdx === -1) {
+      // Nouvelle ligne (ou "Cle" non reconnue) : génère une clé stable depuis "Nom", comme
+      // l'ajout manuel (voir addJvGame dans SettingsView).
+      let base = nom.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      if (!base) base = "jeu";
+      let candidate = key || base, n = 2;
+      while (defs.some((d) => d.key === candidate) || touched.some((t) => t.key === candidate)) { candidate = base + (n++); }
+      key = candidate;
+    }
+    const gen = String(row.Generation || "").trim() || (defs.find((d) => d.key === key) || {}).gen || JEU_VIDEO_GENS[0] || "";
+    const marques = String(row.Marques || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const idx = defs.findIndex((d) => d.key === key);
+    if (idx >= 0) defs[idx] = { ...defs[idx], label: nom, gen, marques };
+    else defs.push({ key, label: nom, gen, marques });
+    touched.push({ key, groupeVal: String(row.Groupe || "").trim() });
+  });
+  // Regroupement : retire chaque clé touchée de son groupe actuel, puis la range sous le groupe
+  // dont l'acronyme correspond à "Groupe" (créé à la volée si besoin) — ou seule si "Groupe" vide.
+  touched.forEach(({ key, groupeVal }) => {
+    groups = groups.map((g) => ({ ...g, keys: g.keys.filter((k) => k !== key) })).filter((g) => g.keys.length > 0);
+    if (groupeVal) {
+      const gIdx = groups.findIndex((g) => g.acronym === groupeVal);
+      if (gIdx >= 0) groups[gIdx] = { ...groups[gIdx], keys: [...groups[gIdx].keys, key] };
+      else groups.push({ keys: [key], acronym: groupeVal });
+    } else {
+      const def = defs.find((d) => d.key === key);
+      groups.push({ keys: [key], acronym: def ? defaultJeuVideoGroupAcronym([key]) : key.toUpperCase() });
+    }
+  });
+  await window.storage.set("custom_jeu_video_defs", JSON.stringify(defs), false);
+  await window.storage.set("custom_jeu_video_groups", JSON.stringify(groups), false);
+  JEU_VIDEO_DEFS = defs;
+  JEU_VIDEO_PAIRS = groups.map((g) => ({ keys: g.keys, pairKey: g.keys.slice().sort().join("_"), acronym: g.acronym }));
+}
+// Miroir de buildJeuVideoGensSheetRows. "replace" : la liste devient exactement celle du fichier
+// (permet de retirer un bloc de génération plus utilisé) ; "add" : les blocs du fichier
+// s'ajoutent à la suite de ceux déjà existants (sans doublon), rien n'est retiré.
+async function importJeuVideoGensSheet(rows, mode) {
+  const fileGens = rows.map((r) => String(r.Generation || "").trim()).filter(Boolean);
+  let next;
+  if (mode === "replace") {
+    next = Array.from(new Set(fileGens));
+  } else {
+    const existing = await readJSON("custom_jeu_video_gens", []);
+    next = [...existing];
+    fileGens.forEach((g) => { if (!next.includes(g)) next.push(g); });
+  }
+  await window.storage.set("custom_jeu_video_gens", JSON.stringify(next), false);
+  JEU_VIDEO_GENS = next;
+}
+
 async function importJeuxMarqueSheet(rows, mode) {
   const built = {};
   rows.forEach((r) => {
@@ -15077,6 +15391,8 @@ async function applyExcelWorkbookImport(wb, mode) {
     if (!rows.length) continue;
     if (gameSet.has(sheetName)) { await importGameSheet(sheetName, rows, mode); touched++; }
     else if (sheetName === "National") { await importNationalSheet(rows, mode); touched++; }
+    else if (sheetName === "Jeu vidéo") { await importJeuVideoSheet(rows, mode); touched++; }
+    else if (sheetName === "Générations JV") { await importJeuVideoGensSheet(rows, mode); touched++; }
     else if (sheetName === "Paramètres") { await importParamsSheet(rows); touched++; }
     else if (sheetName === "Home 2") { await importHome2Sheet(rows, mode); touched++; }
     else if (sheetName === "Go 2") { await importGo2Sheet(rows, mode); touched++; }
@@ -17454,11 +17770,15 @@ function App() {
     "custom_jeu_views",
     "game_view_number_overrides",
     "game_view_box_group_overrides",
-    // Acronymes des groupes "Jeu vidéo" (paires/triples, § JEU_VIDEO_NUMBER_GROUPS) utilisés dans
-    // les en-têtes Excel "No_<ACRONYME>" du National (§ buildNationalSheetRows) — éditable dans
-    // Paramètres → "Acronymes Jeu vidéo". JSON/Gist uniquement, aucune feuille Excel dédiée (une
-    // vingtaine d'entrées seulement, comme game_view_box_settings ci-dessus).
-    "jeu_video_group_acronyms",
+    // "Jeu vidéo" personnalisable (§ demande explicite : éditer/ajouter des jeux, des blocs de
+    // génération, des regroupements paire/triple, des marques par jeu) — remplace
+    // `jeu_video_group_acronyms` (passe précédente, fusionné une fois dans `acronym` de chaque
+    // groupe par `applyJeuVideoCustomizations`, § voir plus haut) qui n'est donc plus dans cette
+    // liste. Couvert par deux feuilles Excel dédiées "Jeu vidéo" (buildJeuVideoSheetRows) et
+    // "Générations JV" (buildJeuVideoGensSheetRows).
+    "custom_jeu_video_defs",
+    "custom_jeu_video_groups",
+    "custom_jeu_video_gens",
     "home2",
     "home2_search_suffix",
     "parfait_search_suffix",
@@ -18035,10 +18355,14 @@ function pillStyle(active, color) {
 
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
-// Applique les renommages/ajouts de catalogue (Paramètres → Catalogue Pokémon, voir §21bis)
-// à DATA avant le tout premier rendu — sinon rendre l'app d'abord avec DATA "brut" provoquerait
-// un flash de contenu incorrect (anciens noms, Pokémon ajoutés absents).
-applyCatalogCustomizations()
+// Applique d'abord les personnalisations "Jeu vidéo" (jeux/générations/groupes, § Paramètres →
+// "Jeu vidéo"), puis les renommages/ajouts de catalogue (Paramètres → Catalogue Pokémon, voir
+// §21bis) à DATA avant le tout premier rendu — sinon rendre l'app d'abord avec des données
+// "brutes" provoquerait un flash de contenu incorrect (anciens noms, Pokémon ajoutés absents,
+// jeux vidéo par défaut au lieu des jeux personnalisés).
+applyJeuVideoCustomizations()
+  .catch((e) => { console.error("Jeu vidéo : échec de l'application des personnalisations", e); })
+  .then(() => applyCatalogCustomizations())
   .catch((e) => { console.error("Catalogue : échec de l'application des personnalisations", e); })
   .finally(() => { root.render(<App />); });
 </script>
