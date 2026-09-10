@@ -228,7 +228,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.9.19.42";
+const APP_VERSION = "2026.9.10.0.31";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -580,18 +580,16 @@ const JEU_VIDEO_PAIRS = [
   const sharedNumber = Array.isArray(entry) ? true : entry.sharedNumber !== false;
   return { keys, sharedNumber, pairKey: keys.slice().sort().join("_") };
 });
-function jeuVideoPairKeyFor(keys) {
-  const sorted = (keys || []).slice().sort().join("|");
-  const found = JEU_VIDEO_PAIRS.find((g) => g.keys.slice().sort().join("|") === sorted);
-  return (found && found.sharedNumber) ? found.pairKey : null;
-}
-// Acronyme lisible d'un groupe de jeux (§ export Excel National, colonnes "No_<marque>_<ACRONYME>"
-// — remplace l'ancien "NumeroVue_<marque>_<vueKey aléatoire>", peu lisible) : initiale de chaque
-// mot du libellé JEU_VIDEO_DEFS de chaque jeu du groupe, accents retirés, concaténées dans l'ordre
-// des clés du groupe (ex. ["saphiralpha","rubisomega"] → "Saphir Alpha"+"Rubis Oméga" → "SA"+"RO"
-// = "SARO"). Jamais stocké — recalculé à l'identique à l'export et à l'import (voir
-// buildNationalSheetRows/importNationalSheet), donc aucune migration nécessaire.
-function jeuVideoGroupAcronym(keys) {
+// Acronyme PAR DÉFAUT d'un groupe de jeux (§ export Excel National, colonnes "No_<ACRONYME>" —
+// remplace l'ancien "NumeroVue_<marque>_<vueKey aléatoire>", peu lisible) : initiale de chaque mot
+// du libellé JEU_VIDEO_DEFS de chaque jeu du groupe, accents retirés, concaténées dans l'ordre des
+// clés du groupe (ex. ["saphiralpha","rubisomega"] → "Saphir Alpha"+"Rubis Oméga" → "SA"+"RO" =
+// "SARO"). Seulement un point de départ : Yann corrige librement dans Paramètres → "Acronymes Jeu
+// vidéo" (jeu_video_group_acronyms, § voir SettingsView) — cette fonction ne sert alors que de
+// valeur affichée tant qu'aucun override explicite n'existe pour ce groupe, jamais persistée
+// elle-même (pour qu'une future correction de cette fonction reste visible sur tout groupe non
+// encore corrigé à la main).
+function defaultJeuVideoGroupAcronym(keys) {
   return (keys || []).map((k) => {
     const def = JEU_VIDEO_DEFS.find((d) => d.key === k);
     if (!def) return "";
@@ -599,6 +597,29 @@ function jeuVideoGroupAcronym(keys) {
       .split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w[0].toUpperCase()).join("");
   }).join("");
 }
+function jeuVideoPairKeyFor(keys) {
+  const sorted = (keys || []).slice().sort().join("|");
+  const found = JEU_VIDEO_PAIRS.find((g) => g.keys.slice().sort().join("|") === sorted);
+  return (found && found.sharedNumber) ? found.pairKey : null;
+}
+// "Groupes numéro Jeu vidéo" (§ demande explicite : "c'est lié aux paires/triple, pas aux vues Jeu
+// que je vais créer") — une entrée par regroupement à numéro PARTAGÉ de JEU_VIDEO_PAIRS (clé de
+// stockage = pairKey), et une entrée PAR JEU pour les groupes non partagés (Arceus/Z-A : chacun
+// son propre numéro, clé de stockage = sa propre clé JEU_VIDEO_DEFS). Entièrement dérivé de
+// JEU_VIDEO_PAIRS/JEU_VIDEO_DEFS (constantes fixes) — AUCUN lien avec `custom_jeu_views` (les
+// "vues" que Yann crée/supprime librement par marque pour l'arrangement des boîtes, § doc §5ter) :
+// ne varie jamais selon les vues existantes. Sert à l'export Excel National (colonnes "No_...") et
+// à la liste éditable "Acronymes Jeu vidéo" de Paramètres.
+const JEU_VIDEO_NUMBER_GROUPS = JEU_VIDEO_PAIRS.flatMap((grp) => {
+  if (grp.sharedNumber) {
+    const label = grp.keys.map((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).label).filter(Boolean).join(" / ");
+    return [{ storageKey: grp.pairKey, keys: grp.keys, label }];
+  }
+  return grp.keys.map((k) => {
+    const def = JEU_VIDEO_DEFS.find((d) => d.key === k);
+    return { storageKey: k, keys: [k], label: def ? def.label : k };
+  });
+});
 function jeuVideoFor(nom, forme) {
   return (DATA.jeuVideo && DATA.jeuVideo[nom + "|" + (forme || "")]) || {};
 }
@@ -10961,6 +10982,7 @@ function SettingsView({
   const [detailMarques, setDetailMarques] = useState({});
   const [customBoxGroups, setCustomBoxGroups] = useState({});
   const [boxGroupOverridesAll, setBoxGroupOverridesAll] = useState({});
+  const [jvAcronymOverrides, setJvAcronymOverrides] = useState({});
   const [shinyCatches, setShinyCatchesState] = useState({});
   const [doubleCatches, setDoubleCatchesState] = useState({});
   const [events, setEventsState] = useState([]);
@@ -10972,7 +10994,7 @@ function SettingsView({
   const [modeAddOpen, setModeAddOpen] = useState(false);
   const [detailAddOpen, setDetailAddOpen] = useState(false);
   const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
-  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, numerovue: true, catalog: true, detail: true, restrict: true, gist: true });
+  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, jvAcronyms: true, catalog: true, detail: true, restrict: true, gist: true });
   const [gistTokenDraft, setGistTokenDraft] = useState(gistToken || "");
   const [gistIdDraft, setGistIdDraft] = useState(gistId || "");
   useEffect(() => { setGistTokenDraft(gistToken || ""); }, [gistToken]);
@@ -10982,7 +11004,7 @@ function SettingsView({
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
 
   const loadAll = async () => {
-    const [m, mo, lo, je, sh, db, ev, itj, bg, bgo, de, mm, dm] = await Promise.all([
+    const [m, mo, lo, je, sh, db, ev, itj, bg, bgo, de, mm, dm, jva] = await Promise.all([
       readJSON("custom_marques", []),
       readJSON("custom_modes", []),
       readJSON("custom_locations", []),
@@ -10996,6 +11018,7 @@ function SettingsView({
       readJSON("custom_details", []),
       readJSON("mode_marques", {}),
       readJSON("detail_marques", {}),
+      readJSON("jeu_video_group_acronyms", {}),
     ]);
     // Voir useCustomLists : même complétion automatique, pour que Paramètres affiche la bonne
     // liste même si c'est le premier écran ouvert dans la session.
@@ -11018,6 +11041,7 @@ function SettingsView({
     setCustomDetails(de);
     setModeMarques(mm);
     setDetailMarques(dm);
+    setJvAcronymOverrides(jva);
     setReady(true);
   };
 
@@ -11170,6 +11194,19 @@ function SettingsView({
     if (kind === "boxgroup" && marqueCtx) await writeJSON("custom_box_groups", { ...customBoxGroups, [marqueCtx]: dedupedArr });
     await loadAll();
     setSaveState("saved");
+  };
+
+  // Acronymes "Jeu vidéo" (§ JEU_VIDEO_NUMBER_GROUPS, demande explicite : "stocker l'acronyme...
+  // lié aux paires/triple, pas aux vues Jeu") — override explicite par groupe, écriture immédiate
+  // (comme le token Gist plus bas), jamais de bouton "Enregistrer" séparé. Une valeur vidée retire
+  // l'override plutôt que de stocker une chaîne vide : le groupe retombe alors sur
+  // defaultJeuVideoGroupAcronym (§ voir buildNationalSheetRows) — utile si Yann change d'avis.
+  const doSetJvAcronym = async (storageKey, raw) => {
+    const v = raw.trim().toUpperCase();
+    const next = { ...jvAcronymOverrides };
+    if (v) next[storageKey] = v; else delete next[storageKey];
+    setJvAcronymOverrides(next);
+    await writeJSON("jeu_video_group_acronyms", next);
   };
 
   if (!ready) return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
@@ -11367,6 +11404,45 @@ function SettingsView({
             </div>
           </React.Fragment>
         )}
+        </React.Fragment>
+        )}
+      </div>
+
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
+        <button
+          onClick={() => toggleSection("jvAcronyms")}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+            background: "transparent", border: "none", cursor: "pointer", padding: 0,
+            marginBottom: collapsed.jvAcronyms ? 0 : 10,
+          }}
+        >
+          <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: LIGHTBLUE }}>Acronymes Jeu vidéo</span>
+          <span style={{ color: MUTED, fontSize: 12, transform: collapsed.jvAcronyms ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+        </button>
+        {!collapsed.jvAcronyms && (
+        <React.Fragment>
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 1.5 }}>
+          Nom court utilisé dans les colonnes "No_..." de l'export Excel National (numéro spécifique par paire/triple, fiche Catalogue → "Jeu vidéo"). Un groupe non modifié ici garde une valeur calculée automatiquement (initiales des jeux) — lié uniquement aux paires/triples de jeux, jamais aux vues Jeu que tu crées par marque.
+        </div>
+        {Array.from(new Set(JEU_VIDEO_DEFS.map((jv) => jv.gen))).map((gen) => (
+          <div key={gen} style={{ marginBottom: 10 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 4 }}>{gen}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {JEU_VIDEO_NUMBER_GROUPS.filter((grp) => grp.keys.some((k) => (JEU_VIDEO_DEFS.find((d) => d.key === k) || {}).gen === gen)).map((grp) => (
+                <div key={grp.storageKey} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 12, color: TXT }}>{grp.label}</span>
+                  <input
+                    value={jvAcronymOverrides[grp.storageKey] !== undefined ? jvAcronymOverrides[grp.storageKey] : defaultJeuVideoGroupAcronym(grp.keys)}
+                    onChange={(e) => doSetJvAcronym(grp.storageKey, e.target.value)}
+                    maxLength={12}
+                    style={{ ...miniInput, width: 90, flexShrink: 0, boxSizing: "border-box", textTransform: "uppercase" }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
         </React.Fragment>
         )}
       </div>
@@ -13863,49 +13939,42 @@ async function buildGameSheetRows(g) {
 // Colonnes Dispo_<jeu> et AlphaLA/AlphaLZA : purement informatives, jamais relues à l'import (la
 // disponibilité se modifie via le Catalogue, §21bis) — toutes les autres colonnes sont éditables.
 //
-// ---- Bloc "Jeu vidéo" (§ demande explicite de réorganisation, remplace l'ancien double bloc plat
-// "JV_<clé>" (tous les jeux à la suite) + "NumeroVue_<jeu>_<vueKey aléatoire>" (à la fin, peu
-// lisible)) : un groupe de colonnes par paire/triple JEU_VIDEO_PAIRS (déjà dans l'ordre "1G → 10G"
-// utilisé partout ailleurs dans l'app pour ces jeux — fiche Catalogue, pilules "Jeu vidéo"), de
-// gauche à droite dans cet ordre :
-//   No_<marque>_<ACRONYME>  (numéro spécifique à la vue Jeu correspondante, § voir doc §5ter —
-//                             uniquement si une vue existe, toutes marques confondues, avec
-//                             EXACTEMENT les jeux du groupe ; absent sinon)
+// ---- Bloc "Jeu vidéo" (§ demande explicite : "lié aux paires/triple, pas aux vues Jeu que je vais
+// créer" — remplace l'ancien double bloc plat "JV_<clé>" (tous les jeux à la suite) +
+// "NumeroVue_<jeu>_<vueKey aléatoire>" (à la fin, dépendait de `custom_jeu_views` donc absent tant
+// qu'aucune vue n'était configurée pour la marque, et coupait les triples en deux si une vue ne
+// couvrait que 2 des 3 jeux)) : un groupe de colonnes par entrée JEU_VIDEO_PAIRS (déjà dans l'ordre
+// "1G → 10G" utilisé partout ailleurs dans l'app pour ces jeux), de gauche à droite dans cet ordre :
+//   No_<ACRONYME>[, No_<ACRONYME2>...]  (numéro spécifique, § JEU_VIDEO_NUMBER_GROUPS — TOUJOURS
+//                             présent pour un groupe à numéro partagé (paire/triple réel) ; pour un
+//                             groupe non partagé, ex. Arceus/Z-A, un "No" par jeu du groupe, chacun
+//                             son numéro propre)
 //   JV_<clé1>, JV_<clé2>, [JV_<clé3>]  (disponibilité, une par jeu du groupe — déplacées ici
 //                             depuis l'ancien bloc plat pour rester à côté de leur "No")
 //   <colonne vide>           (séparateur visuel entre groupes, en-tête espaces uniquement)
-// L'acronyme (jeuVideoGroupAcronym, § voir plus haut) est recalculé à chaque export à partir des
-// libellés JEU_VIDEO_DEFS des jeux de la vue — jamais stocké, donc aucune migration de nom de
-// colonne nécessaire (voir importNationalSheet, qui le recalcule à l'identique pour retrouver la
-// vue). Un groupe sans vue configurée (pas de "No") garde quand même ses colonnes JV_<clé> et son
-// séparateur, pour une structure uniforme sur toute la plage 1G → 10G.
+// Numéros lus depuis DATA.jeuVideoNumbers (bloc Catalogue "Numéro spécifique par jeu vidéo", clé
+// pairKey/JEU_VIDEO_DEFS — § voir persistCatalogEdit) : INDÉPENDANT de `custom_jeu_views`, donc
+// toujours présent quel que soit l'état des vues créées/supprimées par marque pour l'arrangement
+// des boîtes (§ doc §5ter, mécanisme distinct qui reste sur game_view_number_overrides, plus
+// exporté ici). L'acronyme vient de `jeu_video_group_acronyms` (§ Paramètres → "Acronymes Jeu
+// vidéo") avec repli sur defaultJeuVideoGroupAcronym tant que Yann n'a rien corrigé pour ce groupe.
 // Coloration des en-têtes par groupe (demandée) : non réalisable avec la bibliothèque SheetJS
 // gratuite chargée ici (xlsx.full.min.js) — l'écriture de styles de cellule (couleurs de fond) est
 // réservée à la version payante "Pro" de SheetJS ; seule la lecture de styles existants est
 // supportée. Le regroupement + séparateurs ci-dessus reste donc le seul repère visuel disponible.
 async function buildNationalSheetRows() {
   const manual = await storageGetJSON("manual_caught", {});
-  const jeuViewsAll = await storageGetJSON("custom_jeu_views", {});
-  const numberOverridesAll = await storageGetJSON("game_view_number_overrides", {});
+  const acronymOverrides = await storageGetJSON("jeu_video_group_acronyms", {});
 
   const usedNoCols = new Set();
-  const jvGroups = JEU_VIDEO_PAIRS.map((grp) => {
-    let match = null;
-    if (grp.sharedNumber) {
-      for (const g of GAME_ORDER) {
-        const v = (jeuViewsAll[g] || []).find((vv) => (vv.jeuKeys || []).slice().sort().join("|") === grp.keys.slice().sort().join("|"));
-        if (v) { match = { marque: g, viewKey: v.key }; break; }
-      }
-    }
-    let noCol = null;
-    if (match) {
-      const base = "No_" + match.marque + "_" + jeuVideoGroupAcronym(grp.keys);
-      let name = base, n = 2;
-      while (usedNoCols.has(name)) { name = base + (n++); }
-      usedNoCols.add(name);
-      noCol = name;
-    }
-    return { keys: grp.keys, match, noCol };
+  const noColFor = {};
+  JEU_VIDEO_NUMBER_GROUPS.forEach((grp) => {
+    const acr = acronymOverrides[grp.storageKey] || defaultJeuVideoGroupAcronym(grp.keys) || grp.storageKey;
+    const base = "No_" + acr;
+    let name = base, n = 2;
+    while (usedNoCols.has(name)) { name = base + (n++); }
+    usedNoCols.add(name);
+    noColFor[grp.storageKey] = name;
   });
 
   const order = DATA.natSortOrder || DATA.nat.map((_, i) => i);
@@ -13936,11 +14005,17 @@ async function buildNationalSheetRows() {
     row["Forme(manuel)"] = manual["Forme|" + key] ? 1 : 0;
     // ---- Bloc "Jeu vidéo" groupé par paire/triple, 1G -> 10G (§ voir commentaire ci-dessus) ----
     const jv = jeuVideoFor(nom, forme);
+    const jvn = (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) || {};
     let spacerN = 1;
-    jvGroups.forEach((grp) => {
-      if (grp.noCol) {
-        const ov = ((numberOverridesAll[grp.match.marque] || {})[grp.match.viewKey] || {})[key];
-        row[grp.noCol] = ov !== undefined && ov !== null ? ov : "";
+    JEU_VIDEO_PAIRS.forEach((grp) => {
+      if (grp.sharedNumber) {
+        const ov = jvn[grp.pairKey];
+        row[noColFor[grp.pairKey]] = ov !== undefined && ov !== null ? ov : "";
+      } else {
+        grp.keys.forEach((k) => {
+          const ov = jvn[k];
+          row[noColFor[k]] = ov !== undefined && ov !== null ? ov : "";
+        });
       }
       grp.keys.forEach((k) => {
         const v = jv[k];
@@ -14629,20 +14704,23 @@ async function importGameSheet(g, rows, mode) {
 }
 
 // Miroir de buildNationalSheetRows ci-dessus (feuille fusionnée National + Paramètres, § voir
-// doc). Trois familles de colonnes traitées, chacune indépendamment (présence de colonne =
-// donnée touchée, absence = donnée non touchée, même logique de fusion par colonnes que l'ancien
+// doc). Familles de colonnes traitées, chacune indépendamment (présence de colonne = donnée
+// touchée, absence = donnée non touchée, même logique de fusion par colonnes que l'ancien
 // importParamsSheet) :
 //  - "Forme(manuel)" → manual_caught (pseudo-jeu "Forme").
 //  - Colonnes Paramètres (Numero/Region/Evolution/AlphaLA/AlphaLZA/HomeDex/numéro par jeu) →
 //    catalog_overrides/catalog_additions, jamais de suppression de fiche via cette feuille.
 //  - "JV_<clé>" (Jeu vidéo) → catalog_overrides/catalog_additions (jeuVideo). "JV_go" relit aussi
 //    l'ancienne colonne "GoSorti" (compatibilité descendante).
-//  - "No_<marque>_<ACRONYME>" (numéros spécifiques par vue Jeu, paires/triples — anciennement
-//    "NumeroVue_<jeu>_<vueKey>", § voir buildNationalSheetRows) → game_view_number_overrides.
-//    L'acronyme n'étant jamais stocké, il est recalculé ici (jeuVideoGroupAcronym) pour chaque vue
-//    existante de la marque afin de retrouver sa clé de stockage réelle — un ancien fichier
-//    exporté avant ce changement (colonnes "NumeroVue_") n'est plus reconnu ici (transition
-//    volontairement sans historique, § demande explicite : JSON conservé par ailleurs).
+//  - "No_<ACRONYME>" (numéros par paire/triple Jeu vidéo, § JEU_VIDEO_NUMBER_GROUPS — INDÉPENDANT
+//    de `custom_jeu_views`, § demande explicite) → catalog_overrides/catalog_additions
+//    (jeuVideoNumbers), même mécanisme de fusion que jeuVideo ci-dessus. L'acronyme n'étant
+//    résolu qu'au moment de l'export/import (jeu_video_group_acronyms avec repli sur
+//    defaultJeuVideoGroupAcronym), une colonne dont l'acronyme ne correspond plus à aucun groupe
+//    (jamais censé arriver en usage normal) est silencieusement ignorée, comme une colonne
+//    absente — un ancien fichier avec des colonnes "NumeroVue_<jeu>_<vue>" (avant ce changement)
+//    n'est plus reconnu ici (transition volontairement sans historique, § demande explicite :
+//    JSON conservé par ailleurs).
 // Colonnes "Dispo_<jeu>" et AlphaLA/AlphaLZA : volontairement IGNORÉES à l'import — ce sont des
 // colonnes structurelles informatives (disponibilité, pas possession), non éditables depuis cette
 // feuille (la disponibilité se modifie via le Catalogue, §21bis). caught_<jeu> et alpha_caught
@@ -14664,31 +14742,17 @@ async function importNationalSheet(rows, mode) {
   const gameColsPresent = GAME_ORDER.filter(hasCol);
   const applyGames = gameColsPresent.length === GAME_ORDER.length; // jeu de colonnes complet uniquement, par sécurité
 
-  // Colonnes "No_<marque>_<ACRONYME>" présentes dans le fichier, regroupées par marque pour
-  // minimiser les lectures/écritures storage. L'acronyme (jeuVideoGroupAcronym) est recalculé
-  // pour chaque vue déjà configurée de la marque afin de retrouver sa clé de stockage interne
-  // (viewKey) — une vue non reconnue (jeux différents depuis l'export, ou pas encore créée dans
-  // cet environnement) est silencieusement ignorée, comme une colonne absente.
-  const numeroVueColsByGame = {};
-  const noColsPresent = Object.keys(sample).filter((c) => c.startsWith("No_"));
-  if (noColsPresent.length > 0) {
-    const jeuViewsAllForImport = await storageGetJSON("custom_jeu_views", {});
-    noColsPresent.forEach((col) => {
-      const m = /^No_([^_]+)_([A-Za-zÀ-ÖØ-öø-ÿ0-9]+)$/.exec(col);
-      if (!m || !GAME_ORDER.includes(m[1])) return;
-      const marque = m[1], acronym = m[2];
-      const v = (jeuViewsAllForImport[marque] || []).find((vv) => jeuVideoGroupAcronym(vv.jeuKeys || []) === acronym);
-      if (v) (numeroVueColsByGame[marque] || (numeroVueColsByGame[marque] = [])).push({ col, viewKey: v.key });
-    });
-  }
-  let numberOverridesAll = null;
-  if (Object.keys(numeroVueColsByGame).length > 0) {
-    numberOverridesAll = await storageGetJSON("game_view_number_overrides", {});
-    Object.keys(numeroVueColsByGame).forEach((g) => {
-      numberOverridesAll[g] = { ...(numberOverridesAll[g] || {}) };
-      numeroVueColsByGame[g].forEach((c) => { numberOverridesAll[g][c.viewKey] = { ...(numberOverridesAll[g][c.viewKey] || {}) }; });
-    });
-  }
+  // Colonnes "No_<ACRONYME>" présentes dans le fichier → groupe JEU_VIDEO_NUMBER_GROUPS
+  // correspondant (storageKey = pairKey pour un groupe à numéro partagé, ou la clé JEU_VIDEO_DEFS
+  // elle-même pour un groupe non partagé comme Arceus/Z-A), résolu via l'acronyme effectif
+  // (override stocké ou defaultJeuVideoGroupAcronym) — même résolution qu'à l'export.
+  const acronymOverridesForImport = await storageGetJSON("jeu_video_group_acronyms", {});
+  const noColToStorageKey = {};
+  Object.keys(sample).filter((c) => c.startsWith("No_")).forEach((col) => {
+    const acr = col.slice(3);
+    const grp = JEU_VIDEO_NUMBER_GROUPS.find((g) => (acronymOverridesForImport[g.storageKey] || defaultJeuVideoGroupAcronym(g.keys)) === acr);
+    if (grp) noColToStorageKey[col] = grp.storageKey;
+  });
 
   rows.forEach((row) => {
     const nom = String(row.Nom || "").trim();
@@ -14713,6 +14777,15 @@ async function importNationalSheet(rows, mode) {
       }
     });
 
+    const jvnPatch = {};
+    let hasJvnPatch = false;
+    Object.keys(noColToStorageKey).forEach((col) => {
+      const raw = row[col];
+      if (raw === "" || raw === undefined) return;
+      const v = String(raw).trim();
+      if (v) { jvnPatch[noColToStorageKey[col]] = v; hasJvnPatch = true; }
+    });
+
     const fields = { nom, forme: forme || null };
     if (hasNumero && row.Numero !== "") fields.nat = row.Numero;
     if (hasRegion && row.Region) fields.region = row.Region;
@@ -14732,7 +14805,7 @@ async function importNationalSheet(rows, mode) {
     }
     const hasParamsPatch = Object.keys(fields).length > 2; // plus que nom/forme
 
-    if (hasJvPatch || hasParamsPatch) {
+    if (hasJvPatch || hasJvnPatch || hasParamsPatch) {
       const idx = findNatIdx(nom, forme);
       const natRow = idx >= 0 ? DATA.nat[idx] : null;
       if (natRow && natRow.__additionId) {
@@ -14740,6 +14813,7 @@ async function importNationalSheet(rows, mode) {
         if (i2 >= 0) {
           let patched = additions[i2];
           if (hasJvPatch) patched = { ...patched, jeuVideo: { ...(patched.jeuVideo || {}), ...jvPatch } };
+          if (hasJvnPatch) patched = { ...patched, jeuVideoNumbers: { ...(patched.jeuVideoNumbers || {}), ...jvnPatch } };
           if (hasParamsPatch) patched = { ...patched, ...fields };
           additions[i2] = patched;
           additionsChanged = true;
@@ -14748,6 +14822,7 @@ async function importNationalSheet(rows, mode) {
         const bk = natRow.__baseKey;
         let patched = overrides[bk] || {};
         if (hasJvPatch) patched = { ...patched, jeuVideo: { ...(patched.jeuVideo || {}), ...jvPatch } };
+        if (hasJvnPatch) patched = { ...patched, jeuVideoNumbers: { ...(patched.jeuVideoNumbers || {}), ...jvnPatch } };
         if (hasParamsPatch) patched = { ...patched, ...fields };
         overrides[bk] = patched;
         overridesChanged = true;
@@ -14761,22 +14836,11 @@ async function importNationalSheet(rows, mode) {
         additionsChanged = true;
       }
     }
-
-    if (numberOverridesAll) {
-      Object.keys(numeroVueColsByGame).forEach((g) => {
-        numeroVueColsByGame[g].forEach((c) => {
-          const raw = row[c.col];
-          const val = raw === undefined || raw === null ? "" : String(raw).trim();
-          if (val) numberOverridesAll[g][c.viewKey][key] = val; else delete numberOverridesAll[g][c.viewKey][key];
-        });
-      });
-    }
   });
 
   await window.storage.set("manual_caught", JSON.stringify(manual), false);
   if (overridesChanged) await window.storage.set("catalog_overrides", JSON.stringify(overrides), false);
   if (additionsChanged) await window.storage.set("catalog_additions", JSON.stringify(additions), false);
-  if (numberOverridesAll) await window.storage.set("game_view_number_overrides", JSON.stringify(numberOverridesAll), false);
 }
 
 async function importEventSheet(rows, mode) {
@@ -17390,6 +17454,11 @@ function App() {
     "custom_jeu_views",
     "game_view_number_overrides",
     "game_view_box_group_overrides",
+    // Acronymes des groupes "Jeu vidéo" (paires/triples, § JEU_VIDEO_NUMBER_GROUPS) utilisés dans
+    // les en-têtes Excel "No_<ACRONYME>" du National (§ buildNationalSheetRows) — éditable dans
+    // Paramètres → "Acronymes Jeu vidéo". JSON/Gist uniquement, aucune feuille Excel dédiée (une
+    // vingtaine d'entrées seulement, comme game_view_box_settings ci-dessus).
+    "jeu_video_group_acronyms",
     "home2",
     "home2_search_suffix",
     "parfait_search_suffix",
