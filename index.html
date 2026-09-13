@@ -33,7 +33,7 @@
     set: async (key, value, shared) => {
       localStorage.setItem("pkdx_" + key, value);
       // Compteur de modifications depuis le dernier export (voir doc §7bis/§9) : incrémenté à
-      // chaque écriture de donnée réelle, remis à 0 par markExported/importSave/resetAllData.
+      // chaque écriture de donnée réelle, remis à 0 par resetModCount/markOneDriveBackedUp/importSave/resetAllData.
       // "last_export_at" et "mod_count" eux-mêmes sont exclus pour ne pas se compter.
       if (key !== "last_export_at" && key !== "mod_count") {
         try {
@@ -297,7 +297,7 @@ async function oneDriveUploadFile(token, folder, filename, blob) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.13.17.35";
+const APP_VERSION = "2026.9.13.18.30";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -17796,16 +17796,20 @@ function App() {
     try {
       const token = await oneDriveGetToken(oneDriveClientId);
       const folder = oneDriveFolder || ONEDRIVE_DEFAULT_FOLDER;
-      const ts = exportTimestamp();
+      // Noms de fichiers fixes (pas d'horodatage, contrairement aux exports locaux) : chaque envoi
+      // écrase le précédent — voir oneDriveUploadFile, qui dépose toujours au même chemin.
       const out = await buildExportOut();
       const jsonBlob = new Blob([JSON.stringify(out)], { type: "application/json" });
-      await oneDriveUploadFile(token, folder, `Pokedex export ${ts}.json`, jsonBlob);
+      await oneDriveUploadFile(token, folder, "Pokedex export.json", jsonBlob);
       const wb = await buildExcelWorkbook(new Set(EXCEL_SHEETS.map((s) => s.key)));
       const excelBuf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
       const excelBlob = new Blob([excelBuf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      await oneDriveUploadFile(token, folder, `Pokedex export ${ts}.xlsx`, excelBlob);
+      await oneDriveUploadFile(token, folder, "Pokedex export.xlsx", excelBlob);
       setOneDriveState("done");
       setOneDriveMsg(`Envoyé vers OneDrive (dossier "${folder}").`);
+      // Seul un envoi OneDrive réussi fait avancer le repère "dernier backup" (voir sa définition
+      // plus bas) — les exports locaux manuels ne le touchent plus (demande explicite).
+      await markOneDriveBackedUp();
     } catch (e) {
       setOneDriveState("error");
       setOneDriveMsg("Erreur d'envoi OneDrive : " + (e && e.message ? e.message : "inconnue"));
@@ -17912,8 +17916,9 @@ function App() {
   }, []);
 
   const daysSinceExport = lastExportAt ? Math.floor((Date.now() - lastExportAt) / 86400000) : null;
+  // N'a de sens qu'une fois OneDrive configuré (voir doOneDriveSend) — avant ça, rien à rappeler.
   const showExportReminder =
-    !reminderDismissed && lastExportAt !== undefined && (lastExportAt === null || daysSinceExport >= EXPORT_REMINDER_DAYS);
+    !!oneDriveClientId && !reminderDismissed && lastExportAt !== undefined && (lastExportAt === null || daysSinceExport >= EXPORT_REMINDER_DAYS);
 
   const ALL_KEYS = [
     ...GAME_ORDER.map((g) => "caught_" + g),
@@ -18013,7 +18018,10 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
-  const markExported = async () => {
+  // Repère "dernier backup" consulté par le bandeau de rappel (showExportReminder plus bas) —
+  // n'est plus déclenché que par un envoi OneDrive réussi (doOneDriveSend, demande explicite) ;
+  // les exports locaux manuels appellent resetModCount seul, sans avancer ce repère.
+  const markOneDriveBackedUp = async () => {
     const now = Date.now();
     try { await window.storage.set(LAST_EXPORT_KEY, String(now), false); } catch (e) {}
     setLastExportAt(now);
@@ -18024,7 +18032,7 @@ function App() {
   const exportSave = async () => {
     const out = await buildExportOut();
     downloadExportBlob(out);
-    await markExported();
+    resetModCount();
     setIoMsg("Sauvegarde exportée.");
     setTimeout(() => setIoMsg(""), 3000);
   };
@@ -18104,7 +18112,6 @@ function App() {
     // même en cas d'oubli d'export manuel (voir doc §7bis).
     const out = await buildExportOut();
     downloadExportBlob(out);
-    await markExported();
     // "custom_marques" est conservée lors d'un reset complet : c'est la liste de référence des
     // marques (dont celles des onglets Home/jeu), pas une donnée de collection — la vider rendrait
     // impossible toute sélection de marque (Shiny/Double/Event/Interjeu, Jeu-DO) juste après un
@@ -18225,11 +18232,11 @@ function App() {
         }}>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12.5, color: GOLD }}>
             {lastExportAt === null
-              ? "Tu n'as encore jamais exporté ta sauvegarde."
-              : `Dernier export il y a ${daysSinceExport} jour${daysSinceExport > 1 ? "s" : ""}.`} Pense à exporter pour ne rien perdre.
+              ? "Tu n'as encore jamais envoyé de sauvegarde vers OneDrive."
+              : `Dernier envoi vers OneDrive il y a ${daysSinceExport} jour${daysSinceExport > 1 ? "s" : ""}.`} Pense à envoyer pour ne rien perdre.
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={exportSave} style={{ ...btnGhost, borderColor: `${GOLD}88`, color: GOLD }}>📤 Exporter maintenant</button>
+            <button onClick={doOneDriveSend} style={{ ...btnGhost, borderColor: `${GOLD}88`, color: GOLD }}>☁️ Envoyer vers OneDrive</button>
             <button onClick={() => setReminderDismissed(true)} style={btnGhost}>Plus tard</button>
           </div>
         </div>

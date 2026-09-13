@@ -2,7 +2,7 @@
 // CACHE_VERSION à synchroniser avec APP_VERSION à chaque livraison qui touche l'app shell
 // (index.html, manifest.json, icônes, ou la liste des CDN ci-dessous) : changer cette chaîne
 // suffit à invalider l'ancien cache au prochain chargement (voir "activate" plus bas).
-const CACHE_VERSION = "2026.9.13.17.35";
+const CACHE_VERSION = "2026.9.13.18.30";
 const CACHE_NAME = `pokedex-shell-${CACHE_VERSION}`;
 
 // Ressources nécessaires au tout premier rendu de l'app, mises en cache dès l'installation du
