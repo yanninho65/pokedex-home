@@ -252,7 +252,10 @@ let oneDriveMsalApp = null;
 function getOneDriveMsalApp(clientId) {
   if (!oneDriveMsalApp || oneDriveMsalApp.__clientId !== clientId) {
     oneDriveMsalApp = new msal.PublicClientApplication({
-      auth: { clientId, authority: "https://login.microsoftonline.com/common", redirectUri: ONEDRIVE_REDIRECT_URI },
+      // "consumers" (et non "common") : doit correspondre au type de compte choisi lors de
+      // l'inscription Azure ("Comptes Microsoft personnels uniquement", voir doc). Si l'app est un
+      // jour réinscrite en "common" (comptes pro + perso), changer ici en conséquence.
+      auth: { clientId, authority: "https://login.microsoftonline.com/consumers", redirectUri: ONEDRIVE_REDIRECT_URI },
       cache: { cacheLocation: "localStorage" },
     });
     oneDriveMsalApp.__clientId = clientId;
@@ -294,7 +297,7 @@ async function oneDriveUploadFile(token, folder, filename, blob) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.13.10.59";
+const APP_VERSION = "2026.9.13.17.35";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -11855,7 +11858,7 @@ function SettingsView({
         {!collapsed.onedrive && (
         <React.Fragment>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
-            Envoie une copie de la sauvegarde (JSON + Excel) dans un dossier OneDrive à chaque appui — pas une synchro, juste un dépôt à la demande. Nécessite une inscription d'application (gratuite) sur <strong>portal.azure.com</strong> : type "Application monopage (SPA)", URI de redirection <code>{ONEDRIVE_REDIRECT_URI}</code>, permission d'API déléguée Microsoft Graph <strong>Files.ReadWrite</strong>. Colle ensuite l'ID d'application (client ID) ci-dessous.
+            Envoie une copie de la sauvegarde (JSON + Excel) dans un dossier OneDrive à chaque appui — pas une synchro, juste un dépôt à la demande. Nécessite une inscription d'application (gratuite) sur <strong>entra.microsoft.com</strong> (ou portal.azure.com) : type de compte "Comptes Microsoft personnels uniquement", plateforme "Application monopage (SPA)", URI de redirection <code>{ONEDRIVE_REDIRECT_URI}</code>, permission d'API déléguée Microsoft Graph <strong>Files.ReadWrite</strong>. Colle ensuite l'ID d'application (client ID) ci-dessous.
           </div>
           <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: TXT, marginBottom: 4 }}>ID d'application (client ID) Azure</div>
           <input
