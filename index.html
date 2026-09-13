@@ -67,6 +67,7 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script crossorigin src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
 <script>
 // Données structurelles (Pokédex par jeu, sprites, catalogue de boîtes, etc.) — bloc JSON pur
 // (aucune JSX), volontairement hors du bloc Babel qui suit : ça évite de faire transpiler ~1 Mo
@@ -227,10 +228,73 @@ async function gistUpdate(gistId, token, contentObj) {
   return res.json();
 }
 
+// ---- Envoi vers OneDrive (Microsoft Graph API via MSAL.js) -----------------------------------
+// Contrairement à la synchro Gist ci-dessus (bidirectionnelle, avec détection de conflit), ceci
+// est un simple bouton "pousser" : jamais de lecture ni de comparaison du contenu distant, jamais
+// de rechargement de page. Client ID et dossier cible vivent en localStorage BRUT, même logique
+// que les clés Gist : jamais dans window.storage/ALL_KEYS, jamais dans Export/Import JSON ni Excel.
+const ONEDRIVE_CLIENT_ID_KEY = "pkdx_onedrive_client_id";
+const ONEDRIVE_FOLDER_KEY = "pkdx_onedrive_folder";
+const ONEDRIVE_DEFAULT_FOLDER = "Pokédex";
+// SPA — pas de secret, PKCE géré en interne par MSAL. Le redirect URI doit être déclaré tel quel
+// (valeur réellement servie) dans l'inscription d'app Azure, plateforme "Application monopage (SPA)".
+const ONEDRIVE_REDIRECT_URI = window.location.origin + window.location.pathname;
+
+function getOneDriveClientId() { try { return localStorage.getItem(ONEDRIVE_CLIENT_ID_KEY) || ""; } catch (e) { return ""; } }
+function setOneDriveClientIdRaw(v) { try { if (v) localStorage.setItem(ONEDRIVE_CLIENT_ID_KEY, v); else localStorage.removeItem(ONEDRIVE_CLIENT_ID_KEY); } catch (e) {} }
+function getOneDriveFolderRaw() { try { return localStorage.getItem(ONEDRIVE_FOLDER_KEY) || ONEDRIVE_DEFAULT_FOLDER; } catch (e) { return ONEDRIVE_DEFAULT_FOLDER; } }
+function setOneDriveFolderRaw(v) { try { if (v) localStorage.setItem(ONEDRIVE_FOLDER_KEY, v); else localStorage.removeItem(ONEDRIVE_FOLDER_KEY); } catch (e) {} }
+
+// Une seule instance MSAL réutilisée tant que le Client ID ne change pas (recréer l'instance à
+// chaque appel casserait le cache de session — l'utilisateur redeviendrait invité à se reconnecter
+// à chaque envoi).
+let oneDriveMsalApp = null;
+function getOneDriveMsalApp(clientId) {
+  if (!oneDriveMsalApp || oneDriveMsalApp.__clientId !== clientId) {
+    oneDriveMsalApp = new msal.PublicClientApplication({
+      auth: { clientId, authority: "https://login.microsoftonline.com/common", redirectUri: ONEDRIVE_REDIRECT_URI },
+      cache: { cacheLocation: "localStorage" },
+    });
+    oneDriveMsalApp.__clientId = clientId;
+  }
+  return oneDriveMsalApp;
+}
+
+// Jeton d'accès Graph (scope Files.ReadWrite) — tente d'abord une acquisition silencieuse (déjà
+// connecté lors d'un envoi précédent), sinon ouvre une popup de connexion Microsoft.
+async function oneDriveGetToken(clientId) {
+  const app = getOneDriveMsalApp(clientId);
+  await app.initialize();
+  const scopes = ["Files.ReadWrite"];
+  const accounts = app.getAllAccounts();
+  if (accounts.length > 0) {
+    try {
+      const res = await app.acquireTokenSilent({ scopes, account: accounts[0] });
+      return res.accessToken;
+    } catch (e) {} // repli sur la popup ci-dessous (jeton expiré, session révoquée, etc.)
+  }
+  const res = await app.loginPopup({ scopes });
+  return res.accessToken;
+}
+
+// Dépose un fichier dans le dossier configuré — Graph le crée automatiquement s'il n'existe pas
+// encore, et écrase un fichier de même nom (comportement standard de ce endpoint "contenu simple").
+// Limite de 4 Mo par fichier (endpoint "simple upload") : largement suffisant pour cet usage.
+async function oneDriveUploadFile(token, folder, filename, blob) {
+  const path = `${folder}/${filename}`.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const res = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${path}:/content`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": blob.type || "application/octet-stream" },
+    body: blob,
+  });
+  if (!res.ok) throw new Error("Échec de l'envoi de '" + filename + "' (" + res.status + ")");
+  return res.json();
+}
+
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.13.10.35";
+const APP_VERSION = "2026.9.13.10.59";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1834,10 +1898,41 @@ function GistSyncBadge({ configured, state, modCount, onClick }) {
       }}
     >
       {syncing && (
-        <style>{`@keyframes pkdxGistSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        <style>{`@keyframes pkdxSyncSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
       )}
-      <span style={{ fontSize: 17, lineHeight: 1, display: "inline-block", animation: syncing ? "pkdxGistSpin 0.9s linear infinite" : "none" }}>{icon}</span>
+      <span style={{ fontSize: 17, lineHeight: 1, display: "inline-block", animation: syncing ? "pkdxSyncSpin 0.9s linear infinite" : "none" }}>{icon}</span>
       <span style={{ width: 7, height: 7, borderRadius: 999, background: dotColor, flexShrink: 0 }} />
+    </button>
+  );
+}
+
+// Bouton "pousser vers OneDrive" — même famille visuelle que GistSyncBadge (icône + animation de
+// rotation pendant l'envoi, partage le même keyframe pkdxSyncSpin), mais sans pastille de statut
+// ni notion de "modifications en attente" : ce n'est pas une synchro, juste un envoi à la demande.
+function OneDriveSendButton({ configured, state, onClick }) {
+  if (!configured) return null;
+  const sending = state === "sending";
+  const isError = state === "error";
+  const icon = isError ? "⚠️" : sending ? "🔄" : "☁️";
+  const label =
+    state === "error" ? "Erreur d'envoi vers OneDrive — appuyer pour réessayer"
+    : sending ? "Envoi vers OneDrive en cours…"
+    : state === "done" ? "Envoyé vers OneDrive — appuyer pour renvoyer"
+    : "Envoyer la sauvegarde vers OneDrive";
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      disabled={sending}
+      style={{
+        display: "flex", alignItems: "center", background: "transparent", border: "none",
+        cursor: sending ? "default" : "pointer", padding: "4px 6px", flexShrink: 0, color: isError ? "#E4572E" : MUTED,
+      }}
+    >
+      {sending && (
+        <style>{`@keyframes pkdxSyncSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      )}
+      <span style={{ fontSize: 17, lineHeight: 1, display: "inline-block", animation: sending ? "pkdxSyncSpin 0.9s linear infinite" : "none" }}>{icon}</span>
     </button>
   );
 }
@@ -11071,6 +11166,8 @@ function SettingsView({
   onSaveStateChange,
   gistToken, gistId, gistSyncedAt, gistModCount, gistSyncState, gistMsg,
   onSaveGistToken, onSaveGistId, onGistSync,
+  oneDriveClientId, oneDriveFolder, oneDriveState, oneDriveMsg,
+  onSaveOneDriveClientId, onSaveOneDriveFolder, onOneDriveSend,
 }) {
   const [ready, setReady] = useState(false);
   const [customMarques, setCustomMarques] = useState([]);
@@ -11098,11 +11195,15 @@ function SettingsView({
   const [modeAddOpen, setModeAddOpen] = useState(false);
   const [detailAddOpen, setDetailAddOpen] = useState(false);
   const [newValue, setNewValue] = useState({ marque: "", mode: "", location: "", jeu: "", boxgroup: "", detail: "" });
-  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, jeuVideo: true, catalog: true, detail: true, restrict: true, gist: true });
+  const [collapsed, setCollapsed] = useState({ marque: true, mode: true, location: true, jeu: true, boxgroup: true, jeuVideo: true, catalog: true, detail: true, restrict: true, gist: true, onedrive: true });
   const [gistTokenDraft, setGistTokenDraft] = useState(gistToken || "");
   const [gistIdDraft, setGistIdDraft] = useState(gistId || "");
   useEffect(() => { setGistTokenDraft(gistToken || ""); }, [gistToken]);
   useEffect(() => { setGistIdDraft(gistId || ""); }, [gistId]);
+  const [oneDriveClientIdDraft, setOneDriveClientIdDraft] = useState(oneDriveClientId || "");
+  const [oneDriveFolderDraft, setOneDriveFolderDraft] = useState(oneDriveFolder || ONEDRIVE_DEFAULT_FOLDER);
+  useEffect(() => { setOneDriveClientIdDraft(oneDriveClientId || ""); }, [oneDriveClientId]);
+  useEffect(() => { setOneDriveFolderDraft(oneDriveFolder || ONEDRIVE_DEFAULT_FOLDER); }, [oneDriveFolder]);
   const toggleSection = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const [saveState, setSaveState] = useState("idle");
   useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
@@ -11733,6 +11834,53 @@ function SettingsView({
           {gistMsg && (
             <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: gistSyncState === "error" || gistSyncState === "conflict" ? "#E4572E" : OK, marginTop: 6 }}>
               {gistMsg}
+            </div>
+          )}
+        </React.Fragment>
+        )}
+      </div>
+
+      <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
+        <button
+          onClick={() => toggleSection("onedrive")}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+            background: "transparent", border: "none", cursor: "pointer", padding: 0,
+            marginBottom: collapsed.onedrive ? 0 : 10,
+          }}
+        >
+          <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: INTERJEU }}>Envoi vers OneDrive</span>
+          <span style={{ color: MUTED, fontSize: 12, transform: collapsed.onedrive ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
+        </button>
+        {!collapsed.onedrive && (
+        <React.Fragment>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
+            Envoie une copie de la sauvegarde (JSON + Excel) dans un dossier OneDrive à chaque appui — pas une synchro, juste un dépôt à la demande. Nécessite une inscription d'application (gratuite) sur <strong>portal.azure.com</strong> : type "Application monopage (SPA)", URI de redirection <code>{ONEDRIVE_REDIRECT_URI}</code>, permission d'API déléguée Microsoft Graph <strong>Files.ReadWrite</strong>. Colle ensuite l'ID d'application (client ID) ci-dessous.
+          </div>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: TXT, marginBottom: 4 }}>ID d'application (client ID) Azure</div>
+          <input
+            value={oneDriveClientIdDraft}
+            onChange={(e) => { const v = e.target.value; setOneDriveClientIdDraft(v); onSaveOneDriveClientId(v.trim()); }}
+            placeholder="ex. 3f9a1b2c-…"
+            style={{ ...miniInput, width: "100%", marginBottom: 10 }}
+          />
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, fontWeight: 700, color: TXT, marginBottom: 4 }}>Dossier OneDrive cible</div>
+          <input
+            value={oneDriveFolderDraft}
+            onChange={(e) => { const v = e.target.value; setOneDriveFolderDraft(v); onSaveOneDriveFolder(v.trim()); }}
+            placeholder={ONEDRIVE_DEFAULT_FOLDER}
+            style={{ ...miniInput, width: "100%", marginBottom: 12 }}
+          />
+          <button
+            onClick={onOneDriveSend}
+            disabled={oneDriveState === "sending"}
+            style={{ ...tabActive, background: INTERJEU, color: "#fff", opacity: oneDriveState === "sending" ? 0.6 : 1 }}
+          >
+            {oneDriveState === "sending" ? "Envoi…" : "☁️ Envoyer maintenant"}
+          </button>
+          {oneDriveMsg && (
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: oneDriveState === "error" ? "#E4572E" : OK, marginTop: 10 }}>
+              {oneDriveMsg}
             </div>
           )}
         </React.Fragment>
@@ -17624,6 +17772,42 @@ function App() {
       setGistMsg("Erreur lors de la résolution du conflit : " + (e && e.message ? e.message : "inconnue"));
     }
   };
+
+  // ---- Envoi vers OneDrive (voir plus haut, doc au-dessus de oneDriveUploadFile) --------------
+  const [oneDriveClientId, setOneDriveClientIdState] = useState(() => getOneDriveClientId());
+  const [oneDriveFolder, setOneDriveFolderState] = useState(() => getOneDriveFolderRaw());
+  const [oneDriveState, setOneDriveState] = useState("idle"); // idle | sending | done | error
+  const [oneDriveMsg, setOneDriveMsg] = useState("");
+
+  const saveOneDriveClientId = (v) => { setOneDriveClientIdRaw(v); setOneDriveClientIdState(v); };
+  const saveOneDriveFolder = (v) => { setOneDriveFolderRaw(v); setOneDriveFolderState(v); };
+
+  // Envoie la sauvegarde complète (JSON + Excel, mêmes contenus que les exports manuels — toujours
+  // tous les onglets Excel, indépendamment de la sélection courante d'excelSelectedKeys) vers le
+  // dossier OneDrive configuré. Aller simple, jamais de lecture/comparaison distante (à la
+  // différence de doGistSync) : deux appuis créent simplement deux fichiers horodatés différents.
+  const doOneDriveSend = async () => {
+    if (!oneDriveClientId) { setOneDriveMsg("Renseigne d'abord l'ID d'application (client ID) Azure."); setOneDriveState("error"); return; }
+    setOneDriveState("sending");
+    setOneDriveMsg("");
+    try {
+      const token = await oneDriveGetToken(oneDriveClientId);
+      const folder = oneDriveFolder || ONEDRIVE_DEFAULT_FOLDER;
+      const ts = exportTimestamp();
+      const out = await buildExportOut();
+      const jsonBlob = new Blob([JSON.stringify(out)], { type: "application/json" });
+      await oneDriveUploadFile(token, folder, `Pokedex export ${ts}.json`, jsonBlob);
+      const wb = await buildExcelWorkbook(new Set(EXCEL_SHEETS.map((s) => s.key)));
+      const excelBuf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const excelBlob = new Blob([excelBuf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      await oneDriveUploadFile(token, folder, `Pokedex export ${ts}.xlsx`, excelBlob);
+      setOneDriveState("done");
+      setOneDriveMsg(`Envoyé vers OneDrive (dossier "${folder}").`);
+    } catch (e) {
+      setOneDriveState("error");
+      setOneDriveMsg("Erreur d'envoi OneDrive : " + (e && e.message ? e.message : "inconnue"));
+    }
+  };
   const [showExcelExportModal, setShowExcelExportModal] = useState(false);
   const [excelSelectedKeys, setExcelSelectedKeys] = useState(() => new Set(EXCEL_SHEETS.map((s) => s.key)));
   const [pendingExcelWb, setPendingExcelWb] = useState(null);
@@ -17985,6 +18169,11 @@ function App() {
                 if (gistToken) { doGistSync(); } else { setTab("settings"); }
               }}
             />
+            <OneDriveSendButton
+              configured={!!oneDriveClientId}
+              state={oneDriveState}
+              onClick={() => { if (oneDriveState !== "sending") doOneDriveSend(); }}
+            />
             <button
               onClick={() => setShowHelp(true)}
               title="Aide sur cet onglet"
@@ -18210,6 +18399,13 @@ function App() {
             onSaveGistToken={saveGistToken}
             onSaveGistId={saveGistId}
             onGistSync={doGistSync}
+            oneDriveClientId={oneDriveClientId}
+            oneDriveFolder={oneDriveFolder}
+            oneDriveState={oneDriveState}
+            oneDriveMsg={oneDriveMsg}
+            onSaveOneDriveClientId={saveOneDriveClientId}
+            onSaveOneDriveFolder={saveOneDriveFolder}
+            onOneDriveSend={doOneDriveSend}
           />
         )}
       </div>
