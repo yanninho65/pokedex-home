@@ -7,6 +7,8 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%23E4572E'/%3E%3Crect x='2' y='36' width='60' height='26' rx='14' fill='%23F4F4F4'/%3E%3Crect x='2' y='36' width='60' height='7' fill='%23C9CDD1'/%3E%3Ccircle cx='21' cy='19' r='12' fill='%23FFFFFF'/%3E%3Ccircle cx='21' cy='19' r='10' fill='%233B82C4'/%3E%3Ccircle cx='21' cy='19' r='4.5' fill='%23BEE3F8'/%3E%3Ccircle cx='44' cy='11' r='3.4' fill='%23E4572E' stroke='%23FFFFFF' stroke-width='1'/%3E%3Ccircle cx='53' cy='11' r='3.4' fill='%23FFEB3B' stroke='%23FFFFFF' stroke-width='1'/%3E%3Ccircle cx='53' cy='20' r='3.4' fill='%234CAF83' stroke='%23FFFFFF' stroke-width='1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Onest:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#121A24">
 <style>
   body { margin: 0; }
   * { box-sizing: border-box; }
@@ -228,7 +230,7 @@ async function gistUpdate(gistId, token, contentObj) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.10.13.5";
+const APP_VERSION = "2026.9.13.10.15";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -18365,6 +18367,20 @@ applyJeuVideoCustomizations()
   .then(() => applyCatalogCustomizations())
   .catch((e) => { console.error("Catalogue : échec de l'application des personnalisations", e); })
   .finally(() => { root.render(<App />); });
+</script>
+<script>
+  // Enregistrement du service worker (PWA — installabilité + fonctionnement hors-ligne). Script
+  // classique, hors du bloc Babel ci-dessus : pas de JSX ici, inutile de le faire transpiler.
+  // sw.js gère lui-même le cache de l'app shell (index.html, manifest, icônes, CDN React/Babel/
+  // XLSX) ; il exclut explicitement api.github.com (synchro Gist) et pokeapi.co pour que ces
+  // appels reflètent toujours l'état réel du réseau.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").catch((e) => {
+        console.error("Service worker : échec d'enregistrement", e);
+      });
+    });
+  }
 </script>
 </body>
 </html>
