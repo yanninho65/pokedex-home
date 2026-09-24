@@ -32,17 +32,10 @@
     },
     set: async (key, value, shared) => {
       localStorage.setItem("pkdx_" + key, value);
-      // Compteur de modifications depuis le dernier export (voir doc §7bis/§9) : incrémenté à
-      // chaque écriture de donnée réelle, remis à 0 par resetModCount/markOneDriveBackedUp/importSave/resetAllData.
-      // "last_export_at" et "mod_count" eux-mêmes sont exclus pour ne pas se compter.
-      if (key !== "last_export_at" && key !== "mod_count") {
-        try {
-          const n = (parseInt(localStorage.getItem("pkdx_mod_count") || "0", 10) || 0) + 1;
-          localStorage.setItem("pkdx_mod_count", String(n));
-          window.dispatchEvent(new CustomEvent("pkdx-mod-count", { detail: n }));
-        } catch (e) {}
-        // Compteur jumeau pour la synchro GitHub Gist (voir §46) — indépendant du compteur
-        // d'export JSON ci-dessus, remis à 0 uniquement par une synchro Gist réussie.
+      // Compteur de modifications non synchronisées (synchro GitHub Gist, voir §46) : incrémenté
+      // à chaque écriture de donnée réelle, remis à 0 uniquement par une synchro Gist réussie.
+      // "last_export_at" (repère de dernier envoi OneDrive) est exclu pour ne pas se compter.
+      if (key !== "last_export_at") {
         try {
           const gn = (parseInt(localStorage.getItem("pkdx_gist_mod_count") || "0", 10) || 0) + 1;
           localStorage.setItem("pkdx_gist_mod_count", String(gn));
@@ -81,9 +74,10 @@ const { useState, useEffect, useMemo, useRef } = React;
 const DATA = window.DATA; // voir <script> précédent (données structurelles hors Babel)
 const GAME_ORDER = ["IàV", "VI", "Alola", "GB", "LG", "Go", "DEPS", "Galar", "LA", "Paldea", "LZA", "GBA", "VV"];
 // Onglet "Autre" (§ demande explicite) : regroupe Double/Event/Interjeu sous un seul sélecteur
-// déroulant, même patron que GameNavSelect (menu Home).
+// déroulant (TabGroupNavSelect), même patron que le menu Home.
 const AUTRE_ORDER = ["double", "event", "interjeu"];
 const AUTRE_LABELS = { double: "Double", event: "Event", interjeu: "Interjeu" };
+const AUTRE_COLOR = "#78909C";
 // Nouvelles marques "GBA" (Rouge Feu Switch / Vert Feuille Switch) et "VV" (Vents/Vagues, 10G) —
 // § demande explicite. Aucune donnée Pokémon structurelle n'existe encore pour elles dans
 // DATA (généré depuis l'Excel source, pas modifiable ici) : on se contente d'amorcer des
@@ -164,7 +158,7 @@ function isFormeAvailableInGame(nom, forme, marque) {
 // ---- Synchronisation GitHub Gist (voir §46 doc) ----------------------------------------------
 // Token, ID de Gist et horodatage de dernière synchro vivent en localStorage BRUT (pas via
 // window.storage) : ils ne doivent jamais transiter par Export/Import JSON ni Excel, et ne
-// doivent pas incrémenter le compteur de modifications (mod_count / gist_mod_count).
+// doivent pas incrémenter le compteur de modifications (gist_mod_count).
 const GIST_FILENAME = "pokedex-sync.json";
 const GIST_TOKEN_KEY = "pkdx_gist_token";
 const GIST_ID_KEY = "pkdx_gist_id";
@@ -297,7 +291,7 @@ async function oneDriveUploadFile(token, folder, filename, blob) {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.13.18.30";
+const APP_VERSION = "2026.9.24.9.0";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -410,6 +404,9 @@ async function writeJSON(key, value) {
 }
 
 function pct(c, t) { return t === 0 ? 0 : Math.round((c / t) * 100); }
+// Valeur de tri d'un numéro national : nombre tel quel, sinon chiffres extraits du texte, et
+// 999999 (fin de liste) si aucun chiffre — partagé par tous les tris "par numéro national".
+function natSortValue(n) { return typeof n === "number" ? n : parseFloat(String(n).replace(/[^0-9.]/g, "")) || 999999; }
 // sel: null (= Tous, aucune restriction) | Set des valeurs cochées (peut être vide = Aucun)
 function matchesMulti(sel, value) { return sel === null || sel.has(value); }
 // Variante pour un champ à valeurs multiples (ex. "Détail") : correspond dès qu'AU MOINS une
@@ -610,7 +607,7 @@ const DEFAULT_JEU_VIDEO_DEFS = [
   // génération, clé interne "goattrapable") : distinct de "Go sorti" — précise si CETTE forme
   // précise est attrapable telle quelle dans Pokémon GO, indépendamment de la marque Go/Pokédex
   // Home (ex. Palkia Originel, attrapable en Go mais non transférable sur Home — même logique que
-  // les formes dominantes Alola, voir goAttrapableFor/go1AllFormsSorted). Affiché à GAUCHE de
+  // les formes dominantes Alola, voir go1AllFormsSorted). Affiché à GAUCHE de
   // "Go sorti" (§ demande explicite, voir ordre dans JEU_VIDEO_PAIRS ci-dessous).
   { key: "go", label: "Go sorti", gen: "Autre", marques: ["Go"] },
   { key: "goattrapable", label: "Go", gen: "Autre", marques: ["Go"] },
@@ -704,7 +701,7 @@ function isJvTextNote(v) {
   return typeof v === "string" && v !== "";
 }
 // Disponibilité EFFECTIVE d'un champ "Jeu vidéo" pour les besoins d'inclusion dans une vue précise
-// (rowsForPair/pairStatsFor/filtre Disponibilité) : `true` = disponible, une note texte est
+// (rowsForPair/filtre Disponibilité) : `true` = disponible, une note texte est
 // volontairement traitée comme INDISPONIBLE ici (§ demande explicite, cas Insolourdo/Deusolourdo :
 // la note "9G+" sur Cristal documente une restriction, elle ne doit jamais faire apparaître le
 // Pokémon comme disponible dans une vue jeu précis — Saphir Alpha, X, etc. — sur la seule base de
@@ -726,15 +723,6 @@ function parseJvCell(raw) {
 }
 function goSortiFor(nom, forme) {
   return !!jeuVideoFor(nom, forme).go;
-}
-// "Go attrapable" (§ demande explicite) : distinct de "Go sorti" (ci-dessus, disponibilité
-// générale du Pokémon dans Pokémon GO) — précise si CETTE forme précise est attrapable telle
-// quelle dans Pokémon GO, indépendamment de son appartenance à la marque Go (Pokédex Home). Même
-// logique que les formes dominantes Alola (jeuOnlyFormsFor) : une forme peut être explicitement
-// marquée attrapable ici tout en étant structurellement absente de DATA.games["Go"] (ex. Palkia
-// Originel, attrapable en Go mais non envoyable sur Home) — voir go1AllFormsSorted.
-function goAttrapableFor(nom, forme) {
-  return jeuVideoFor(nom, forme).goattrapable === true;
 }
 // Pilules structurelles "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc catalogue "Pokédex
 // Home & Alpha") — distinctes de la détection par texte de forme (isMegaOrGmaxForme/
@@ -936,13 +924,13 @@ const NAT_ALL_FORMS = (() => {
 // parmi toutes les formes de l'espèce. Utilisé par l'onglet Go 2 (§ demande explicite : "chaque
 // Pokémon n'apparaît qu'une fois") ET par son export/import Excel — même liste des deux côtés,
 // pour que la feuille "Go 2" corresponde exactement à ce que l'onglet affiche.
-function speciesRepresentatives() {
+// `forms` (par défaut tout le catalogue) permet de restreindre à un sous-ensemble — ex. la vue
+// "Par Pokémon" de Home 2, limitée aux formes "Pokédex Home".
+function speciesRepresentatives(forms = NAT_ALL_FORMS) {
   const bySpecies = new Map();
-  NAT_ALL_FORMS.forEach((f) => {
+  forms.forEach((f) => {
     const existing = bySpecies.get(f.nom);
-    const fn = typeof f.n === "number" ? f.n : parseFloat(String(f.n).replace(/[^0-9.]/g, "")) || 999999;
-    const en = existing ? (typeof existing.n === "number" ? existing.n : parseFloat(String(existing.n).replace(/[^0-9.]/g, "")) || 999999) : Infinity;
-    if (!existing || fn < en) bySpecies.set(f.nom, f);
+    if (!existing || natSortValue(f.n) < natSortValue(existing.n)) bySpecies.set(f.nom, f);
   });
   return Array.from(bySpecies.values());
 }
@@ -1565,7 +1553,7 @@ function LocationBadge({ label, style }) {
 // Samsung Internet), un <select> natif ouvre une boîte de dialogue avec case à cocher + bouton
 // "OK"/"Terminé" à valider, ce qui ajoute une étape inutile pour un choix simple. Ici, le choix
 // s'applique dès l'appui sur une option, sans confirmation supplémentaire (voir aussi
-// GameNavSelect, qui suit déjà ce même principe pour le sélecteur de jeu de l'onglet Home).
+// TabGroupNavSelect, qui suit déjà ce même principe pour le sélecteur de jeu de l'onglet Home).
 function Picker({ value, onChange, options, placeholder, buttonStyle, panelWidth, align }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -3111,6 +3099,16 @@ function TogglePill({ label, color, checked, onClick }) {
   );
 }
 
+// Case à cocher + libellé des menus "Vue"/"Affichage" de la barre flottante (options d'affichage).
+function CheckboxRow({ checked, onChange, children }) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {children}
+    </label>
+  );
+}
+
 function buildAlphaBaseline() {
   // DATA.nat rows: [..., alphaCapableLA(10), alphaCapableLZA(11), alphaCaughtLA(12), alphaCaughtLZA(13)]
   const base = {};
@@ -3459,7 +3457,6 @@ function useCollection(key, length) {
   const storageKey = "caught_" + key;
   const [flags, setFlags] = useState(null);
   const [ready, setReady] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
 
   useEffect(() => {
     let cancelled = false;
@@ -3476,19 +3473,13 @@ function useCollection(key, length) {
   }, [key, length]);
 
   const persist = async (arr) => {
-    setSaveState("saving");
-    try {
-      const rows = DATA.games[key] || [];
-      const dict = {};
-      rows.forEach((r, i) => { dict[r[1] + "|" + (r[2] || "")] = arr[i] ? 1 : 0; });
-      await window.storage.set(storageKey, JSON.stringify(dict), false);
-      setSaveState("saved");
-    } catch (e) {
-      setSaveState("error");
-    }
+    const rows = DATA.games[key] || [];
+    const dict = {};
+    rows.forEach((r, i) => { dict[r[1] + "|" + (r[2] || "")] = arr[i] ? 1 : 0; });
+    await writeJSON(storageKey, dict);
   };
 
-  return { flags, setFlags, ready, persist, saveState, storageKey };
+  return { flags, setFlags, ready, persist };
 }
 
 // Barre d'action flottante (bas, centrée) — regroupe recherche et ajout dans une seule
@@ -3927,7 +3918,7 @@ function useGameJeuOverrides(gameKey) {
 // Stockage `game_tab_sources` = { [marque]: { "nom|forme": [jeuKey, ...] } }, valeurs = clés de
 // jeu précis (JEU_VIDEO_DEFS, ex. "saphiralpha"/"rubisomega") — plusieurs jeux d'une même paire
 // peuvent être cochés en parallèle pour un même Pokémon (§ demande explicite, cas rare mais
-// possible), sans que cela compte double dans la paire (voir `pairStatsFor`, GameView).
+// possible), sans que cela compte double dans la paire.
 function useGameTabSources(marque) {
   const [dict, setDict] = useState(null);
   useEffect(() => {
@@ -4264,7 +4255,7 @@ function NumeroGroupeRow({ showNumber = true, numero, setNumero, numberPlacehold
     </div>
   );
 }
-function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, showCatalogEdit, marqueGames, onAvailabilityChanged, showNumber, currentNumber, numberPlaceholder, caught, onToggleCaught, onCancel, onSave, navIndex, navTotal, onNavPrev, onNavNext }) {
+function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, jeuOptions, marqueGames, onAvailabilityChanged, currentNumber, numberPlaceholder, caught, onToggleCaught, onCancel, onSave, navIndex, navTotal, onNavPrev, onNavNext }) {
   const [value, setValue] = useState(currentGroup || "");
   const [jeu, setJeuValue] = useState(currentJeu || "");
   const [numero, setNumero] = useState(currentNumber != null && currentNumber !== "" ? String(currentNumber) : "");
@@ -4357,8 +4348,8 @@ function BoxGroupModal({ nom, forme, marque, currentGroup, options, currentJeu, 
 function PairModeBlock({
   gameKey, pair, pairRows, filterCache,
   jeuOverrides, setJeu, jeuOptionsForGame,
-  boxOverrides, setBoxGroup, boxGroupOptions, boxGroupRank,
-  gameSourcesDict, setSource, setAllSources, modeMenuItem,
+  boxOverrides, boxGroupOptions, boxGroupRank,
+  gameSourcesDict, setSource, modeMenuItem,
   marqueGames, onAvailabilityChanged, autoOpenKey,
   getBoxSettingsFor, boxSettingsReady,
 }) {
@@ -4552,7 +4543,6 @@ function PairModeBlock({
             jeuOptions={jeuOptionsForGame}
             marqueGames={pairGamesWithHome}
             onAvailabilityChanged={onAvailabilityChanged}
-            showNumber
             currentNumber={numberOverrides && numberOverrides[multiDetailKey]}
             numberPlaceholder={marqueNumber}
             caught={isInPairKey(multiDetailKey)}
@@ -4678,12 +4668,8 @@ function PairModeBlock({
       {viewMode !== "box" && filtered.length === 0 && (
         <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
       )}
-      {viewMode !== "box" && (grilleSortMode === "numero" && viewMode === "grid" ? gridItems.length : filtered.length) > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>
-            Afficher plus ({(grilleSortMode === "numero" && viewMode === "grid" ? gridItems.length : filtered.length) - limit} restants)
-          </button>
-        </div>
+      {viewMode !== "box" && (
+        <ShowMoreButton total={grilleSortMode === "numero" && viewMode === "grid" ? gridItems.length : filtered.length} limit={limit} setLimit={setLimit} />
       )}
 
       <FloatingActionBar
@@ -4704,18 +4690,9 @@ function PairModeBlock({
                     <ViewToggle mode={grilleSortMode} setMode={setGrilleSortMode} options={[["boite", "Boîte"], ["numero", "Numéro"]]} />
                   </React.Fragment>
                 )}
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                  <input type="checkbox" checked={showBoxGroup} onChange={(e) => setShowBoxGroup(e.target.checked)} />
-                  Afficher le groupe de boîte
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                  <input type="checkbox" checked={showBoxName} onChange={(e) => setShowBoxName(e.target.checked)} />
-                  Afficher le nom de boîte
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                  <input type="checkbox" checked={showJeu} onChange={(e) => setShowJeu(e.target.checked)} />
-                  Afficher le Jeu - DO
-                </label>
+                <CheckboxRow checked={showBoxGroup} onChange={setShowBoxGroup}>Afficher le groupe de boîte</CheckboxRow>
+                <CheckboxRow checked={showBoxName} onChange={setShowBoxName}>Afficher le nom de boîte</CheckboxRow>
+                <CheckboxRow checked={showJeu} onChange={setShowJeu}>Afficher le Jeu - DO</CheckboxRow>
               </div>
             ),
           },
@@ -4955,9 +4932,8 @@ function JeuViewsSettingsModal({ marque, views, addView, removeView, updateView,
   );
 }
 
-function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache, cameFromMarqueSwitch }) {
-  const { flags, setFlags, ready, persist, saveState } = useCollection(gameKey, rows.length);
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
+function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onOpenProgress, filterCache, cameFromMarqueSwitch }) {
+  const { flags, setFlags, ready, persist } = useCollection(gameKey, rows.length);
   // Numéro dans cette vue, pour les fiches de capture en vue Home / Home + jeu (§ demande
   // explicite : "afficher aussi le numéro" hors vue jeu précis) — réutilise le même mécanisme que
   // PairModeBlock (useGameViewNumberOverrides), avec une clé de vue dédiée "__home__" pour ne
@@ -4979,7 +4955,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   // la marque contient réellement au moins une forme Gmax/Non Gmax (`hasGmaxForms` plus bas),
   // jamais affiché sinon (ex. marques sans aucune forme Gmax dans leur Pokédex).
   const [dynamaxFilter, setDynamaxFilter] = useCachedState(filterCache, gameKey, "dynamaxFilter", null); // null = tous, ou Set { "gmax", "nonGmax" }
-  const [filtersOpen, setFiltersOpen] = useState(false);
   // Affichage additionnel : Pokémon capturés en Shiny / via un Event marqués sur cette marque
   // (gameKey), mais absents de la liste structurelle du jeu (rows) — masqués par défaut, activables
   // via 2 coches dans le menu Vue. Affichés à la suite de la liste normale, toujours comme "attrapés"
@@ -4989,7 +4964,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [showEventExtra, setShowEventExtra] = useCachedState(filterCache, gameKey, "showEventExtra", false);
   const { catches: shinyCatchesLive } = useShinyCatches();
   const { events: customEvents } = useCustomEvents();
-  const { customJeux, addJeu } = useCustomLists();
+  const { customJeux } = useCustomLists();
 
   // Filtre reçu depuis l'onglet Progression (clic sur un jeu/région précis) — appliqué à chaque
   // nouvel envoi (pas seulement au montage), pour fonctionner même si cet onglet reste monté en
@@ -5040,28 +5015,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const showJeuMerge = hasJeuPairs && viMode === "home_jeu";
   const { dict: gameSourcesDict, setSource, setAllSources, clearAll: clearGameSources } = useGameTabSources(gameKey);
   const [multiDetailKey, setMultiDetailKey] = useState(null); // "nom|forme", vue Home + jeu uniquement
-  // Compte "x/max" par vue jeu (vue "Home + jeu" uniquement, § demande explicite) : max = nombre
-  // de vues où ce Pokémon est disponible (permissif tant que DATA.jeuVideo n'est pas renseigné —
-  // voir rowsForPair), count = nombre de ces vues cochées. `game_tab_sources` stocke directement
-  // la clé de la vue (pas un jeu précis à l'intérieur) — la distinction fine (ex. Saphir Alpha vs
-  // Rubis Oméga) se fait via le Jeu - DO existant, propre à la marque, jamais par des cases
-  // séparées ici (§ demande explicite).
-  const pairStatsFor = (nom, forme) => {
-    if (!marquePairs.length) return null;
-    const jv = jeuVideoFor(nom, forme);
-    const key = boxGroupKeyFor(nom, forme);
-    const sources = (gameSourcesDict && gameSourcesDict[key]) || [];
-    let max = 0, count = 0;
-    marquePairs.forEach((pair) => {
-      const gk = pair.jeuKeys || [];
-      const anySet = gk.some((k) => jv[k] !== undefined);
-      const applicable = !anySet || gk.some((k) => jv[k] === true);
-      if (!applicable) return;
-      max++;
-      if (sources.includes(pair.key)) count++;
-    });
-    return { count, max };
-  };
   // Lignes disponibles pour une vue précise : membres de la marque disponibles dans ce jeu
   // (inclusion par défaut tant que DATA.jeuVideo n'est pas renseigné, exclu seulement si TOUS les
   // jeux de la vue sont explicitement à false) + Pokémon "jeu seulement" (§ demande explicite :
@@ -5450,15 +5403,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     return Array.from(s).sort();
   }, [jeuOptionsForGame, jeuOverrides]);
 
-  // Recherche dimensionnée au nom le plus long de ce jeu (patron Shiny, §7bis).
-  const maxNomLength = useMemo(() => rows.reduce((max, r) => Math.max(max, String(r[1]).length), 0), [rows]);
-
-  // Largeur (en caractères) d'un menu déroulant, calée sur son option la plus longue.
-  const charWidth = (label, options) => {
-    const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
-    return `${max + 7}ch`;
-  };
-  const regionWidth = useMemo(() => charWidth("Région", regions), [regions]);
 
   useEffect(() => { setLimit(150); }, [search, filter, region, alphaFilter, dynamaxFilter, boxGroupFilter, jeuFilter, dispoFilter, gameKey]);
 
@@ -5629,7 +5573,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   }
 
   if (gameKey === "Go" && goSubView === "go1") {
-    return <Go1View filterCache={filterCache} mode={go1Mode} setMode={setGo1Mode} modeMenuItem={modeMenuItem} autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined} />;
+    return <Go1View filterCache={filterCache} mode={go1Mode} modeMenuItem={modeMenuItem} autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined} />;
   }
   if (gameKey === "Go" && goSubView === "go2") {
     return <Go2View filterCache={filterCache} modeMenuItem={modeMenuItem} autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined} />;
@@ -5647,12 +5591,10 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           setJeu={setJeu}
           jeuOptionsForGame={jeuOptionsForGame}
           boxOverrides={boxOverrides}
-          setBoxGroup={setBoxGroup}
           boxGroupOptions={boxGroupOptions}
           boxGroupRank={boxGroupRank}
           gameSourcesDict={gameSourcesDict}
           setSource={setSource}
-          setAllSources={setAllSources}
           modeMenuItem={modeMenuItem}
           marqueGames={marqueGamesWithHome}
           onAvailabilityChanged={bumpJeuVideoVersion}
@@ -5714,10 +5656,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           options={boxGroupOptions}
           currentJeu={(jeuOverrides && jeuOverrides[boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2])]) || ""}
           jeuOptions={jeuOptionsForGame}
-          showCatalogEdit={isGoGame}
           marqueGames={marqueGamesWithHome}
           onAvailabilityChanged={bumpJeuVideoVersion}
-          showNumber
           currentNumber={numberOverridesHome && numberOverridesHome[boxGroupKeyFor(rows[groupEditTarget][1], rows[groupEditTarget][2])]}
           numberPlaceholder={rows[groupEditTarget][0]}
           caught={!!displayEffective[groupEditTarget]}
@@ -6045,12 +5985,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
       {viewMode !== "box" && filtered.length === 0 && extraFiltered.length === 0 && (
         <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
       )}
-      {viewMode !== "box" && (viewMode === "grid" && grilleSortMode === "numero" ? gridMergedByNumero.length : filtered.length) > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>
-            Afficher plus ({(viewMode === "grid" && grilleSortMode === "numero" ? gridMergedByNumero.length : filtered.length) - limit} restants)
-          </button>
-        </div>
+      {viewMode !== "box" && (
+        <ShowMoreButton total={viewMode === "grid" && grilleSortMode === "numero" ? gridMergedByNumero.length : filtered.length} limit={limit} setLimit={setLimit} />
       )}
       <FloatingActionBar
         search={search}
@@ -6069,27 +6005,12 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     <ViewToggle mode={grilleSortMode} setMode={setGrilleSortMode} options={[["boite", "Boîte"], ["numero", "Numéro"]]} />
                   </React.Fragment>
                 )}
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                  <input type="checkbox" checked={showBoxGroup} onChange={(e) => setShowBoxGroup(e.target.checked)} />
-                  Afficher le groupe de boîte
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                  <input type="checkbox" checked={showBoxName} onChange={(e) => setShowBoxName(e.target.checked)} />
-                  Afficher le nom de boîte
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                  <input type="checkbox" checked={showJeu} onChange={(e) => setShowJeu(e.target.checked)} />
-                  Afficher le Jeu - DO
-                </label>
+                <CheckboxRow checked={showBoxGroup} onChange={setShowBoxGroup}>Afficher le groupe de boîte</CheckboxRow>
+                <CheckboxRow checked={showBoxName} onChange={setShowBoxName}>Afficher le nom de boîte</CheckboxRow>
+                <CheckboxRow checked={showJeu} onChange={setShowJeu}>Afficher le Jeu - DO</CheckboxRow>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4, paddingTop: 8, borderTop: `1px solid ${LINE}` }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                    <input type="checkbox" checked={showShinyExtra} onChange={(e) => setShowShinyExtra(e.target.checked)} />
-                    Afficher les Shiny ({gameKey})
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                    <input type="checkbox" checked={showEventExtra} onChange={(e) => setShowEventExtra(e.target.checked)} />
-                    Afficher les Event ({gameKey})
-                  </label>
+                  <CheckboxRow checked={showShinyExtra} onChange={setShowShinyExtra}>Afficher les Shiny ({gameKey})</CheckboxRow>
+                  <CheckboxRow checked={showEventExtra} onChange={setShowEventExtra}>Afficher les Event ({gameKey})</CheckboxRow>
                 </div>
               </div>
             ),
@@ -6165,7 +6086,6 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
 function useShinyCatches() {
   const [catches, setCatches] = useState(null);
   const [ready, setReady] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
   const storageKey = "shiny_catches";
 
   useEffect(() => {
@@ -6229,23 +6149,14 @@ function useShinyCatches() {
     })();
   }, []);
 
-  const persist = async (obj) => {
-    setSaveState("saving");
-    try {
-      await window.storage.set(storageKey, JSON.stringify(obj), false);
-      setSaveState("saved");
-    } catch (e) {
-      setSaveState("error");
-    }
-  };
+  const persist = (value) => writeJSON(storageKey, value);
 
-  return { catches, setCatches, ready, persist, saveState };
+  return { catches, setCatches, ready, persist };
 }
 
 function useDoubleCatches() {
   const [catches, setCatches] = useState(null);
   const [ready, setReady] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
   const storageKey = "double_catches";
 
   useEffect(() => {
@@ -6263,17 +6174,9 @@ function useDoubleCatches() {
     })();
   }, []);
 
-  const persist = async (obj) => {
-    setSaveState("saving");
-    try {
-      await window.storage.set(storageKey, JSON.stringify(obj), false);
-      setSaveState("saved");
-    } catch (e) {
-      setSaveState("error");
-    }
-  };
+  const persist = (value) => writeJSON(storageKey, value);
 
-  return { catches, setCatches, ready, persist, saveState };
+  return { catches, setCatches, ready, persist };
 }
 
 // Lecture live (sans écriture) du stockage "alpha_caught" — clés "GAME|nom|forme" -> 1/0,
@@ -6449,10 +6352,9 @@ function ShinyRecordFields({ rec, onField, onMarqueChange, onGmaxState, nom, for
   );
 }
 
-function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
-  const { catches, setCatches, ready, persist, saveState } = useShinyCatches();
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
-  const { customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques, addMarque, addMode, addLocation, addJeu } = useCustomLists();
+function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, filterCache }) {
+  const { catches, setCatches, ready, persist } = useShinyCatches();
+  const { customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques } = useCustomLists();
   const [viewMode, setViewMode] = useCachedState(filterCache, "shiny", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "shiny", "search", "");
   const [filter, setFilter] = useCachedState(filterCache, "shiny", "filter", "all");
@@ -6468,7 +6370,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   // dans la même marque). Propose uniquement les valeurs réellement présentes dans les données.
   const [occFilter, setOccFilter] = useCachedState(filterCache, "shiny", "occFilter", null);
   const [detailFilterSel, setDetailFilterSel] = useCachedState(filterCache, "shiny", "detailFilterSel", null);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const anyFilterActive = filter !== "all" || region !== null || marque !== null || modeFilter !== null
     || locationFilter !== null || jeuFilter !== null || alphaFilter !== null || gmaxFilter !== null || occFilter !== null
     || detailFilterSel !== null;
@@ -6593,8 +6494,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     return [...primaryRows, ...dupRows];
   }, [primaryRows, catches]);
 
-  const total = catalog.length;
-
   // Options du filtre "Occurrences" : valeurs de nombre de captures réellement présentes parmi
   // les formes actuellement capturées (ex. 1, 2, 3...), triées croissant.
   const occurrenceOptions = useMemo(() => {
@@ -6606,9 +6505,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     return Array.from(counts).sort((a, b) => a - b);
   }, [primaryRows, catches]);
 
-  const maxNomLength = useMemo(() => {
-    return catalog.reduce((max, r) => Math.max(max, String(r[1]).length), 0);
-  }, [catalog]);
 
   const regions = useMemo(() => {
     const s = new Set();
@@ -6645,14 +6541,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     return orderedList([DEFAULT_LOCATION, ...customLocations], discovered);
   }, [catches, customLocations]);
 
-  // Largeur (en caractères) d'un menu déroulant, calée sur son option la plus longue.
-  const charWidth = (label, options) => {
-    const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
-    return `${max + 7}ch`;
-  };
-  const regionWidth = useMemo(() => charWidth("Région", regions), [regions]);
-  const marqueWidth = useMemo(() => charWidth("Marque", ["Sans marque", ...marques]), [marques]);
-  const lieuWidth = useMemo(() => charWidth("Lieu", locations), [locations]);
 
   // Options de "Jeu" pour une marque donnée : valeurs personnalisées (bouton +) + valeurs déjà
   // utilisées ailleurs pour cette marque (découvertes dans les captures) — jamais de table figée.
@@ -6665,11 +6553,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     return Array.from(s);
   };
 
-  const jeuxUsed = useMemo(() => {
-    const s = new Set();
-    if (catches) Object.values(catches).forEach((arr) => (arr || []).forEach((rec) => { if (rec.jeu) s.add(rec.jeu); }));
-    return Array.from(s).sort();
-  }, [catches]);
 
   // Options du filtre "Jeu" restreintes aux marques actuellement sélectionnées dans le
   // filtre Marque (même logique que la page de détail : le jeu dépend de la marque).
@@ -6696,7 +6579,6 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
     return Object.values(catches).reduce((a, arr) => a + (arr ? arr.length : 0), 0);
   }, [catches]);
 
-  const duplicatesCount = totalCaptures - caughtSpeciesCount;
 
   const homeTotalCount = useMemo(() => {
     if (!catches) return 0;
@@ -7141,11 +7023,7 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
         })}
       </div>
       )}
-      {viewMode !== "box" && filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
-      )}
+      {viewMode !== "box" && <ShowMoreButton total={filtered.length} limit={limit} setLimit={setLimit} />}
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
@@ -7250,10 +7128,9 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveState
   );
 }
 
-function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
-  const { catches, setCatches, ready, persist, saveState } = useDoubleCatches();
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
-  const { customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques, addMarque, addMode, addLocation, addJeu } = useCustomLists();
+function DoubleView({ initialFilter, onConsumeFilter, filterCache }) {
+  const { catches, setCatches, ready, persist } = useDoubleCatches();
+  const { customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques } = useCustomLists();
   const [viewMode, setViewMode] = useCachedState(filterCache, "double", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "double", "search", "");
   const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "double", "shinyFilter", null); // null (Tous) | Set("yes"/"no")
@@ -7262,7 +7139,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
   const [detailFilterSel, setDetailFilterSel] = useCachedState(filterCache, "double", "detailFilterSel", null);
   const [modeFilter, setModeFilter] = useCachedState(filterCache, "double", "modeFilter", null);
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, "double", "jeuFilter", null); // null (Tous) | Set des valeurs Jeu - DO
-  const [filtersOpen, setFiltersOpen] = useState(false);
   // Filtre reçu depuis Progression (National) — appliqué à chaque nouvel envoi, pour fonctionner
   // même si cet onglet reste monté en arrière-plan.
   useEffect(() => {
@@ -7270,7 +7146,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     if (initialFilter.marque) setMarqueFilter(new Set([initialFilter.marque]));
     if (initialFilter.jeu) setJeuFilter(new Set([initialFilter.jeu]));
     if (initialFilter.home) setLocationFilter(new Set([DEFAULT_LOCATION]));
-    setFiltersOpen(true);
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
@@ -7317,9 +7192,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
       const aPending = catchLocation(a.rec) !== DEFAULT_LOCATION ? 1 : 0;
       const bPending = catchLocation(b.rec) !== DEFAULT_LOCATION ? 1 : 0;
       if (aPending !== bPending) return aPending - bPending;
-      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.n) - natSortValue(b.n);
     });
     return rows.map((r, i) => {
       const boxIdx = Math.floor(i / BOX_SIZE) + 1;
@@ -7345,7 +7218,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     const discovered = catalog.map((r) => catchLocation(r.rec)).filter(Boolean);
     return orderedList([DEFAULT_LOCATION, ...customLocations], discovered);
   }, [catalog, customLocations]);
-  const maxNomLength = useMemo(() => catalog.reduce((m, r) => Math.max(m, r.nom.length), 0), [catalog]);
 
   const marques = useMemo(() => {
     const discovered = catalog.map((r) => r.rec.marque).filter(Boolean);
@@ -7376,11 +7248,6 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
     catalog.forEach((r) => { if (r.rec.jeu) s.add(r.rec.jeu); });
     return Array.from(s);
   }, [marqueFilter, marques, customJeux, catalog]);
-  const charWidth = (label, options) => {
-    const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
-    return `${max + 7}ch`;
-  };
-  const marqueWidth = useMemo(() => charWidth("Marque", marques), [marques]);
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -7710,11 +7577,7 @@ function DoubleView({ initialFilter, onConsumeFilter, onSaveStateChange, filterC
         ))}
       </div>
       )}
-      {filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
-      )}
+      <ShowMoreButton total={filtered.length} limit={limit} setLimit={setLimit} />
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
@@ -7797,7 +7660,6 @@ const EVENT_BOITE_LOOKUP = (() => {
 function useCustomEvents() {
   const [events, setEvents] = useState(null);
   const [ready, setReady] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
   const storageKey = "custom_events";
 
   useEffect(() => {
@@ -7837,26 +7699,17 @@ function useCustomEvents() {
     })();
   }, []);
 
-  const persist = async (arr) => {
-    setSaveState("saving");
-    try {
-      await window.storage.set(storageKey, JSON.stringify(arr), false);
-      setSaveState("saved");
-    } catch (e) {
-      setSaveState("error");
-    }
-  };
+  const persist = (value) => writeJSON(storageKey, value);
 
-  return { events, setEvents, ready, persist, saveState };
+  return { events, setEvents, ready, persist };
 }
 
 function isGmaxForme(forme) {
   return /gmax/i.test(forme || "") && !/non\s*gmax/i.test(forme || "");
 }
 
-function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
-  const { events, setEvents, ready, persist, saveState } = useCustomEvents();
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
+function EventView({ initialFilter, onConsumeFilter, filterCache }) {
+  const { events, setEvents, ready, persist } = useCustomEvents();
   const { customMarques, addMarque, customJeux } = useCustomLists();
   const [viewMode, setViewMode] = useCachedState(filterCache, "event", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "event", "search", "");
@@ -7871,7 +7724,6 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   // restreint à la marque peut être renseigné, même patron que Shiny/Double/onglets jeu.
   const [doPersoFilter, setDoPersoFilter] = useCachedState(filterCache, "event", "doPersoFilter", null); // null (Tous) | Set("oui"/"non")
   const [jeuDOFilter, setJeuDOFilter] = useCachedState(filterCache, "event", "jeuDOFilter", null); // null (Tous) | Set des valeurs Jeu - DO
-  const [filtersOpen, setFiltersOpen] = useState(false);
   // Filtre reçu depuis Progression (National) — appliqué à chaque nouvel envoi, pour fonctionner
   // même si cet onglet reste monté en arrière-plan.
   useEffect(() => {
@@ -7881,7 +7733,6 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     if (initialFilter.boite !== undefined) setBoiteFilter(new Set([initialFilter.boite ? "oui" : "non"]));
     if (initialFilter.jeu) { setJeuDOFilter(new Set([initialFilter.jeu])); setDoPersoFilter(new Set(["oui"])); }
     else if (initialFilter.doPerso !== undefined) setDoPersoFilter(new Set([initialFilter.doPerso ? "oui" : "non"]));
-    setFiltersOpen(true);
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
@@ -7929,9 +7780,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
       if (ga !== gb) return ga - gb;
       const am = marqueOrderIndex(a.marque), bm = marqueOrderIndex(b.marque);
       if (am !== bm) return am - bm;
-      const an = typeof a.nat === "number" ? a.nat : parseFloat(String(a.nat).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.nat === "number" ? b.nat : parseFloat(String(b.nat).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.nat) - natSortValue(b.nat);
     });
     return rows.map((r, i) => {
       const boxIdx = Math.floor(i / BOX_SIZE) + 1;
@@ -7951,18 +7800,12 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
     catalog.forEach((r) => { if (r.attrape && !r.enBoite) set.add(r.nboite); });
     return set.size;
   }, [catalog]);
-  const maxNomLength = useMemo(() => catalog.reduce((m, r) => Math.max(m, r.nom.length), 0), [catalog]);
 
   const marques = useMemo(() => {
     const s = new Set();
     catalog.forEach((r) => { if (r.marque) s.add(r.marque); });
     return Array.from(s).sort((a, b) => marqueOrderIndex(a) - marqueOrderIndex(b));
   }, [catalog]);
-  const charWidth = (label, options) => {
-    const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
-    return `${max + 7}ch`;
-  };
-  const marqueWidth = useMemo(() => charWidth("Marque", marques), [marques]);
   // Options "Jeu - DO" restreintes à une marque — même patron que Shiny/Double/onglets jeu.
   const jeuOptionsFor = (marqueVal) => {
     const mk = marqueVal || "";
@@ -8306,11 +8149,7 @@ function EventView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
         ))}
       </div>
       )}
-      {filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
-      )}
+      <ShowMoreButton total={filtered.length} limit={limit} setLimit={setLimit} />
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
@@ -8447,7 +8286,6 @@ async function addInterjeuEntry(entry) {
 function useCustomInterjeu() {
   const [items, setItems] = useState(null);
   const [ready, setReady] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
   const storageKey = "custom_interjeu";
 
   useEffect(() => {
@@ -8469,23 +8307,14 @@ function useCustomInterjeu() {
     })();
   }, []);
 
-  const persist = async (arr) => {
-    setSaveState("saving");
-    try {
-      await window.storage.set(storageKey, JSON.stringify(arr), false);
-      setSaveState("saved");
-    } catch (e) {
-      setSaveState("error");
-    }
-  };
+  const persist = (value) => writeJSON(storageKey, value);
 
-  return { items, setItems, ready, persist, saveState };
+  return { items, setItems, ready, persist };
 }
 
-function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
-  const { items, setItems, ready, persist, saveState } = useCustomInterjeu();
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
-  const { customMarques, addMarque, customLocations, addLocation, customJeux, addJeu, customModes, customDetails, modeMarques, detailMarques } = useCustomLists();
+function InterjeuView({ initialFilter, onConsumeFilter, filterCache }) {
+  const { items, setItems, ready, persist } = useCustomInterjeu();
+  const { customMarques, customLocations, customJeux, customModes, customDetails, modeMarques, detailMarques } = useCustomLists();
   const { liveRows, ready: natReady, hasShinyForGame } = useLiveNat();
   // Lien Interjeu -> Shiny/Double (§ ajout demandé) : accès direct aux deux catalogues de
   // captures pour pouvoir y injecter une nouvelle entrée depuis la fiche Interjeu, et pour
@@ -8520,7 +8349,6 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   const [versFilter, setVersFilter] = useCachedState(filterCache, "interjeu", "versFilter", null);
   const [marqueFilter, setMarqueFilter] = useCachedState(filterCache, "interjeu", "marqueFilter", null);
   const [jeuFilter, setJeuFilter] = useCachedState(filterCache, "interjeu", "jeuFilter", null); // null (Tous) | Set des valeurs Jeu - DO
-  const [filtersOpen, setFiltersOpen] = useState(false);
   // Filtre reçu depuis Progression (National) — appliqué à chaque nouvel envoi, pour fonctionner
   // même si cet onglet reste monté en arrière-plan. Le filtre "Où = Home" (ligne "Interjeu (Home 1)"
   // du récap) ne peut être posé qu'une fois le catalogue chargé (ouOptions dépend des données),
@@ -8676,7 +8504,6 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     if (initialFilter.marque) setMarqueFilter(new Set([initialFilter.marque]));
     if (initialFilter.jeu) setJeuFilter(new Set([initialFilter.jeu]));
     if (initialFilter.home) wantsHomeFilter.current = true;
-    setFiltersOpen(true);
     if (onConsumeFilter) onConsumeFilter();
     // eslint-disable-next-line
   }, [initialFilter]);
@@ -8702,9 +8529,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
       };
     });
     rows.sort((a, b) => {
-      const an = typeof a.nat === "number" ? a.nat : parseFloat(String(a.nat).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.nat === "number" ? b.nat : parseFloat(String(b.nat).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.nat) - natSortValue(b.nat);
     });
     return rows.map((r, i) => {
       const boxIdx = Math.floor(i / BOX_SIZE) + 1;
@@ -8714,7 +8539,6 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
   }, [items]);
 
   const total = catalog.length;
-  const maxNomLength = useMemo(() => catalog.reduce((m, r) => Math.max(m, r.nom.length), 0), [catalog]);
 
   const marqueOptions = useMemo(() => {
     const discovered = catalog.map((r) => r.marque).filter(Boolean);
@@ -8765,9 +8589,6 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
     return `${max + 7}ch`;
   };
-  const marqueWidth = useMemo(() => charWidth("Marque", marqueOptions), [marqueOptions]);
-  const ouWidth = useMemo(() => charWidth("Où", ouOptions), [ouOptions]);
-  const versWidth = useMemo(() => charWidth("Vers", versOptions), [versOptions]);
 
   // Suggestions pour Nom après (tous les noms d'espèce, dédupliqués) et pour Forme avant/après
   // (formes connues pour l'espèce actuellement saisie) — voir TextSuggest.
@@ -8778,7 +8599,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
     return list;
   }, []);
   // Largeur de la barre "Nom avant" : un peu plus que le nom de Pokémon le plus long (ex.
-  // "Pandespiègle"), pas 100% — cohérent avec charWidth utilisé pour les autres champs.
+  // "Pandespiègle"), pas 100%.
   const nomAvantWidth = useMemo(() => charWidth("Nom avant", allPokemonNames), [allPokemonNames]);
   const formesFor = (nom) => {
     if (!nom) return [];
@@ -9292,11 +9113,7 @@ function InterjeuView({ initialFilter, onConsumeFilter, onSaveStateChange, filte
         ))}
       </div>
       )}
-      {filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
-      )}
+      <ShowMoreButton total={filtered.length} limit={limit} setLimit={setLimit} />
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
@@ -9973,16 +9790,15 @@ async function applyCatalogCustomizations() {
 }
 
 // Génère une clé stable à partir d'un libellé (minuscules, accents retirés, non-alphanumériques
-// supprimés) pour un nouveau "jeu vidéo" créé depuis Paramètres ou importé sans "Cle" fournie —
-// même esprit que les clés JEU_VIDEO_DEFS existantes ("saphiralpha", "rougefeuswitch"...).
-// Garantit l'unicité vis-à-vis de `taken` (Set de clés déjà utilisées) en ajoutant un suffixe
-// numérique si besoin.
-function slugifyJeuVideoKey(label, taken) {
-  const base = String(label || "jeu").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+// supprimés) pour un nouveau "jeu vidéo" créé depuis Paramètres (addJvGame) ou importé sans "Cle"
+// fournie (importJeuVideoSheet) — même esprit que les clés JEU_VIDEO_DEFS existantes
+// ("saphiralpha", "rougefeuswitch"...). Garantit l'unicité via `isTaken(clé)` en ajoutant un
+// suffixe numérique si besoin.
+function slugifyJeuVideoKey(label, isTaken) {
+  const base = String(label || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9]+/g, "") || "jeu";
   let key = base, n = 2;
-  while (taken.has(key)) { key = base + n; n++; }
-  taken.add(key);
+  while (isTaken(key)) key = base + (n++);
   return key;
 }
 
@@ -10534,6 +10350,7 @@ function catalogDraftForRow(idx) {
   const key = pokemonIdentityKey(row[1], row[2]);
   const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
   const { games, gameNumbers } = gameNumbersFor(row, key);
+  const tags = formTagsFor(row[1], row[2]);
   return {
     nom: row[1], forme: row[2] != null ? String(row[2]) : "", nat: String(row[0]), region: row[3] || "",
     evolution: DATA.evolutionMode[key] || "-",
@@ -10551,9 +10368,9 @@ function catalogDraftForRow(idx) {
     jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
     // Pilules "Méga"/"Gmax"/"Gmax gène" (§ demande explicite, bloc "Pokédex Home & Alpha") — valeur
     // stockée uniquement (formTagsFor), jamais déduite automatiquement du texte de forme.
-    formMega: !!formTagsFor(row[1], row[2]).mega,
-    formGmax: !!formTagsFor(row[1], row[2]).gmax,
-    formGmaxGene: !!formTagsFor(row[1], row[2]).gmaxGene,
+    formMega: !!tags.mega,
+    formGmax: !!tags.gmax,
+    formGmaxGene: !!tags.gmaxGene,
   };
 }
 
@@ -10652,15 +10469,13 @@ function CatalogQuickEditButton({ nom, forme, allForms, label, corner, style, on
 
 
 // (structurelle ou ajoutée), et gestion des Pokémon ajoutés par l'utilisateur (voir §21bis).
-function CatalogEditor({ onSaveStateChange }) {
+function CatalogEditor() {
   const [search, setSearch] = useState("");
   const [additions, setAdditions] = useState([]);
   const [deletions, setDeletions] = useState([]);
   const [ready, setReady] = useState(false);
-  const [saveState, setSaveState] = useState("idle");
   const [editing, setEditing] = useState(null); // { idx, isNew, addId, draft }
   const [msg, setMsg] = useState("");
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
 
   const load = async () => {
     try {
@@ -10687,38 +10502,14 @@ function CatalogEditor({ onSaveStateChange }) {
 
   const activeAdditions = useMemo(() => additions.filter((a) => !a.deleted), [additions]);
 
-  const draftFromRow = async (idx, row) => {
-    const key = pokemonIdentityKey(row[1], row[2]);
-    const alpha = DATA.alphaCapable[key] || { LA: 0, LZA: 0 };
-    const { games, gameNumbers } = gameNumbersFor(row, key);
-    return {
-      idx, isNew: false, addId: null,
-      draft: {
-        nom: row[1], forme: row[2] != null ? String(row[2]) : "", nat: String(row[0]), region: row[3] || "",
-        evolution: DATA.evolutionMode[key] || "-",
-        alphaLA: !!alpha.LA, alphaLZA: !!alpha.LZA,
-        famille: row[14] != null ? String(row[14]) : "",
-        inHomeDex: !!(DATA.homeDex && DATA.homeDex[key]),
-        games, gameNumbers,
-        jeuVideo: (DATA.jeuVideo && DATA.jeuVideo[key]) ? { ...DATA.jeuVideo[key] } : {},
-        jeuVideoNumbers: (DATA.jeuVideoNumbers && DATA.jeuVideoNumbers[key]) ? { ...DATA.jeuVideoNumbers[key] } : {},
-        formMega: !!formTagsFor(row[1], row[2]).mega,
-        formGmax: !!formTagsFor(row[1], row[2]).gmax,
-        formGmaxGene: !!formTagsFor(row[1], row[2]).gmaxGene,
-      },
-    };
-  };
+  const draftFromRow = (idx) => ({ idx, isNew: false, addId: null, draft: catalogDraftForRow(idx) });
 
-  const openEdit = async (idx, row) => {
-    setEditing(await draftFromRow(idx, row));
-  };
+  const openEdit = (idx) => setEditing(draftFromRow(idx));
 
   const openEditAddition = async (add) => {
     const idx = DATA.__additionIdxById ? DATA.__additionIdxById[add.id] : undefined;
     if (idx !== undefined && DATA.nat[idx]) {
-      const e = await draftFromRow(idx, DATA.nat[idx]);
-      e.addId = add.id;
-      setEditing(e);
+      setEditing({ ...draftFromRow(idx), addId: add.id });
     }
   };
 
@@ -10742,7 +10533,6 @@ function CatalogEditor({ onSaveStateChange }) {
     if (!editing) return;
     const d = editing.draft;
     if (!d.nom.trim()) return;
-    setSaveState("saving");
     if (editing.isNew) {
       const arr = await readJSON("catalog_additions", []);
       arr.push({
@@ -10765,7 +10555,6 @@ function CatalogEditor({ onSaveStateChange }) {
   };
 
   const deleteAddition = async (id) => {
-    setSaveState("saving");
     const arr = await readJSON("catalog_additions", []);
     await writeJSON("catalog_additions", arr.map((a) => (a.id === id ? { ...a, deleted: true } : a)));
     finishAndReload();
@@ -10774,7 +10563,6 @@ function CatalogEditor({ onSaveStateChange }) {
   // Supprime la fiche en cours d'édition (structurelle ou ajout) — voir persistCatalogDeletion.
   const deleteEntry = async () => {
     if (!editing || editing.isNew) return;
-    setSaveState("saving");
     await persistCatalogDeletion(editing.idx);
     finishAndReload();
   };
@@ -10783,7 +10571,6 @@ function CatalogEditor({ onSaveStateChange }) {
   // jeu, Shiny) au prochain rechargement, sans perte : ses captures n'avaient jamais été
   // touchées par la suppression.
   const restoreDeletion = async (key) => {
-    setSaveState("saving");
     const list = await readJSON("catalog_deletions", []);
     await writeJSON("catalog_deletions", list.filter((k) => k !== key));
     finishAndReload();
@@ -10852,7 +10639,7 @@ function CatalogEditor({ onSaveStateChange }) {
               <span style={{ flex: 1, fontFamily: "Inter, sans-serif", fontSize: 13, color: TXT }}>
                 {row[1]}{row[2] ? " — " + row[2] : ""} <span style={{ color: MUTED, fontSize: 11 }}>#{row[0]}</span>
               </span>
-              <button onClick={() => openEdit(idx, row)} style={{ ...btnGhost, padding: "4px 8px" }}>Modifier</button>
+              <button onClick={() => openEdit(idx)} style={{ ...btnGhost, padding: "4px 8px" }}>Modifier</button>
             </div>
           ))}
         </div>
@@ -11166,7 +10953,6 @@ function SettingsSection({
 }
 
 function SettingsView({
-  onSaveStateChange,
   gistToken, gistId, gistSyncedAt, gistModCount, gistSyncState, gistMsg,
   onSaveGistToken, onSaveGistId, onGistSync,
   oneDriveClientId, oneDriveFolder, oneDriveState, oneDriveMsg,
@@ -11208,8 +10994,6 @@ function SettingsView({
   useEffect(() => { setOneDriveClientIdDraft(oneDriveClientId || ""); }, [oneDriveClientId]);
   useEffect(() => { setOneDriveFolderDraft(oneDriveFolder || ONEDRIVE_DEFAULT_FOLDER); }, [oneDriveFolder]);
   const toggleSection = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
-  const [saveState, setSaveState] = useState("idle");
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange(saveState); }, [saveState]);
 
   const loadAll = async () => {
     const [m, mo, lo, je, sh, db, ev, itj, bg, bgo, de, mm, dm] = await Promise.all([
@@ -11324,7 +11108,6 @@ function SettingsView({
   // marque" (liste explicite = toutes les marques moins celle-ci), pour rester représentable avec
   // le même modèle de données par inclusion.
   const doSetAvailability = async (kind, value, marque) => {
-    setSaveState("saving");
     const map = kind === "mode" ? modeMarques : detailMarques;
     const key = kind === "mode" ? "mode_marques" : "detail_marques";
     const cur = map[value] || [];
@@ -11334,24 +11117,20 @@ function SettingsView({
       : [...cur, marque];
     await writeJSON(key, { ...map, [value]: next });
     await loadAll();
-    setSaveState("saved");
   };
 
   const doRename = async (kind, oldVal, newVal, marqueCtx) => {
-    setSaveState("saving");
     try {
       await cascadeRename(kind, oldVal, newVal, marqueCtx);
     } catch (e) {
       console.error("cascadeRename a échoué :", e);
     }
     await loadAll();
-    setSaveState("saved");
   };
 
   const doAdd = async (kind) => {
     const v = (newValue[kind] || "").trim();
     if (!v) return;
-    setSaveState("saving");
     if (kind === "marque" && !marques.includes(v)) await writeJSON("custom_marques", [...customMarques, v]);
     if (kind === "mode" && !modes.includes(v)) await writeJSON("custom_modes", [...customModes, v]);
     if (kind === "detail" && !details.includes(v)) await writeJSON("custom_details", [...customDetails, v]);
@@ -11364,11 +11143,9 @@ function SettingsView({
     }
     setNewValue({ ...newValue, [kind]: "" });
     await loadAll();
-    setSaveState("saved");
   };
 
   const doDelete = async (kind, val) => {
-    setSaveState("saving");
     if (kind === "marque") await writeJSON("custom_marques", customMarques.filter((m) => m !== val));
     if (kind === "mode") await writeJSON("custom_modes", customModes.filter((m) => m !== val));
     if (kind === "detail") await writeJSON("custom_details", customDetails.filter((d) => d !== val));
@@ -11380,7 +11157,6 @@ function SettingsView({
       await writeJSON("custom_box_groups", { ...customBoxGroups, [selectedBoxGroupJeu]: (customBoxGroups[selectedBoxGroupJeu] || []).filter((g) => g !== val) });
     }
     await loadAll();
-    setSaveState("saved");
   };
 
   // Monte (-1) ou descend (+1) une valeur dans la liste explicite affichée (`values`, déjà dans
@@ -11391,7 +11167,6 @@ function SettingsView({
   // nouvel ordre explicite. Pour "location", "Home 1" n'est jamais dans le tableau glissable
   // (rendu séparément, position fixe) donc rien de spécial à filtrer ici.
   const doReorder = async (kind, arr, marqueCtx) => {
-    setSaveState("saving");
     // Garde-fou générique contre les doublons (voir bug "Jeu-DO qui se multiplient" ci-dessus) —
     // `arr` vient de ce qui est affiché ; le dédupliquer avant d'écrire empêche toute réécriture
     // de propager un doublon déjà présent, quelle qu'en soit l'origine.
@@ -11405,7 +11180,6 @@ function SettingsView({
     }
     if (kind === "boxgroup" && marqueCtx) await writeJSON("custom_box_groups", { ...customBoxGroups, [marqueCtx]: dedupedArr });
     await loadAll();
-    setSaveState("saved");
   };
 
   // "Jeu vidéo" (§ Paramètres → "Jeu vidéo", demande explicite : "éditer les jeux vidéo... changer
@@ -11453,10 +11227,7 @@ function SettingsView({
   const addJvGame = (gen, rawLabel) => {
     const label = rawLabel.trim();
     if (!label) return;
-    let base = label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-    if (!base) base = "jeu";
-    let key = base, n = 2;
-    while (jvDefs.some((d) => d.key === key)) key = base + (n++);
+    const key = slugifyJeuVideoKey(label, (k) => jvDefs.some((d) => d.key === k));
     applyJvDefs([...jvDefs, { key, label, gen, marques: [] }]); // réaffecte JEU_VIDEO_DEFS avant la ligne suivante (voir applyJvDefs)
     applyJvGroups([...jvGroups, { keys: [key], acronym: defaultJeuVideoGroupAcronym([key]) }]);
     setNewJvLabelByGen((s) => ({ ...s, [gen]: "" }));
@@ -11500,7 +11271,7 @@ function SettingsView({
           <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 700, fontSize: 14, color: DARKBLUE }}>Catalogue Pokémon</span>
           <span style={{ color: MUTED, fontSize: 12, transform: collapsed.catalog ? "rotate(-90deg)" : "none", display: "inline-block" }}>▾</span>
         </button>
-        {!collapsed.catalog && <CatalogEditor onSaveStateChange={setSaveState} />}
+        {!collapsed.catalog && <CatalogEditor />}
       </div>
 
       <div style={{ background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 16, padding: 14, marginBottom: 14 }}>
@@ -12049,8 +11820,7 @@ function useLiveNat() {
   return { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha };
 }
 
-function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveStateChange, filterCache }) {
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange("saved"); }, []);
+function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, filterCache }) {
   const [mode, setMode] = useCachedState(filterCache, "national", "mode", "forms"); // "forms" | "species"
   const [viewMode, setViewMode] = useCachedState(filterCache, "national", "viewMode", "list");
   // Mode de calcul du statut "Attrapé" par marque (§ nouveau, même logique que le sélecteur
@@ -12070,7 +11840,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   const [megaFilter, setMegaFilter] = useCachedState(filterCache, "national", "megaFilter", null); // null = tous, ou Set { "mega", "nonMega" }
   const [homeDexFilter, setHomeDexFilter] = useCachedState(filterCache, "national", "homeDexFilter", null); // null = tous, ou Set { "home", "nonHome" }
   const [shinyFilter, setShinyFilter] = useCachedState(filterCache, "national", "shinyFilter", null); // null = tous, ou Set { "oui", "non" }
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const anyFilterActive = filter !== "all" || region !== null || jeuFilter !== null
     || tailleFilter !== null || dynamaxFilter !== null || megaFilter !== null || homeDexFilter !== null || shinyFilter !== null;
 
@@ -12115,11 +11884,8 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
   useEffect(() => { setCardPos(0); setCatalogEditOpen(false); setEvoChainEditOpen(false); }, [selectedNom, onlyFormKey]);
   useLockBodyScroll(!!selectedNom);
   const savedScroll = useRef(0);
-  const { liveRows, ready, toggleGameCaught, hasShinyForGame, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
-  const {
-    customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques,
-    addMarque, addMode, addLocation, addJeu, addDetail,
-  } = useCustomLists();
+  const { liveRows, ready, toggleGameCaught, removeShinyForGame, addShinyForGame, shinyCatches, toggleAlpha } = useLiveNat();
+  const { customMarques, customModes, customLocations, customJeux, customDetails, modeMarques, detailMarques } = useCustomLists();
   // Sources "en jeu" (game_tab_sources, toutes marques) et vues Jeu configurées (custom_jeu_views,
   // toutes marques) — utilisées à la fois pour le mode "Home + jeux" (catchMode/cardMode) et pour
   // le mode "Jeu" de la fiche détail (§ ci-dessus).
@@ -12205,21 +11971,12 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
     return Array.from(s).sort();
   }, [rows]);
 
-  // Largeur (en caractères) d'un menu déroulant, calée sur son option la plus longue.
-  const charWidth = (label, options) => {
-    const max = options.reduce((m, o) => Math.max(m, String(o).length), label.length);
-    return `${max + 7}ch`;
-  };
-  const regionWidth = useMemo(() => charWidth("Région", regions), [regions]);
-  // Recherche dimensionnée au nom le plus long (patron Shiny/GameView, §7bis).
-  const maxNomLength = useMemo(() => rows.reduce((max, r) => Math.max(max, String(r[1]).length), 0), [rows]);
   // Le filtre Jeu ne propose que les jeux où au moins un Pokémon a été attrapé (r[8] =
   // caughtGame[]) — les onglets de jeu eux-mêmes (menu "🏠 Home") restent inchangés et
   // continuent de tous les proposer, pour permettre d'y saisir de nouvelles captures.
   const jeuOptionsAvailable = useMemo(() => {
     return games.filter((g, gi) => rows.some((r) => r[8] && r[8][gi]));
   }, [rows, games]);
-  const jeuWidth = useMemo(() => charWidth("Jeu", ["Sans jeu", ...jeuOptionsAvailable]), [jeuOptionsAvailable]);
 
   // Filtre "Jeu" : une forme matche si elle est disponible (r[7]) dans au moins un des jeux
   // cochés ; le pseudo-choix "Sans jeu" cible les formes non liées à un jeu précis (avail
@@ -12281,13 +12038,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
       }
     });
     return { total, owned };
-  };
-
-  const marksLevel = (owned, total) => {
-    if (total === 0) return "none";
-    if (owned === 0) return "none";
-    if (owned === total) return "complete";
-    return "partial";
   };
 
   const bySpecies = useMemo(() => {
@@ -12520,7 +12270,6 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
 
   const totalForms = rows.length;
   const ownedForms = rows.filter((r) => isCaughtEff(r)).length;
-  const shinyOwned = rows.filter((r) => r[6]).length;
 
   const openSpecies = (nom, formKey) => {
     savedScroll.current = window.scrollY;
@@ -12958,11 +12707,7 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, onSaveSt
         </div>
       )}
 
-      {(mode === "forms" ? filteredForms.length : filteredSpecies.length) > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus</button>
-        </div>
-      )}
+      <ShowMoreButton total={mode === "forms" ? filteredForms.length : filteredSpecies.length} limit={limit} setLimit={setLimit} />
       <FloatingActionBar
         search={search}
         setSearch={setSearch}
@@ -14762,9 +14507,7 @@ async function buildHome2SheetRows() {
   return catalog
     .slice()
     .sort((a, b) => {
-      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.n) - natSortValue(b.n);
     })
     .map((f) => ({
       Nom: f.nom, Forme: excelForme(f.forme),
@@ -14802,9 +14545,7 @@ async function buildGo2SheetRows() {
   return speciesRepresentatives()
     .slice()
     .sort((a, b) => {
-      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.n) - natSortValue(b.n);
     })
     .map((f) => ({
       Nom: f.nom, Forme: excelForme(f.forme),
@@ -15372,7 +15113,7 @@ async function importListesSheet(rows, mode) {
 // ancien groupe se réduire ou disparaître si vide ; un jeu à "Groupe" vide redevient son propre
 // groupe seul. Mode "replace" : les jeux absents du fichier restent inchangés (seuls ceux présents
 // sont réorganisés) — seule la feuille "Générations JV" ci-dessous connaît un vrai "replace" total.
-async function importJeuVideoSheet(rows, mode) {
+async function importJeuVideoSheet(rows) {
   if (!rows.length) return;
   let defs = (await readJSON("custom_jeu_video_defs", [])).map((d) => ({ ...d, marques: (d.marques || []).slice() }));
   let groups = (await readJSON("custom_jeu_video_groups", [])).map((g) => ({ ...g, keys: g.keys.slice() }));
@@ -15383,13 +15124,10 @@ async function importJeuVideoSheet(rows, mode) {
     let key = String(row.Cle || "").trim();
     const existingIdx = key ? defs.findIndex((d) => d.key === key) : -1;
     if (!key || existingIdx === -1) {
-      // Nouvelle ligne (ou "Cle" non reconnue) : génère une clé stable depuis "Nom", comme
-      // l'ajout manuel (voir addJvGame dans SettingsView).
-      let base = nom.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-      if (!base) base = "jeu";
-      let candidate = key || base, n = 2;
-      while (defs.some((d) => d.key === candidate) || touched.some((t) => t.key === candidate)) { candidate = base + (n++); }
-      key = candidate;
+      // Nouvelle ligne (ou "Cle" non reconnue) : garde la "Cle" fournie si elle est libre, sinon
+      // génère une clé stable depuis "Nom", comme l'ajout manuel (voir addJvGame dans SettingsView).
+      const isTaken = (k) => defs.some((d) => d.key === k) || touched.some((t) => t.key === k);
+      key = key && !isTaken(key) ? key : slugifyJeuVideoKey(nom, isTaken);
     }
     const gen = String(row.Generation || "").trim() || (defs.find((d) => d.key === key) || {}).gen || JEU_VIDEO_GENS[0] || "";
     const marques = String(row.Marques || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -15544,7 +15282,7 @@ async function applyExcelWorkbookImport(wb, mode) {
     if (!rows.length) continue;
     if (gameSet.has(sheetName)) { await importGameSheet(sheetName, rows, mode); touched++; }
     else if (sheetName === "National") { await importNationalSheet(rows, mode); touched++; }
-    else if (sheetName === "Jeu vidéo") { await importJeuVideoSheet(rows, mode); touched++; }
+    else if (sheetName === "Jeu vidéo") { await importJeuVideoSheet(rows); touched++; }
     else if (sheetName === "Générations JV") { await importJeuVideoGensSheet(rows, mode); touched++; }
     else if (sheetName === "Paramètres") { await importParamsSheet(rows); touched++; }
     else if (sheetName === "Home 2") { await importHome2Sheet(rows, mode); touched++; }
@@ -16202,10 +15940,218 @@ function Go1Body({ items, color, viewMode, showForme, groupByRegion, gridCols, o
   );
 }
 
+// ---- Listes "Familles" à copier (Home 2, Go 2, Go 1 Parfait) + corps Liste/Grille Home 2/Go 2 ----
+// Mutualisé (§ passe d'audit) : ces trois panneaux étaient auparavant trois copies quasi
+// identiques (calcul des familles, suffixe mémorisable, copie presse-papier, rendu du menu).
+
+// Numéro national d'une espèce — repli sur n'importe laquelle de ses formes si elle n'a pas de
+// forme "vide" dans le catalogue (ex. Floette, voir natInfoFor §6).
+function speciesNationalNumber(nom) {
+  const info = natInfoFor(nom, null);
+  if (info && info.n !== 999999) return info.n;
+  const any = NAT_ALL_FORMS.find((f) => f.nom === nom);
+  return any ? any.n : null;
+}
+
+// Numéros nationaux (triés, sans doublon) de TOUS les membres des familles d'évolution des
+// entrées `{ nom, famille }` reçues (via `familyMembersOf`, pas seulement les entrées elles-mêmes —
+// pratique pour rechercher toute la ligne d'évolution dans Pokémon Home / Pokémon GO). Une entrée
+// sans numéro de famille connu est traitée isolément. `familyCount` = familles distinctes.
+function familyNumbersFor(entries) {
+  const famSet = new Set();
+  const soloNames = new Set();
+  entries.forEach((f) => {
+    if (f.famille != null) famSet.add(f.famille);
+    else soloNames.add(f.nom);
+  });
+  const names = new Set(soloNames);
+  famSet.forEach((fam) => {
+    const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
+    if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
+  });
+  const numbers = new Set();
+  names.forEach((nom) => {
+    const n = speciesNationalNumber(nom);
+    if (n != null) numbers.add(n);
+  });
+  return { numbers: Array.from(numbers).sort((a, b) => a - b), familyCount: famSet.size + soloNames.size };
+}
+
+// Texte à copier (numéros séparés par une virgule + suffixe mémorisable, § demande explicite) —
+// le suffixe est une simple préférence stockée sous sa propre clé (`suffixKey`), pas une donnée
+// de collection.
+function useFamilyNumbersCopy(suffixKey, numbers) {
+  const [suffix, setSuffix] = useState("");
+  const [savedSuffix, setSavedSuffix] = useState(null); // null = pas encore chargé depuis le stockage
+  useEffect(() => {
+    (async () => {
+      let v = "";
+      try {
+        const res = await window.storage.get(suffixKey, false);
+        if (res && res.value != null) v = res.value;
+      } catch (e) {}
+      setSuffix(v);
+      setSavedSuffix(v);
+    })();
+  }, []);
+  const rememberSuffix = async () => {
+    try { await window.storage.set(suffixKey, suffix, false); } catch (e) {}
+    setSavedSuffix(suffix);
+  };
+  const text = numbers.join(",") + suffix;
+  const [feedback, setFeedback] = useState("");
+  const copy = async () => {
+    const ok = await copyToClipboard(text);
+    setFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
+  };
+  return { suffix, setSuffix, savedSuffix, rememberSuffix, text, feedback, copy };
+}
+
+// Contenu du menu "Familles" de la barre flottante : résumé, bouton Copier, texte sélectionnable,
+// suffixe. `onBeforeCopy` : action propre à l'onglet (ex. Home 2/Go 2 basculent sur "Manquants").
+function FamilyNumbersPanel({ summary, color, count, copier, onBeforeCopy }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>{summary}</div>
+      <button
+        onClick={() => { if (onBeforeCopy) onBeforeCopy(); copier.copy(); }}
+        style={{ ...tabActive, background: color, color: BG }}
+        disabled={count === 0}
+      >📋 Copier la liste ({count})</button>
+      {copier.feedback && (
+        <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{copier.feedback}</div>
+      )}
+      <textarea
+        readOnly
+        value={copier.text}
+        onFocus={(e) => e.target.select()}
+        style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
+      />
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input
+          value={copier.suffix}
+          onChange={(e) => copier.setSuffix(e.target.value)}
+          placeholder="Suffixe (optionnel, ajouté après la liste)"
+          style={{ ...inputStyle, flex: 1 }}
+        />
+        {copier.savedSuffix !== null && copier.suffix !== copier.savedSuffix && (
+          <button onClick={copier.rememberSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Résumé "familles incomplètes" commun à Home 2 et Go 2.
+function missingFamiliesSummary(info) {
+  const plural = info.familyCount > 1 ? "s" : "";
+  return `${info.familyCount} famille${plural} incomplète${plural} — ${info.numbers.length} Pokémon`;
+}
+
+// En-tête collant Progression/Affiché commun à Home 2 et Go 2.
+function ChecklistProgressHeader({ caughtCount, total, shownCaught, shownTotal }) {
+  return (
+    <div style={{
+      position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
+      display: "flex", alignItems: "flex-start", gap: 20, marginBottom: 12, flexWrap: "wrap",
+      paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
+    }}>
+      <ProgressStatsTable
+        left={{
+          label: "Progression",
+          rings: [{ pct: pct(caughtCount, total), size: 46, stroke: 5, color: LIGHTBLUE, caption: `${caughtCount}/${total}` }],
+        }}
+        right={{
+          label: "Affiché",
+          rings: [{ pct: pct(shownCaught, shownTotal), size: 46, stroke: 5, color: OK, caption: `${shownTotal}` }],
+        }}
+      />
+    </div>
+  );
+}
+
+// Corps Liste/Grille commun à Home 2 et Go 2 : Grille = sprite seul (clic = bascule) ; Liste =
+// case à cocher + sprite + numéro + nom (+ forme si `showForme`). Clic sur la ligne : `onOpen`
+// (fiche, ex. exclusion Go 2) s'il est fourni, sinon bascule comme la case.
+function ChecklistBody({ items, viewMode, cols, isCaught, onToggle, onOpen, openTitle, showForme }) {
+  if (viewMode === "grille") {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 6 }}>
+        {items.map((f) => {
+          const c = isCaught(f);
+          return (
+            <button key={f.key} onClick={() => onToggle(f)} title={f.nom} style={{
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
+              background: c ? "rgba(144,202,249,0.14)" : PANEL2,
+              border: `1px solid ${c ? LIGHTBLUE : LINE}`,
+              borderRadius: 18, padding: "3px 2px", cursor: "pointer",
+            }}>
+              <Sprite nom={f.nom} forme={f.forme} size={32} />
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+  if (viewMode !== "list") return null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 8 }}>
+      {items.map((f) => {
+        const c = isCaught(f);
+        return (
+          <div key={f.key} style={{
+            display: "flex", alignItems: "center", gap: 10,
+            background: c ? "rgba(144,202,249,0.14)" : PANEL2,
+            border: `1px solid ${c ? LIGHTBLUE : LINE}`,
+            borderRadius: 18, padding: "7px 12px",
+          }}>
+            <button
+              onClick={() => onToggle(f)}
+              title={c ? "Marquer comme non capturé" : "Marquer comme capturé"}
+              style={{
+                width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
+                border: `2px solid ${c ? LIGHTBLUE : MUTED}`,
+                background: c ? LIGHTBLUE : "transparent",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
+              }}
+            >{c ? "✓" : ""}</button>
+            <div
+              onClick={() => (onOpen ? onOpen(f) : onToggle(f))}
+              title={onOpen ? openTitle : undefined}
+              style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}
+            >
+              <Sprite nom={f.nom} forme={f.forme} size={32} />
+              <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
+              <div style={{
+                fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {f.nom}{showForme && f.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {f.forme}</span> : null}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Bouton "Afficher plus" commun aux listes paginées (`limit` + 200 à chaque clic, en secours du
+// défilement infini useInfiniteScroll). Rien n'est rendu tant que tout est déjà affiché.
+function ShowMoreButton({ total, limit, setLimit }) {
+  if (total <= limit) return null;
+  return (
+    <div style={{ textAlign: "center", marginTop: 16 }}>
+      <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({total - limit} restants)</button>
+    </div>
+  );
+}
+
 // Vue principale de l'onglet Go 1 — un seul composant pour les 8 modes (Pokédex/Shiny avec
 // sous-vue toutes formes/forme unique, + les 6 modes forme unique), barre flottante avec 4
 // menus (Pokédex = sélecteur de mode, Affichage, Filtres, +) + recherche.
-function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
+function Go1View({ filterCache, mode, modeMenuItem, autoOpenKey }) {
   const [subView, setSubView] = useCachedState(filterCache, "go1", "subView", "forms"); // "forms" | "unique" (Pokédex/Shiny)
   const [viewMode, setViewMode] = useCachedState(filterCache, "go1", "viewMode", "list"); // "list" | "grid"
   const [groupByRegion, setGroupByRegion] = useCachedState(filterCache, "go1", "groupByRegion", true);
@@ -16231,9 +16177,7 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
   const buildTaggedFormsList = (tagKey) => {
     const list = NAT_ALL_FORMS.filter((f) => formTagsFor(f.nom, f.forme)[tagKey] === true);
     list.sort((a, b) => {
-      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.n) - natSortValue(b.n);
     });
     return list.map((f, idx) => ({ i: idx, nat: f.n, nom: f.nom, forme: f.forme, region: f.region, key: f.key }));
   };
@@ -16247,7 +16191,7 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
   const currentStorageKey = mode === "mega" ? "go1_mega" : mode === "gmax" ? "go1_gmax"
     : isFormsView ? (mode === "pokedex" ? "go1_pokedex_forms" : "go1_shiny_forms")
     : GO1_UNIQUE_STORAGE_KEYS[mode];
-  const [currentDict, toggleCurrent, setCurrent, reloadCurrent] = useGo1Dict(currentStorageKey);
+  const [currentDict, toggleCurrent, , reloadCurrent] = useGo1Dict(currentStorageKey);
 
   useEffect(() => { setLimit(150); }, [mode, subView, search, region, statusFilter, sortiFilter]);
 
@@ -16321,51 +16265,9 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
   }, []);
   const parfaitFamilyInfo = useMemo(() => {
     if (mode !== "parfait" || !currentDict) return { numbers: [] };
-    const famSet = new Set();
-    const soloNames = new Set();
-    Object.keys(currentDict).forEach((natStr) => {
-      const sp = speciesByNumber.get(Number(natStr));
-      if (!sp) return;
-      if (sp.famille != null) famSet.add(sp.famille);
-      else soloNames.add(sp.nom);
-    });
-    const names = new Set(soloNames);
-    famSet.forEach((fam) => {
-      const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
-      if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
-    });
-    const numbers = [];
-    names.forEach((nom) => {
-      const sp = NAT_ALL_FORMS.find((f) => f.nom === nom);
-      if (sp) numbers.push(sp.n);
-    });
-    numbers.sort((a, b) => a - b);
-    return { numbers };
+    return familyNumbersFor(Object.keys(currentDict).map((natStr) => speciesByNumber.get(Number(natStr))).filter(Boolean));
   }, [mode, currentDict, speciesByNumber]);
-
-  const [parfaitSuffix, setParfaitSuffix] = useState("");
-  const [parfaitSavedSuffix, setParfaitSavedSuffix] = useState(null);
-  useEffect(() => {
-    (async () => {
-      let v = "";
-      try {
-        const res = await window.storage.get("parfait_search_suffix", false);
-        if (res && res.value != null) v = res.value;
-      } catch (e) {}
-      setParfaitSuffix(v);
-      setParfaitSavedSuffix(v);
-    })();
-  }, []);
-  const rememberParfaitSuffix = async () => {
-    try { await window.storage.set("parfait_search_suffix", parfaitSuffix, false); } catch (e) {}
-    setParfaitSavedSuffix(parfaitSuffix);
-  };
-  const [parfaitCopyFeedback, setParfaitCopyFeedback] = useState("");
-  const copyParfaitFamilies = async () => {
-    const str = parfaitFamilyInfo.numbers.join(",") + parfaitSuffix;
-    const ok = await copyToClipboard(str);
-    setParfaitCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
-  };
+  const parfaitCopier = useFamilyNumbersCopy("parfait_search_suffix", parfaitFamilyInfo.numbers);
 
   if (!currentDict) {
     return <div style={{ padding: 40, color: MUTED, fontFamily: "Inter, sans-serif" }}>Chargement…</div>;
@@ -16391,11 +16293,7 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
       {items.length === 0 && (
         <div style={{ color: MUTED, fontFamily: "Inter, sans-serif", padding: 30, textAlign: "center" }}>Aucun résultat.</div>
       )}
-      {items.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({items.length - limit} restants)</button>
-        </div>
-      )}
+      <ShowMoreButton total={items.length} limit={limit} setLimit={setLimit} />
 
       {modalTarget && (() => {
         // Navigation ‹ › entre Pokémon (§ harmonisation, comme les autres fiches) — au sein de la
@@ -16450,10 +16348,7 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
                 )}
                 {viewMode === "grid" && (
                   <React.Fragment>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 12.5, color: TXT, cursor: "pointer" }}>
-                      <input type="checkbox" checked={groupByRegion} onChange={(e) => setGroupByRegion(e.target.checked)} />
-                      Séparer par région
-                    </label>
+                    <CheckboxRow checked={groupByRegion} onChange={setGroupByRegion}>Séparer par région</CheckboxRow>
                     <GridColsStepper gridCols={gridCols} setGridCols={setGridCols} min={2} max={8} display={gridCols} />
                   </React.Fragment>
                 )}
@@ -16474,36 +16369,12 @@ function Go1View({ filterCache, mode, setMode, modeMenuItem, autoOpenKey }) {
           ...(mode === "parfait" ? [{
             key: "parfaitFamilies", title: "Familles Parfait", icon: BarIcon.clipboard,
             render: () => (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                  {parfaitFamilyInfo.numbers.length} Pokémon (familles Parfait, membres attrapés inclus)
-                </div>
-                <button
-                  onClick={copyParfaitFamilies}
-                  style={{ ...tabActive, background: modeDef.color, color: BG }}
-                  disabled={parfaitFamilyInfo.numbers.length === 0}
-                >📋 Copier la liste ({parfaitFamilyInfo.numbers.length})</button>
-                {parfaitCopyFeedback && (
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{parfaitCopyFeedback}</div>
-                )}
-                <textarea
-                  readOnly
-                  value={parfaitFamilyInfo.numbers.join(",") + parfaitSuffix}
-                  onFocus={(e) => e.target.select()}
-                  style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
-                />
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input
-                    value={parfaitSuffix}
-                    onChange={(e) => setParfaitSuffix(e.target.value)}
-                    placeholder="Suffixe (optionnel, ajouté après la liste)"
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                  {parfaitSavedSuffix !== null && parfaitSuffix !== parfaitSavedSuffix && (
-                    <button onClick={rememberParfaitSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
-                  )}
-                </div>
-              </div>
+              <FamilyNumbersPanel
+                summary={`${parfaitFamilyInfo.numbers.length} Pokémon (familles Parfait, membres attrapés inclus)`}
+                color={modeDef.color}
+                count={parfaitFamilyInfo.numbers.length}
+                copier={parfaitCopier}
+              />
             ),
           }] : []),
         ]}
@@ -16832,9 +16703,8 @@ function useHome2() {
   };
 }
 
-function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCache }) {
+function Home2View({ initialFilter, onConsumeFilter, filterCache }) {
   const { caught, ready, toggle, uncheckMany } = useHome2();
-  useEffect(() => { if (onSaveStateChange) onSaveStateChange("saved"); }, []);
   const [mode, setMode] = useCachedState(filterCache, "home2", "mode", "forme"); // "forme" | "espece"
   const [viewMode, setViewMode] = useCachedState(filterCache, "home2", "viewMode", "list");
   const [search, setSearch] = useCachedState(filterCache, "home2", "search", "");
@@ -16881,16 +16751,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
 
   // Catalogue "par Pokémon" : une ligne par espèce (forme représentative = numéro national le
   // plus bas parmi ses formes retenues), "attrapée" dès qu'au moins une de ses formes l'est.
-  const especeCatalog = useMemo(() => {
-    const bySpecies = new Map();
-    formeCatalog.forEach((f) => {
-      const existing = bySpecies.get(f.nom);
-      const fn = typeof f.n === "number" ? f.n : parseFloat(String(f.n).replace(/[^0-9.]/g, "")) || 999999;
-      const en = existing ? (typeof existing.n === "number" ? existing.n : parseFloat(String(existing.n).replace(/[^0-9.]/g, "")) || 999999) : Infinity;
-      if (!existing || fn < en) bySpecies.set(f.nom, f);
-    });
-    return Array.from(bySpecies.values());
-  }, [formeCatalog]);
+  const especeCatalog = useMemo(() => speciesRepresentatives(formeCatalog), [formeCatalog]);
 
   // Bouton "📋 Familles manquantes" (§ demande explicite, même modèle que Go 1 / doc §Recherche Go) :
   // repère chaque famille d'évolution ayant au moins une FORME manquante (§ correctif : par forme,
@@ -16901,60 +16762,9 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
   // seulement les formes manquantes elles-mêmes — pratique pour rechercher toute la ligne
   // d'évolution dans l'app Pokémon Home), triés, séparés par une virgule. Formes sans numéro de
   // famille connu : traitées isolément.
-  const numberOfSpecies = (nom) => {
-    const info = natInfoFor(nom, null);
-    if (info && info.n !== 999999) return info.n;
-    const any = NAT_ALL_FORMS.find((f) => f.nom === nom);
-    return any ? any.n : null;
-  };
-  const missingFamiliesInfo = useMemo(() => {
-    const famSet = new Set();
-    const soloNames = new Set();
-    formeCatalog.forEach((f) => {
-      if (caught[f.key]) return; // cette forme précise est déjà cochée
-      if (f.famille != null) famSet.add(f.famille);
-      else soloNames.add(f.nom);
-    });
-    const names = new Set(soloNames);
-    famSet.forEach((fam) => {
-      const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
-      if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
-    });
-    const numbers = new Set();
-    names.forEach((nom) => {
-      const n = numberOfSpecies(nom);
-      if (n != null) numbers.add(n);
-    });
-    const sortedNumbers = Array.from(numbers).sort((a, b) => a - b);
-    return { numbers: sortedNumbers, pokemonCount: names.size, familyCount: famSet.size + soloNames.size };
-  }, [formeCatalog, caught]);
-
-  // Suffixe mémorisable ajouté après la liste copiée (§ demande explicite) — stocké séparément
-  // du reste de home2 (simple préférence, pas une donnée de collection).
-  const [suffix, setSuffix] = useState("");
-  const [savedSuffix, setSavedSuffix] = useState(null); // null = pas encore chargé depuis le stockage
-  useEffect(() => {
-    (async () => {
-      let v = "";
-      try {
-        const res = await window.storage.get("home2_search_suffix", false);
-        if (res && res.value != null) v = res.value;
-      } catch (e) {}
-      setSuffix(v);
-      setSavedSuffix(v);
-    })();
-  }, []);
-  const rememberSuffix = async () => {
-    try { await window.storage.set("home2_search_suffix", suffix, false); } catch (e) {}
-    setSavedSuffix(suffix);
-  };
-  const [copyFeedback, setCopyFeedback] = useState("");
-  const copyMissingFamilies = async () => {
-    setFilter("missing");
-    const str = missingFamiliesInfo.numbers.join(",") + suffix;
-    const ok = await copyToClipboard(str);
-    setCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
-  };
+  // Par FORME (§ correctif ci-dessus) : chaque forme non cochée fait remonter toute sa famille.
+  const missingFamiliesInfo = useMemo(() => familyNumbersFor(formeCatalog.filter((f) => !caught[f.key])), [formeCatalog, caught]);
+  const familiesCopier = useFamilyNumbersCopy("home2_search_suffix", missingFamiliesInfo.numbers);
 
   const isFormeMode = mode === "forme";
   const baseCatalog = isFormeMode ? formeCatalog : especeCatalog;
@@ -16966,9 +16776,7 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
 
   const sortedCatalog = useMemo(() => {
     return [...baseCatalog].sort((a, b) => {
-      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.n) - natSortValue(b.n);
     });
   }, [baseCatalog]);
 
@@ -17015,87 +16823,14 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
 
   return (
     <div style={{ paddingBottom: 100 }}>
-      <div style={{
-        position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
-        display: "flex", alignItems: "flex-start", gap: 20, marginBottom: 12, flexWrap: "wrap",
-        paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
-      }}>
-        <ProgressStatsTable
-          left={{
-            label: "Progression",
-            rings: [{ pct: pct(caughtCount, total), size: 46, stroke: 5, color: LIGHTBLUE, caption: `${caughtCount}/${total}` }],
-          }}
-          right={{
-            label: "Affiché",
-            rings: [{ pct: pct(filteredCaughtCount, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }],
-          }}
-        />
-      </div>
+      <ChecklistProgressHeader caughtCount={caughtCount} total={total} shownCaught={filteredCaughtCount} shownTotal={filtered.length} />
 
-      {viewMode === "grille" && (
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${effCols}, 1fr)`, gap: 6 }}>
-          {filtered.slice(0, limit).map((f) => {
-            const c = isCaught(f);
-            return (
-              <button key={f.key} onClick={() => onToggle(f)} title={f.nom} style={{
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
-                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
-                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "3px 2px", cursor: "pointer",
-              }}>
-                <Sprite nom={f.nom} forme={f.forme} size={32} />
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <ChecklistBody
+        items={filtered.slice(0, limit)} viewMode={viewMode} cols={effCols}
+        isCaught={isCaught} onToggle={onToggle} showForme={isFormeMode}
+      />
 
-      {viewMode === "list" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 8 }}>
-          {filtered.slice(0, limit).map((f) => {
-            const c = isCaught(f);
-            return (
-              <div key={f.key} style={{
-                display: "flex", alignItems: "center", gap: 10,
-                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
-                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "7px 12px",
-              }}>
-                <button
-                  onClick={() => onToggle(f)}
-                  title={c ? "Marquer comme non capturé" : "Marquer comme capturé"}
-                  style={{
-                    width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
-                    border: `2px solid ${c ? LIGHTBLUE : MUTED}`,
-                    background: c ? LIGHTBLUE : "transparent",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
-                  }}
-                >{c ? "✓" : ""}</button>
-                <div
-                  onClick={() => onToggle(f)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}
-                >
-                  <Sprite nom={f.nom} forme={f.forme} size={32} />
-                  <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
-                  <div style={{
-                    fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
-                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                  }}>
-                    {f.nom}{isFormeMode && f.forme ? <span style={{ color: MUTED, fontWeight: 400 }}> · {f.forme}</span> : null}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
-      )}
+      <ShowMoreButton total={filtered.length} limit={limit} setLimit={setLimit} />
 
       <FloatingActionBar
         search={search}
@@ -17132,36 +16867,13 @@ function Home2View({ initialFilter, onConsumeFilter, onSaveStateChange, filterCa
           {
             key: "families", title: "Familles manquantes", icon: BarIcon.clipboard,
             render: () => (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                  {missingFamiliesInfo.familyCount} famille{missingFamiliesInfo.familyCount > 1 ? "s" : ""} incomplète{missingFamiliesInfo.familyCount > 1 ? "s" : ""} — {missingFamiliesInfo.numbers.length} Pokémon
-                </div>
-                <button
-                  onClick={copyMissingFamilies}
-                  style={{ ...tabActive, background: LIGHTBLUE, color: BG }}
-                  disabled={missingFamiliesInfo.numbers.length === 0}
-                >📋 Copier la liste ({missingFamiliesInfo.numbers.length})</button>
-                {copyFeedback && (
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{copyFeedback}</div>
-                )}
-                <textarea
-                  readOnly
-                  value={missingFamiliesInfo.numbers.join(",") + suffix}
-                  onFocus={(e) => e.target.select()}
-                  style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
-                />
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input
-                    value={suffix}
-                    onChange={(e) => setSuffix(e.target.value)}
-                    placeholder="Suffixe (optionnel, ajouté après la liste)"
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                  {savedSuffix !== null && suffix !== savedSuffix && (
-                    <button onClick={rememberSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
-                  )}
-                </div>
-              </div>
+              <FamilyNumbersPanel
+                summary={missingFamiliesSummary(missingFamiliesInfo)}
+                color={LIGHTBLUE}
+                count={missingFamiliesInfo.numbers.length}
+                copier={familiesCopier}
+                onBeforeCopy={() => setFilter("missing")}
+              />
             ),
           },
         ]}
@@ -17272,9 +16984,7 @@ function Go2ExclusionsManager({ excluded, onSetExcluded, onClose }) {
     return speciesRepresentatives()
       .filter((f) => excluded[f.nom])
       .sort((a, b) => {
-        const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
-        const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
-        return an - bn;
+        return natSortValue(a.n) - natSortValue(b.n);
       });
   }, [excluded]);
   const suggestions = useMemo(() => {
@@ -17356,67 +17066,15 @@ function Go2View({ filterCache, modeMenuItem, autoOpenKey }) {
 
   // Bouton "📋 Familles manquantes" — même principe que Home 2, adapté à un catalogue déjà par
   // espèce (chaque entrée non cochée fait remonter toute sa famille, comme avant).
-  const numberOfSpecies = (nom) => {
-    const info = natInfoFor(nom, null);
-    if (info && info.n !== 999999) return info.n;
-    const any = NAT_ALL_FORMS.find((f) => f.nom === nom);
-    return any ? any.n : null;
-  };
-  const missingFamiliesInfo = useMemo(() => {
-    const famSet = new Set();
-    const soloNames = new Set();
-    speciesCatalog.forEach((f) => {
-      if (caught[f.key]) return;
-      if (f.famille != null) famSet.add(f.famille);
-      else soloNames.add(f.nom);
-    });
-    const names = new Set(soloNames);
-    famSet.forEach((fam) => {
-      const rep = NAT_ALL_FORMS.find((x) => x.famille === fam);
-      if (rep) familyMembersOf(rep.nom).forEach((n) => names.add(n));
-    });
-    const numbers = new Set();
-    names.forEach((nom) => {
-      const n = numberOfSpecies(nom);
-      if (n != null) numbers.add(n);
-    });
-    const sortedNumbers = Array.from(numbers).sort((a, b) => a - b);
-    return { numbers: sortedNumbers, pokemonCount: names.size, familyCount: famSet.size + soloNames.size };
-  }, [speciesCatalog, caught]);
-
+  const missingFamiliesInfo = useMemo(() => familyNumbersFor(speciesCatalog.filter((f) => !caught[f.key])), [speciesCatalog, caught]);
   // Suffixe mémorisable (§ même principe que Home 2), stocké séparément sous sa propre clé.
-  const [suffix, setSuffix] = useState("");
-  const [savedSuffix, setSavedSuffix] = useState(null);
-  useEffect(() => {
-    (async () => {
-      let v = "";
-      try {
-        const res = await window.storage.get("go2_search_suffix", false);
-        if (res && res.value != null) v = res.value;
-      } catch (e) {}
-      setSuffix(v);
-      setSavedSuffix(v);
-    })();
-  }, []);
-  const rememberSuffix = async () => {
-    try { await window.storage.set("go2_search_suffix", suffix, false); } catch (e) {}
-    setSavedSuffix(suffix);
-  };
-  const [copyFeedback, setCopyFeedback] = useState("");
-  const copyMissingFamilies = async () => {
-    setFilter("missing");
-    const str = missingFamiliesInfo.numbers.join(",") + suffix;
-    const ok = await copyToClipboard(str);
-    setCopyFeedback(ok ? "Copié !" : "Échec de la copie — sélectionne le texte ci-dessous.");
-  };
+  const familiesCopier = useFamilyNumbersCopy("go2_search_suffix", missingFamiliesInfo.numbers);
 
   const isCaught = (f) => !!caught[f.key];
 
   const sortedCatalog = useMemo(() => {
     return [...speciesCatalog].sort((a, b) => {
-      const an = typeof a.n === "number" ? a.n : parseFloat(String(a.n).replace(/[^0-9.]/g, "")) || 999999;
-      const bn = typeof b.n === "number" ? b.n : parseFloat(String(b.n).replace(/[^0-9.]/g, "")) || 999999;
-      return an - bn;
+      return natSortValue(a.n) - natSortValue(b.n);
     });
   }, [speciesCatalog]);
 
@@ -17454,80 +17112,13 @@ function Go2View({ filterCache, modeMenuItem, autoOpenKey }) {
 
   return (
     <div style={{ paddingBottom: 100 }}>
-      <div style={{
-        position: "sticky", top: 0, zIndex: 20, background: BG, paddingTop: 4, marginTop: -4,
-        display: "flex", alignItems: "flex-start", gap: 20, marginBottom: 12, flexWrap: "wrap",
-        paddingBottom: 8, borderBottom: `1px solid ${LINE}`,
-      }}>
-        <ProgressStatsTable
-          left={{
-            label: "Progression",
-            rings: [{ pct: pct(caughtCount, total), size: 46, stroke: 5, color: LIGHTBLUE, caption: `${caughtCount}/${total}` }],
-          }}
-          right={{
-            label: "Affiché",
-            rings: [{ pct: pct(filteredCaughtCount, filtered.length), size: 46, stroke: 5, color: OK, caption: `${filtered.length}` }],
-          }}
-        />
-      </div>
+      <ChecklistProgressHeader caughtCount={caughtCount} total={total} shownCaught={filteredCaughtCount} shownTotal={filtered.length} />
 
-      {viewMode === "grille" && (
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${effCols}, 1fr)`, gap: 6 }}>
-          {filtered.slice(0, limit).map((f) => {
-            const c = isCaught(f);
-            return (
-              <button key={f.key} onClick={() => onToggle(f)} title={f.nom} style={{
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
-                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
-                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "3px 2px", cursor: "pointer",
-              }}>
-                <Sprite nom={f.nom} forme={f.forme} size={32} />
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {viewMode === "list" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 8 }}>
-          {filtered.slice(0, limit).map((f) => {
-            const c = isCaught(f);
-            return (
-              <div key={f.key} style={{
-                display: "flex", alignItems: "center", gap: 10,
-                background: c ? "rgba(144,202,249,0.14)" : PANEL2,
-                border: `1px solid ${c ? LIGHTBLUE : LINE}`,
-                borderRadius: 18, padding: "7px 12px",
-              }}>
-                <button
-                  onClick={() => onToggle(f)}
-                  title={c ? "Marquer comme non capturé" : "Marquer comme capturé"}
-                  style={{
-                    width: 20, height: 20, borderRadius: 6, flexShrink: 0, padding: 0,
-                    border: `2px solid ${c ? LIGHTBLUE : MUTED}`,
-                    background: c ? LIGHTBLUE : "transparent",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    color: BG, fontSize: 13, fontWeight: 900, cursor: "pointer",
-                  }}
-                >{c ? "✓" : ""}</button>
-                <div
-                  onClick={() => setExcludeModalTarget(f)}
-                  title="Ouvrir la fiche (exclure ce Pokémon)"
-                  style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}
-                >
-                  <Sprite nom={f.nom} forme={f.forme} size={32} />
-                  <span style={{ fontFamily: "monospace", fontSize: 11, color: MUTED, flexShrink: 0, marginRight: -2 }}>{f.n ?? "—"}</span>
-                  <div style={{
-                    fontFamily: "Inter, sans-serif", fontSize: 13.5, color: TXT, fontWeight: 700,
-                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                  }}>{f.nom}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <ChecklistBody
+        items={filtered.slice(0, limit)} viewMode={viewMode} cols={effCols}
+        isCaught={isCaught} onToggle={onToggle}
+        onOpen={setExcludeModalTarget} openTitle="Ouvrir la fiche (exclure ce Pokémon)"
+      />
 
       {excludeModalTarget && (
         <Go2ExcludeModal
@@ -17545,11 +17136,7 @@ function Go2View({ filterCache, modeMenuItem, autoOpenKey }) {
         />
       )}
 
-      {filtered.length > limit && (
-        <div style={{ textAlign: "center", marginTop: 16 }}>
-          <button onClick={() => setLimit(limit + 200)} style={btnGhost}>Afficher plus ({filtered.length - limit} restants)</button>
-        </div>
-      )}
+      <ShowMoreButton total={filtered.length} limit={limit} setLimit={setLimit} />
 
       <FloatingActionBar
         search={search}
@@ -17588,36 +17175,13 @@ function Go2View({ filterCache, modeMenuItem, autoOpenKey }) {
           {
             key: "families", title: "Familles manquantes", icon: BarIcon.clipboard,
             render: () => (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 12, color: MUTED }}>
-                  {missingFamiliesInfo.familyCount} famille{missingFamiliesInfo.familyCount > 1 ? "s" : ""} incomplète{missingFamiliesInfo.familyCount > 1 ? "s" : ""} — {missingFamiliesInfo.numbers.length} Pokémon
-                </div>
-                <button
-                  onClick={copyMissingFamilies}
-                  style={{ ...tabActive, background: LIGHTBLUE, color: BG }}
-                  disabled={missingFamiliesInfo.numbers.length === 0}
-                >📋 Copier la liste ({missingFamiliesInfo.numbers.length})</button>
-                {copyFeedback && (
-                  <div style={{ fontFamily: "Inter, sans-serif", fontSize: 11.5, color: MUTED }}>{copyFeedback}</div>
-                )}
-                <textarea
-                  readOnly
-                  value={missingFamiliesInfo.numbers.join(",") + suffix}
-                  onFocus={(e) => e.target.select()}
-                  style={{ ...inputStyle, width: "100%", minHeight: 60, fontSize: 11, resize: "vertical" }}
-                />
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input
-                    value={suffix}
-                    onChange={(e) => setSuffix(e.target.value)}
-                    placeholder="Suffixe (optionnel, ajouté après la liste)"
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                  {savedSuffix !== null && suffix !== savedSuffix && (
-                    <button onClick={rememberSuffix} style={btnGhost} title="Mémoriser ce suffixe pour la prochaine fois">💾</button>
-                  )}
-                </div>
-              </div>
+              <FamilyNumbersPanel
+                summary={missingFamiliesSummary(missingFamiliesInfo)}
+                color={LIGHTBLUE}
+                count={missingFamiliesInfo.numbers.length}
+                copier={familiesCopier}
+                onBeforeCopy={() => setFilter("missing")}
+              />
             ),
           },
         ]}
@@ -17642,21 +17206,6 @@ function App() {
   const [pendingDoubleFilter, setPendingDoubleFilter] = useState(null); // { marque } transmis vers l'onglet Double depuis Progression
   const [pendingInterjeuFilter, setPendingInterjeuFilter] = useState(null); // { marque, home } transmis vers l'onglet Interjeu depuis Progression
   const [pendingTable, setPendingTable] = useState(null); // jeu (code), "__shiny__" ou "__national__" : table à ouvrir directement dans Progression
-  const [globalSaveState, setGlobalSaveState] = useState("idle"); // reflété par le point de statut du header
-  // Compteur de modifications depuis le dernier export, affiché discrètement à côté du point de
-  // statut (voir SaveStatusDot) — initialisé depuis localStorage pour survivre à un rechargement.
-  const [modCount, setModCount] = useState(() => {
-    try { return parseInt(localStorage.getItem("pkdx_mod_count") || "0", 10) || 0; } catch (e) { return 0; }
-  });
-  useEffect(() => {
-    const onModCount = (e) => setModCount(e.detail);
-    window.addEventListener("pkdx-mod-count", onModCount);
-    return () => window.removeEventListener("pkdx-mod-count", onModCount);
-  }, []);
-  const resetModCount = () => {
-    try { localStorage.setItem("pkdx_mod_count", "0"); } catch (e) {}
-    setModCount(0);
-  };
 
   // ---- Synchronisation GitHub Gist (voir doc §46) --------------------------------------------
   const [gistToken, setGistTokenState] = useState(() => getGistToken());
@@ -18020,19 +17569,17 @@ function App() {
 
   // Repère "dernier backup" consulté par le bandeau de rappel (showExportReminder plus bas) —
   // n'est plus déclenché que par un envoi OneDrive réussi (doOneDriveSend, demande explicite) ;
-  // les exports locaux manuels appellent resetModCount seul, sans avancer ce repère.
+  // les exports locaux manuels n'avancent pas ce repère.
   const markOneDriveBackedUp = async () => {
     const now = Date.now();
     try { await window.storage.set(LAST_EXPORT_KEY, String(now), false); } catch (e) {}
     setLastExportAt(now);
     setReminderDismissed(false);
-    resetModCount();
   };
 
   const exportSave = async () => {
     const out = await buildExportOut();
     downloadExportBlob(out);
-    resetModCount();
     setIoMsg("Sauvegarde exportée.");
     setTimeout(() => setIoMsg(""), 3000);
   };
@@ -18074,8 +17621,6 @@ function App() {
     try {
       const touched = await applyExcelWorkbookImport(wb, mode);
       if (touched > 0) {
-        // Idem import JSON : l'état importé est considéré à jour, pas de modification en attente.
-        try { localStorage.setItem("pkdx_mod_count", "0"); } catch (e) {}
         setIoMsg("Import Excel appliqué — rechargement…");
         setTimeout(() => window.location.reload(), 900);
       } else {
@@ -18097,8 +17642,6 @@ function App() {
           await window.storage.set(k, parsed[k], false);
         }
       }
-      // Un import restaure un état déjà "sauvegardé" — pas de modification en attente.
-      try { localStorage.setItem("pkdx_mod_count", "0"); } catch (e) {}
       setIoMsg("Sauvegarde importée — rechargement…");
       setTimeout(() => window.location.reload(), 800);
     } catch (e) {
@@ -18133,7 +17676,6 @@ function App() {
     // ponctuelle du contenu de JEU_OPTIONS_BY_MARQUE vers custom_jeux ne se relance jamais après
     // un reset, et ces valeurs de départ resteraient perdues pour de bon.
     try { await window.storage.delete("jeu_options_migrated", false); } catch (e) {}
-    resetModCount();
     setShowResetConfirm(false);
     setIoMsg("Sauvegarde exportée automatiquement, puis toutes les données réinitialisées — rechargement…");
     setTimeout(() => window.location.reload(), 1200);
@@ -18314,8 +17856,8 @@ function App() {
         <button onClick={() => setTab("overview")} style={pillStyle(tab === "overview", OK)}>%</button>
         <button onClick={() => setTab("national")} style={pillStyle(tab === "national", DARKBLUE)}>National</button>
         <button onClick={() => setTab("shiny")} style={pillStyle(tab === "shiny", GOLD)}>Shiny</button>
-        <GameNavSelect tab={tab} setTab={setTab} />
-        <AutreNavSelect tab={tab} setTab={setTab} />
+        <TabGroupNavSelect tab={tab} setTab={setTab} items={GAME_ORDER} color={LIGHTBLUE} placeholder="Home" />
+        <TabGroupNavSelect tab={tab} setTab={setTab} items={AUTRE_ORDER} color={AUTRE_COLOR} placeholder="Autre" labelOf={(k) => AUTRE_LABELS[k]} />
         <button onClick={() => setTab("home2")} style={pillStyle(tab === "home2", LIGHTBLUE)}>Home 2</button>
       </div>
 
@@ -18339,7 +17881,6 @@ function App() {
             initialFilter={pendingNationalFilter}
             onConsumeFilter={() => setPendingNationalFilter(null)}
             onOpenProgress={() => openProgressTable("__national__")}
-            onSaveStateChange={setGlobalSaveState}
           />
         )}
         {tab === "home2" && (
@@ -18347,7 +17888,6 @@ function App() {
             filterCache={filterCache}
             initialFilter={pendingHome2Filter}
             onConsumeFilter={() => setPendingHome2Filter(null)}
-            onSaveStateChange={setGlobalSaveState}
           />
         )}
         {GAME_ORDER.includes(tab) && (
@@ -18360,7 +17900,6 @@ function App() {
             initialFilter={pendingFilter}
             onConsumeFilter={() => setPendingFilter(null)}
             onOpenProgress={openProgressTable}
-            onSaveStateChange={setGlobalSaveState}
             cameFromMarqueSwitch={cameFromMarqueSwitch}
           />
         )}
@@ -18370,7 +17909,6 @@ function App() {
             initialFilter={pendingShinyFilter}
             onConsumeFilter={() => setPendingShinyFilter(null)}
             onOpenProgress={() => openProgressTable("__shiny__")}
-            onSaveStateChange={setGlobalSaveState}
           />
         )}
         {tab === "double" && (
@@ -18378,7 +17916,6 @@ function App() {
             filterCache={filterCache}
             initialFilter={pendingDoubleFilter}
             onConsumeFilter={() => setPendingDoubleFilter(null)}
-            onSaveStateChange={setGlobalSaveState}
           />
         )}
         {tab === "event" && (
@@ -18386,7 +17923,6 @@ function App() {
             filterCache={filterCache}
             initialFilter={pendingEventFilter}
             onConsumeFilter={() => setPendingEventFilter(null)}
-            onSaveStateChange={setGlobalSaveState}
           />
         )}
         {tab === "interjeu" && (
@@ -18394,12 +17930,10 @@ function App() {
             filterCache={filterCache}
             initialFilter={pendingInterjeuFilter}
             onConsumeFilter={() => setPendingInterjeuFilter(null)}
-            onSaveStateChange={setGlobalSaveState}
           />
         )}
         {tab === "settings" && (
           <SettingsView
-            onSaveStateChange={setGlobalSaveState}
             gistToken={gistToken}
             gistId={gistId}
             gistSyncedAt={gistSyncedAt}
@@ -18423,14 +17957,15 @@ function App() {
   );
 }
 
-// Sélecteur de jeu (onglet Home) — remplace le <select> natif : sur Android/One UI, un
-// <select> natif ouvre une boîte de dialogue avec case à cocher + bouton "OK" à valider,
-// ce qui ajoute une étape. Ici, un menu personnalisé (rendu via portail pour échapper au
-// conteneur transformé de la barre flottante) applique le jeu choisi dès l'appui.
-function GameNavSelect({ tab, setTab }) {
+// Sélecteur d'onglet groupé (menu "Home" = jeux GAME_ORDER, menu "Autre" = Double/Event/Interjeu)
+// — remplace le <select> natif : sur Android/One UI, un <select> natif ouvre une boîte de dialogue
+// avec case à cocher + bouton "OK" à valider, ce qui ajoute une étape. Ici, un menu personnalisé
+// (rendu via portail pour échapper au conteneur transformé de la barre flottante) applique le
+// choix dès l'appui. `labelOf` : libellé affiché d'une clé d'onglet (par défaut la clé elle-même).
+function TabGroupNavSelect({ tab, setTab, items, color, placeholder, labelOf = (k) => k }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
-  const active = GAME_ORDER.includes(tab);
+  const active = items.includes(tab);
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e) => {
@@ -18446,15 +17981,9 @@ function GameNavSelect({ tab, setTab }) {
       <button
         ref={btnRef}
         onClick={() => setOpen((o) => !o)}
-        style={{
-          flexShrink: 0, background: LIGHTBLUE, color: "#fff", border: "none",
-          boxShadow: active ? "0 0 0 2px rgba(255,255,255,0.85), 0 2px 8px rgba(0,0,0,0.35)" : "0 1px 3px rgba(0,0,0,0.25)",
-          borderRadius: 999, padding: "9px 12px 9px 14px", fontFamily: "Inter, sans-serif",
-          fontSize: 12.5, fontWeight: active ? 800 : 500, cursor: "pointer", whiteSpace: "nowrap",
-          display: "flex", alignItems: "center", gap: 4,
-        }}
+        style={{ ...pillStyle(active, color), padding: "9px 12px 9px 14px", display: "flex", alignItems: "center", gap: 4 }}
       >
-        {active ? tab : "Home"}
+        {active ? labelOf(tab) : placeholder}
         <span style={{ fontSize: 9, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▾</span>
       </button>
       {open && ReactDOM.createPortal(
@@ -18467,80 +17996,18 @@ function GameNavSelect({ tab, setTab }) {
             boxShadow: GLASS_SHADOW,
           }}
         >
-          {GAME_ORDER.map((g) => (
+          {items.map((g) => (
             <button
               key={g}
               onClick={() => { setTab(g); setOpen(false); }}
               style={{
                 ...btnGhost, padding: "7px 12px",
-                background: tab === g ? LIGHTBLUE : "transparent",
+                background: tab === g ? color : "transparent",
                 color: tab === g ? "#fff" : MUTED,
-                border: `1px solid ${tab === g ? LIGHTBLUE : LINE}`,
+                border: `1px solid ${tab === g ? color : LINE}`,
                 fontWeight: tab === g ? 800 : 500,
               }}
-            >{g}</button>
-          ))}
-        </div>,
-        document.body
-      )}
-    </>
-  );
-}
-
-// Sélecteur "Autre" (Double/Event/Interjeu) — même patron que GameNavSelect (menu Home).
-function AutreNavSelect({ tab, setTab }) {
-  const [open, setOpen] = useState(false);
-  const btnRef = useRef(null);
-  const active = AUTRE_ORDER.includes(tab);
-  const AUTRE_COLOR = "#78909C";
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e) => {
-      if (btnRef.current && btnRef.current.contains(e.target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [open]);
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          flexShrink: 0, background: AUTRE_COLOR, color: "#fff", border: "none",
-          boxShadow: active ? "0 0 0 2px rgba(255,255,255,0.85), 0 2px 8px rgba(0,0,0,0.35)" : "0 1px 3px rgba(0,0,0,0.25)",
-          borderRadius: 999, padding: "9px 12px 9px 14px", fontFamily: "Inter, sans-serif",
-          fontSize: 12.5, fontWeight: active ? 800 : 500, cursor: "pointer", whiteSpace: "nowrap",
-          display: "flex", alignItems: "center", gap: 4,
-        }}
-      >
-        {active ? AUTRE_LABELS[tab] : "Autre"}
-        <span style={{ fontSize: 9, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▾</span>
-      </button>
-      {open && ReactDOM.createPortal(
-        <div
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 82, zIndex: 45,
-            background: PANEL2, border: `1px solid ${LINE}`, borderRadius: 18, padding: 8,
-            display: "flex", flexWrap: "wrap", gap: 6, width: "min(320px, calc(100vw - 32px))",
-            boxShadow: GLASS_SHADOW,
-          }}
-        >
-          {AUTRE_ORDER.map((g) => (
-            <button
-              key={g}
-              onClick={() => { setTab(g); setOpen(false); }}
-              style={{
-                ...btnGhost, padding: "7px 12px",
-                background: tab === g ? AUTRE_COLOR : "transparent",
-                color: tab === g ? "#fff" : MUTED,
-                border: `1px solid ${tab === g ? AUTRE_COLOR : LINE}`,
-                fontWeight: tab === g ? 800 : 500,
-              }}
-            >{AUTRE_LABELS[g]}</button>
+            >{labelOf(g)}</button>
           ))}
         </div>,
         document.body
