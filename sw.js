@@ -2,7 +2,7 @@
 // CACHE_VERSION à synchroniser avec APP_VERSION à chaque livraison qui touche l'app shell
 // (index.html, manifest.json, icônes, ou la liste des CDN ci-dessous) : changer cette chaîne
 // suffit à invalider l'ancien cache au prochain chargement (voir "activate" plus bas).
-const CACHE_VERSION = "2026.9.24.9.0";
+const CACHE_VERSION = "2026.9.26.10.15";
 const CACHE_NAME = `pokedex-shell-${CACHE_VERSION}`;
 
 // Ressources nécessaires au tout premier rendu de l'app, mises en cache dès l'installation du
@@ -37,10 +37,12 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Domaines volontairement jamais interceptés : la synchro Gist (api.github.com) doit toujours
-// refléter l'état distant réel (jamais de réponse mise en cache silencieusement), et PokeAPI
-// (pokeapi.co) est consultée à la demande — non nécessaire au fonctionnement hors-ligne du tracker.
-const NEVER_CACHE_HOSTS = ["api.github.com", "pokeapi.co"];
+// Domaines volontairement jamais interceptés : le relais Google Apps Script de la synchro Google
+// Drive (POST vers script.google.com, puis réponse servie en GET après redirection vers
+// script.googleusercontent.com) doit toujours refléter l'état distant réel — jamais de réponse mise
+// en cache silencieusement —, et PokeAPI (pokeapi.co) est consultée à la demande — non nécessaire
+// au fonctionnement hors-ligne du tracker.
+const NEVER_CACHE_HOSTS = ["script.google.com", "script.googleusercontent.com", "pokeapi.co"];
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
