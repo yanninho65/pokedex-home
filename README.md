@@ -2,6 +2,8 @@
 
 Ce document décrit **l'état actuel** du projet (pas son historique). Livrable principal : `index.html` (jamais `Pokédex.html`). La documentation reste **séparée** du HTML — ne jamais la réintégrer dans `index.html`.
 
+> **Dépôt public** : ne jamais y faire apparaître le prénom de l'utilisateur (code, commentaires, documentation) — formulation neutre.
+>
 > **Priorité permanente** : zéro code mort, zéro duplication. À chaque modification, vérifier la zone touchée (fonction/état devenu inutile → supprimé ; logique ou style répété → mutualisé). Avant d'écrire un helper, un composant ou un style, vérifier dans §6 qu'un équivalent partagé n'existe pas déjà.
 
 ## 1. Format & structure
@@ -237,6 +239,8 @@ Concerne National, Shiny, Double, Event, Interjeu, `BoxGroupModal`, `JeuMultiSou
 | Numéros par jeu (catalogue) | `gameNumbersFor(row, key)`, brouillon `catalogDraftForRow(idx)` |
 | Clé de jeu vidéo | `slugifyJeuVideoKey(label, isTaken)` |
 | Presse-papier | `copyToClipboard(str)` (jamais `navigator.clipboard` directement) |
+| Sauvegarde complète | `ALL_KEYS` (module), `buildExportOut`, `applyImportedObject` (import JSON + récupération Drive), `openExcelImport` (import Excel local ou depuis le Drive) |
+| Synchronisation Google Drive | `useDriveSync()`, `driveStatus`, `DRIVE_STATUS_META`, actions `driveSmartSync`/`driveForcePush`/`driveForcePull`/`drivePushExcelNow`/`driveImportExcel` |
 | Enregistrement d'une collection | `persist = (value) => writeJSON(storageKey, value)` dans `useShinyCatches`, `useDoubleCatches`, `useCustomEvents`, `useCustomInterjeu` |
 
 ## 7. Règles métier & pièges
@@ -254,7 +258,7 @@ Concerne National, Shiny, Double, Event, Interjeu, `BoxGroupModal`, `JeuMultiSou
 - **`transform` et `position: fixed`** : un `transform` sur un ancêtre capture les descendants `fixed` (une modale ouverte depuis ce contenu se retrouve minuscule). Centrer par flexbox pleine largeur (`left: 0, right: 0, justifyContent: "center"`, `pointerEvents: "none"` sur la bande, `"auto"` sur le contenu).
 - **z-index** : barre d'onglets 30, menus de sélecteur 45, `FloatingBackButton` 55, en-têtes collants 20, fiches modales 100, `FloatingCardNav` 105. Ne jamais monter la barre d'onglets au-dessus de 100.
 - **Champs contextuels** : ne pas ajouter un champ à tous les onglets si son sens diffère (ex. Méthode/Détail d'Interjeu n'existent que dans `sentInfo`, synchronisé depuis Shiny/Double).
-- **Cache Android** : un `.html` rouvert depuis les téléchargements peut sembler figé — vérifier la version réellement embarquée avant de chercher un bug.
+- **Version figée à l'écran** : le service worker sert le cache — vérifier l'`APP_VERSION` affichée et que `CACHE_VERSION` de `sw.js` a bien changé avant de chercher un bug.
 - **`AvailabilityPills`** : toujours passer `marque` (sinon la pilule Home ne fait rien, silencieusement).
 - **`Picker` près du bord droit** : `align="right"`, sans changer le défaut.
 - **Mots "non méga"/"non gmax"** : de nombreuses formes de base s'appellent "Non Gmax", "Kanto non méga"… — retirer ces négations avant de chercher "méga"/"gmax" (`isMegaOrGmaxForme`).
@@ -302,45 +306,28 @@ Menu ⋮ → **Exporter sauvegarde** (`buildExportOut`, toutes les `ALL_KEYS`, c
 
 ### Synchronisation Google Drive
 
-**Architecture.** Relais **Google Apps Script** (`google-apps-script.gs`) déployé par l'utilisateur dans son propre compte Google en *application Web* (« Exécuter en tant que : Moi », « Qui a accès : Tout le monde »). L'app l'appelle en `POST` `text/plain` (requête simple, sans pré-vol CORS) avec la clé secrète **dans le corps**, jamais dans l'URL ; le script répond toujours `{ ok: true, … }` ou `{ ok: false, error }`. Actions : `ping`, `getJson`, `putJson`, `getExcel`, `putExcel`. Fichiers dans un dossier **Pokédex** à la racine du Drive, remplacés en place (même ID → historique des versions Drive conservé) :
-- `pokedex.json` : **source de vérité**, même contenu que l'export JSON (`buildExportOut`) ;
-- `pokedex.xlsx` : **miroir Excel** (tous les onglets de `EXCEL_SHEETS`), jamais relu automatiquement.
+**Relais** : `google-apps-script.gs`, déployé par l'utilisateur dans son compte Google en *application Web* (exécuter en tant que : Moi ; accès : Tout le monde). Appels `POST` `text/plain` (sans pré-vol CORS), clé secrète dans le corps ; réponse `{ ok, … }` / `{ ok: false, error }`. Actions `ping`, `getJson`, `putJson`, `getExcel`, `putExcel`. Dossier **Pokédex** à la racine du Drive, fichiers remplacés en place (même ID, historique Drive conservé) : `pokedex.json` (**source de vérité**, contenu de `buildExportOut`) et `pokedex.xlsx` (**miroir** de tous les `EXCEL_SHEETS`, jamais relu automatiquement). Script **100 % ASCII** (dossier écrit `Pok\u00e9dex`) : un caractère spécial abîmé au copier-coller casse la syntaxe dans l'éditeur Apps Script. Toute modification du script exige *Gérer les déploiements → Nouvelle version*.
 
-Le script est volontairement **100 % ASCII** (le nom du dossier est écrit `Pok\u00e9dex`) : un tiret long ou un accent abîmé au copier-coller provoque une erreur de syntaxe dans l'éditeur Apps Script. Après toute modification du script : *Gérer les déploiements → Modifier → Nouvelle version* (l'URL `/exec` ne change pas). « Fonction de script introuvable : doGet » = le déploiement sert une version sans ce code.
+**Moteur** (niveau module, préfixe `drive…`) : instantané `driveSnap` lu par `useDriveSync()` (`useSyncExternalStore`) ; `App` fournit à chaque rendu via `driveRegister` : `buildPayload`, `applyPayload`, `buildExcelB64`, `openExcelWorkbook`, `notify` ; `driveStart()` une fois au montage. Configuration et état de référence (`url`, `key`, `lastSyncedHash`, `lastRemoteHash`, `lastSyncedAt`, `lastExcelHash`, `lastExcelAt`, `rebaseline`) en `localStorage` brut `pkdx_drive_sync` (n'émet pas `pkdx-local-change`).
 
-**Moteur** (niveau module, préfixe `drive…`) : état partagé `driveSnap` lu par `useDriveSync()` (`useSyncExternalStore`) ; `App` fournit à chaque rendu, via `driveRegister`, `buildPayload` (`buildExportOut`), `applyPayload` (`applyImportedObject`), `buildExcelB64`, `openExcelWorkbook` (`openExcelImport`, flux d'import Excel habituel) et `notify` (`ioMsg`), puis appelle `driveStart()` une seule fois au montage. Configuration (`url`, `key`) et état de référence (`lastSyncedHash`, `lastRemoteHash`, `lastSyncedAt`, `lastExcelHash`, `lastExcelAt`, `rebaseline`) en `localStorage` brut sous `pkdx_drive_sync` — écrire cette clé ne déclenche jamais d'envoi.
-
-**Comparaison.** `hashBackup` calcule un hash de la sauvegarde indépendant de l'ordre des clés. Chaque synchro compare le hash **local** actuel, le hash **distant** et l'**état de référence** de la dernière synchro réussie. Une sauvegarde est dite **vide** (`backupIsEmpty`) si elle ne contient aucune donnée de collection hors `DRIVE_STRUCTURAL_KEYS` (`catalog_overrides`, `box_group_overrides`, `custom_marques`, toujours présentes).
-
-**Règles de décision (`driveSmartSync`)**, dans l'ordre :
+**Décision (`driveSmartSync`)** : compare hash local (`hashBackup`, indépendant de l'ordre des clés), hash distant et état de référence. « Vide » (`backupIsEmpty`) = aucune donnée hors `DRIVE_STRUCTURAL_KEYS` (`catalog_overrides`, `box_group_overrides`, `custom_marques`).
 
 | Situation | Action |
 |---|---|
-| Aucun `pokedex.json` sur le Drive | **Envoi** (création), puis premier dépôt Excel immédiat |
-| Hash local = hash distant, ou aucun des deux côtés n'a changé | Rien — état de référence mis à jour (« Déjà à jour ») |
-| Seul le Drive a changé | **Récupération** automatique puis rechargement |
-| Appareil vide jamais synchronisé face à un Drive rempli | **Récupération** automatique (nouvel appareil) |
-| Seul l'appareil a changé | **Envoi** automatique |
-| Seul l'appareil a changé mais il est **vide** face à un Drive rempli (reset, données effacées) | **Jamais d'envoi** : traité comme un conflit |
-| Les deux ont changé, ou état de référence inconnu (appareil jamais synchronisé avec des données) | **Conflit** : modale `DriveConflictModal` — « Utiliser Google Drive » (écrase l'appareil) / « Garder cet appareil » (écrase le Drive) / « Annuler pour l'instant ». En mode automatique, signalé seulement (⚠️ + message), sans modale, jusqu'à ce que l'utilisateur appuie sur l'indicateur |
+| Aucun `pokedex.json` | Envoi (création) + premier Excel immédiat |
+| Hashes égaux, ou aucun côté changé | Rien (état de référence mis à jour) |
+| Seul le Drive a changé, ou appareil vide jamais synchronisé face à un Drive rempli | Récupération (`applyImportedObject`) puis rechargement |
+| Seul l'appareil a changé | Envoi |
+| Appareil vidé face à un Drive rempli | Jamais d'envoi → conflit |
+| Les deux ont changé, ou appareil jamais synchronisé avec des données | Conflit : `DriveConflictModal` (Utiliser Google Drive / Garder cet appareil / Annuler). En automatique : signalé seulement (⚠️), synchro auto suspendue jusqu'au choix |
 
-Aucun écrasement n'est jamais automatique quand les deux côtés ont changé. Tant qu'un conflit est en attente, la synchro automatique est suspendue.
+Après une récupération, le hash local de référence est recalculé à la synchro suivant le rechargement (`rebaseline` — la reconstruction du catalogue peut normaliser le contenu) ; l'Excel n'est pas redéposé.
 
-**Après une récupération** : les clés reçues sont écrites (`applyImportedObject`), puis l'app se recharge. Le hash local de référence est recalculé à la première synchro suivant le rechargement (`rebaseline`), car la reconstruction du catalogue peut normaliser le contenu ; l'Excel n'est pas redéposé (l'appareil qui a envoyé ces données en est responsable).
+**Déclencheurs** (`driveStart`, jamais hors ligne, pendant un conflit ou un rechargement) : démarrage (+1,5 s, puis rattrapage Excel) ; écriture d'une clé `ALL_KEYS` → envoi 30 s après la dernière (`DRIVE_AUTO_DELAY_MS`, sans appel réseau si le hash n'a pas changé) ; retour sur l'app (≥ 1 min d'écart, `DRIVE_RESUME_MIN_GAP_MS`) ; retour du réseau ; arrière-plan/`pagehide` → envoi immédiat du JSON en attente puis Excel.
 
-**Déclencheurs automatiques** (`driveStart`) :
-- **démarrage** (1,5 s après le montage), puis rattrapage de l'Excel s'il est en retard ;
-- **modification locale** d'une clé de `ALL_KEYS` (événement `pkdx-local-change`) → envoi programmé **30 s** après la dernière modification (`DRIVE_AUTO_DELAY_MS`) ; si le hash n'a finalement pas changé, aucun appel réseau ;
-- **retour sur l'app** (`visibilitychange`), au plus une vérification par minute (`DRIVE_RESUME_MIN_GAP_MS`) ;
-- **retour du réseau** (`online`) ;
-- **passage en arrière-plan / fermeture** (`visibilitychange` caché, `pagehide`) → envoi immédiat du JSON en attente, puis dépôt Excel si nécessaire.
-Rien n'est tenté hors ligne, ni pendant un conflit ou un rechargement.
+**Excel** : dépôt automatique en arrière-plan si les données synchronisées ont changé depuis le dernier dépôt, au plus une fois par heure (`DRIVE_EXCEL_MIN_GAP_MS`) ; une erreur Excel n'invalide jamais la synchro JSON. Manuel : « Mettre à jour l'Excel », « Importer l'Excel » (flux d'import habituel — seul retour possible d'une modification faite dans l'Excel).
 
-**Excel sur Drive** : déposé automatiquement au passage en arrière-plan (ou au démarrage en rattrapage) seulement si les données synchronisées ont changé depuis le dernier dépôt, et **au plus une fois par heure** (`DRIVE_EXCEL_MIN_GAP_MS`) — le tout premier dépôt n'attend pas. Une erreur Excel est affichée dans Paramètres mais n'invalide jamais la synchro JSON. Boutons manuels : « Mettre à jour l'Excel » (dépôt forcé) et « Importer l'Excel » (téléchargement puis flux d'import Excel habituel — seul chemin par lequel une modification faite dans l'Excel revient dans l'app).
-
-**Indicateur de l'en-tête** (`DriveSyncButton`, libellés `DRIVE_STATUS_META`, état `driveStatus`) : ☁️ estompé = non configuré (ouvre Paramètres) ; 🔄 tournant = en cours ; ☁️ + pastille **verte** = synchronisé, **orange** = modification en attente d'envoi (ou jamais synchronisé) ; ⚠️ + pastille rouge = erreur ou conflit. Appui : synchronise immédiatement (ouvre la modale de choix en cas de conflit).
-
-**Paramètres → Synchronisation Google Drive** (`DriveSyncSection`) : état et date de dernière synchro, « Synchroniser maintenant », actions forcées « Forcer récupération » (avec confirmation) / « Forcer sauvegarde » (un seul sens, sans vérifier l'autre), bloc Excel, configuration URL `…/exec` + clé secrète. Enregistrer une nouvelle URL ou clé remet l'état de référence à zéro et lance une synchro ; « Déconnecter » efface la configuration de l'appareil sans toucher aux fichiers du Drive. Sur un nouvel appareil : même URL, même clé.
+**Interface** : `DriveSyncButton` (☁️ estompé = non configuré → Paramètres ; 🔄 = en cours ; pastille verte = synchronisé, orange = envoi en attente ; ⚠️ = erreur/conflit ; appui = synchro immédiate). `DriveSyncSection` (Paramètres) : état, « Synchroniser maintenant », « Forcer récupération » (confirmation) / « Forcer sauvegarde », bloc Excel, URL `…/exec` + clé ; une nouvelle URL/clé remet l'état de référence à zéro ; « Déconnecter » n'efface que la configuration locale.
 
 ### Workflow de livraison
 
@@ -348,7 +335,7 @@ Rien n'est tenté hors ligne, ni pendant un conflit ou un rechargement.
 2. Extraire le bloc `<script type="text/babel" data-presets="react">` et le valider avec **`ts.transpileModule`** (JSX React) **et** **`Babel.transform(code, { presets: [["react", { runtime: "classic" }]] })`**. Le bloc `window.DATA` n'a pas besoin de validation Babel ; s'il est modifié, vérifier qu'il reste un JSON strictement valide.
 3. Zone touchée : supprimer le code rendu inutile, réutiliser les éléments de §6.
 4. Mettre à jour `APP_VERSION` (`année.mois.jour.heure.minute`, heure réelle, 24 h) et, si l'app shell change, `CACHE_VERSION` de `sw.js`.
-5. Livrer le fichier complet nommé `index.html`.
+5. Livrer le fichier complet nommé `index.html`, plus `sw.js` et/ou `google-apps-script.gs` s'ils ont changé. Le dépôt GitHub est mis à jour par l'utilisateur lui-même (pas de push).
 6. Ne modifier cette documentation que sur demande explicite.
 
 ## 11. PWA — installabilité & hors-ligne
