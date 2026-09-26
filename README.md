@@ -8,11 +8,11 @@ Ce document décrit **l'état actuel** du projet (pas son historique). Livrable 
 
 Tracker Pokédex personnel — React 18 + Babel via CDN dans un unique `index.html` autonome (aucun build), hébergé sur GitHub Pages, utilisé sur PC et mobile (Samsung Internet). Remplace un ancien classeur Excel.
 
-**Fichiers du dépôt** : `index.html` (l'app), `README.md` (ce document), `manifest.json`, `sw.js`, `icons/` (PWA, §11).
+**Fichiers du dépôt** : `index.html` (l'app), `README.md` (ce document), `google-apps-script.gs` (relais de synchronisation Google Drive, §10), `manifest.json`, `sw.js`, `icons/` (PWA, §11).
 
 **Ordre des blocs dans `index.html`** :
 1. `<script>` classique définissant `window.storage` (§2) ;
-2. CDN React / ReactDOM / Babel standalone / SheetJS (`xlsx`) / `msal-browser` v2 (OneDrive, §10) ;
+2. CDN React / ReactDOM / Babel standalone / SheetJS (`xlsx`) ;
 3. `<script>` classique `window.DATA = {...}` — bloc JSON pur (~1 Mo), hors Babel pour ne pas le transpiler ;
 4. `<script type="text/babel" data-presets="react">` — tout le code de l'app (commence par `const DATA = window.DATA;`, se termine par le bootstrap : `applyJeuVideoCustomizations()` → `applyCatalogCustomizations()` → `root.render(<App />)`) ;
 5. `<script>` classique d'enregistrement du service worker.
@@ -21,7 +21,7 @@ Ajouter un jeu : la table Pokédex va dans `window.DATA`, tout le reste (`GAME_O
 
 ## 2. Stockage
 
-- **`window.storage`** : wrapper `localStorage` (préfixe `pkdx_`) — `get`/`set`/`delete`/`list`, tous asynchrones. `get(key)` renvoie `{ value: null }` pour une clé absente (jamais d'exception). `set` incrémente le compteur `pkdx_gist_mod_count` (modifications non synchronisées Gist, §10) sauf pour `last_export_at`.
+- **`window.storage`** : wrapper `localStorage` (préfixe `pkdx_`) — `get`/`set`/`delete`/`list`, tous asynchrones. `get(key)` renvoie `{ value: null }` pour une clé absente (jamais d'exception). `set` émet l'événement `pkdx-local-change` (détail = clé), écouté par la synchronisation Google Drive (§10).
 - **`readJSON(key, fallback)` / `writeJSON(key, value)`** : seul point de lecture/écriture JSON à utiliser (erreurs avalées).
 - **`DATA`** : purement **structurel** (disponibilité par jeu, sprites, boîtes, capacités Alpha, évolutions, Jeu vidéo) — **aucune capture réelle**. Toute possession vit dans `window.storage`.
 
@@ -48,6 +48,8 @@ En mémoire uniquement : `row.__baseKey` (clé `nom|forme` d'origine) et `row.__
 
 ### Clés `ALL_KEYS` (exportées, importées, synchronisées et réinitialisées ensemble)
 
+`ALL_KEYS` est défini au niveau module (avant le moteur de synchronisation, qui s'en sert pour filtrer les écritures déclenchant un envoi).
+
 | Domaine | Clés |
 |---|---|
 | Captures jeux | `caught_<code>` (un par `GAME_ORDER`), `alpha_caught`, `manual_caught`, `game_jeu_overrides`, `game_tab_sources` |
@@ -62,7 +64,7 @@ En mémoire uniquement : `row.__baseKey` (clé `nom|forme` d'origine) et `row.__
 
 **Réinitialiser tout** : efface `ALL_KEYS` sauf `custom_marques` (`RESET_KEEP_KEYS`), réécrit `custom_events`/`custom_interjeu` à `[]` (empêche le re-seed) et supprime `jeu_options_migrated`. Un export JSON de sécurité est téléchargé juste avant.
 
-**Métadonnées locales hors `ALL_KEYS`** (jamais exportées ni synchronisées) : `last_export_at` (dernier envoi OneDrive réussi), `jeu_options_migrated` (migration ponctuelle Jeu-DO), et en `localStorage` brut : `pkdx_gist_mod_count`, `pkdx_gist_token`, `pkdx_gist_id`, `pkdx_gist_synced_at`, `pkdx_onedrive_client_id`, `pkdx_onedrive_folder`.
+**Métadonnées locales hors `ALL_KEYS`** (jamais exportées ni synchronisées) : `jeu_options_migrated` (migration ponctuelle Jeu-DO), et en `localStorage` brut `pkdx_drive_sync` (configuration et état de référence de la synchronisation Google Drive, §10). Les anciennes clés de sauvegarde (`pkdx_gist_*`, `pkdx_onedrive_*`, `pkdx_last_export_at`, cache MSAL) sont effacées au chargement.
 
 **`custom_marques` auto-complétée** : à chaque chargement (`useCustomLists`, et `SettingsView.loadAll`), toute marque de `GAME_ORDER` absente y est ajoutée — sinon une marque créée par code resterait invisible dans les champs "Marque".
 
@@ -126,7 +128,7 @@ Marquage **manuel uniquement** : `DATA.formTags["nom|forme"] = { mega, gmax, gma
 - **Interjeu** : transferts Home ↔ jeu, lien bidirectionnel avec Shiny/Double (`fromInterjeu`). Badge "Home 2" dans l'en-tête si des entrées y sont.
 - **Badges "boîtes"** : Home/vues jeu/Shiny comptent toutes les boîtes (même vides) ; Interjeu/Double/Event seulement celles qui ont du contenu en Home 1.
 - **Onglets jeu** (`GameView`) : Liste/Boîte/Grille ; filtres Statut, Région, Groupe de boîte, Jeu - DO, **Taille** (LA/LZA seulement), **Dynamax** (si la marque contient des formes Gmax/Non Gmax ou taguées Gmax gène : `hasGmaxForms`/`hasGmaxGeneForms`). Marque Go : filtre **Sorti**. Menu Vue : cases "Afficher le groupe / le nom de boîte / le Jeu - DO", et "Afficher les Shiny / Event" de la marque (entrées absentes de la marque, en fin de liste). Marques avec vues configurées : §5.2.
-- **Paramètres** (`SettingsView`) : listes éditables en glisser-déposer (Marque, Méthode, Détail, Emplacement, Jeu par marque, Groupe de boîte), disponibilité Méthode/Détail par marque, Jeu vidéo, Catalogue, Gist, OneDrive.
+- **Paramètres** (`SettingsView`) : listes éditables en glisser-déposer (Marque, Méthode, Détail, Emplacement, Jeu par marque, Groupe de boîte), disponibilité Méthode/Détail par marque, Jeu vidéo, Catalogue, Synchronisation Google Drive (`DriveSyncSection`, §10).
 
 ### 5.1 Go 1 (dans l'onglet de la marque Go)
 
@@ -262,7 +264,7 @@ Concerne National, Shiny, Double, Event, Interjeu, `BoxGroupModal`, `JeuMultiSou
 - **Boîtes** : capacité et grille (`fixedRows`/`fixedCols`) toujours dérivées de la même source (`rows × cols`).
 - **Numéro national ≠ numéro de marque** : `natInfoFor(...).n` (National, Shiny, Double, Event, Interjeu) vs `DATA.games[marque][i][0]` + `game_view_number_overrides` (fiches jeux).
 - **`spriteCandidates`** : ordre de repli artwork dédié → artwork suffixé → pixel dédié → pixel suffixé → forme de base, pour ne jamais afficher un autre Pokémon.
-- **`buildFullCatalogOverrides()`** (export JSON **et** Gist) **remplace** la valeur stockée : tout champ catalogue absent de cette reconstruction disparaît des exports.
+- **`buildFullCatalogOverrides()`** (export JSON **et** synchronisation Google Drive) **remplace** la valeur stockée : tout champ catalogue absent de cette reconstruction disparaît des exports.
 - **Formulaire identique à deux endroits** : extraire un composant module-level (modèle `ShinyRecordFields`) ; les actions propres à un contexte restent chez l'appelant.
 - **Style d'un composant partagé** : prop `style` fusionnée par-dessus le défaut (`{...defaultStyle, ...(style || {})}`), jamais modifier le défaut.
 - **Nouvel écouteur clavier/swipe** : vérifier qu'aucun autre écouteur du même événement n'est actif dans le même composant.
@@ -292,14 +294,53 @@ Toute nouvelle clé `ALL_KEYS` doit recevoir sa feuille, à l'export comme à l'
 
 ## 9. Sauvegarde JSON
 
-Menu ⋮ → **Exporter sauvegarde** (`buildExportOut`, toutes les `ALL_KEYS`, catalogue reconstruit par `buildFullCatalogOverrides`) / **Importer sauvegarde** (écrit chaque clé présente puis recharge) / **Réinitialiser** (§2).
+Menu ⋮ → **Exporter sauvegarde** (`buildExportOut`, toutes les `ALL_KEYS`, catalogue reconstruit par `buildFullCatalogOverrides`) / **Importer sauvegarde** (`applyImportedObject` : écrit chaque clé présente, puis recharge — même fonction que la récupération depuis Google Drive) / **Réinitialiser** (§2).
 
-## 10. En-tête, synchro Gist, envoi OneDrive, livraison
+## 10. En-tête, synchronisation Google Drive, livraison
 
-- **En-tête** : logo, `APP_VERSION`, message d'état ponctuel (`ioMsg`), `GistSyncBadge`, `OneDriveSendButton`, ⓘ, ⚙️, ⋮.
-- **Gist** (`GistSyncBadge`) : 🔗 repos / 🔄 en cours / ⚠️ conflit ou erreur + pastille (verte, orange si `pkdx_gist_mod_count > 0`, rouge). Synchro **manuelle** et bidirectionnelle ; un conflit ouvre une modale bloquante, jamais d'écrasement automatique. Configuration `pkdx_gist_*` en `localStorage` brut.
-- **OneDrive** (`OneDriveSendButton`, visible une fois un Client ID saisi) : envoi à sens unique (`doOneDriveSend`) de `Pokedex export.json` et `Pokedex export.xlsx` (noms fixes, écrasés) dans le dossier `pkdx_onedrive_folder` (défaut "Pokédex") via Microsoft Graph. `msal-browser` v2, autorité `https://login.microsoftonline.com/consumers` (inscription Azure "Comptes Microsoft personnels uniquement", type SPA, redirect URI = URL GitHub Pages avec et sans `index.html`).
-- **Bandeau de rappel** : si OneDrive est configuré et qu'aucun envoi n'a réussi depuis `EXPORT_REMINDER_DAYS` (3) jours ; masquable pour la session ; son bouton lance l'envoi. Seul un envoi OneDrive réussi met à jour `last_export_at` (`markOneDriveBackedUp`).
+- **En-tête** : logo, `APP_VERSION`, message d'état ponctuel (`ioMsg`), `DriveSyncButton`, ⓘ, ⚙️, ⋮.
+
+### Synchronisation Google Drive
+
+**Architecture.** Relais **Google Apps Script** (`google-apps-script.gs`) déployé par l'utilisateur dans son propre compte Google en *application Web* (« Exécuter en tant que : Moi », « Qui a accès : Tout le monde »). L'app l'appelle en `POST` `text/plain` (requête simple, sans pré-vol CORS) avec la clé secrète **dans le corps**, jamais dans l'URL ; le script répond toujours `{ ok: true, … }` ou `{ ok: false, error }`. Actions : `ping`, `getJson`, `putJson`, `getExcel`, `putExcel`. Fichiers dans un dossier **Pokédex** à la racine du Drive, remplacés en place (même ID → historique des versions Drive conservé) :
+- `pokedex.json` : **source de vérité**, même contenu que l'export JSON (`buildExportOut`) ;
+- `pokedex.xlsx` : **miroir Excel** (tous les onglets de `EXCEL_SHEETS`), jamais relu automatiquement.
+
+Le script est volontairement **100 % ASCII** (le nom du dossier est écrit `Pok\u00e9dex`) : un tiret long ou un accent abîmé au copier-coller provoque une erreur de syntaxe dans l'éditeur Apps Script. Après toute modification du script : *Gérer les déploiements → Modifier → Nouvelle version* (l'URL `/exec` ne change pas). « Fonction de script introuvable : doGet » = le déploiement sert une version sans ce code.
+
+**Moteur** (niveau module, préfixe `drive…`) : état partagé `driveSnap` lu par `useDriveSync()` (`useSyncExternalStore`) ; `App` fournit à chaque rendu, via `driveRegister`, `buildPayload` (`buildExportOut`), `applyPayload` (`applyImportedObject`), `buildExcelB64`, `openExcelWorkbook` (`openExcelImport`, flux d'import Excel habituel) et `notify` (`ioMsg`), puis appelle `driveStart()` une seule fois au montage. Configuration (`url`, `key`) et état de référence (`lastSyncedHash`, `lastRemoteHash`, `lastSyncedAt`, `lastExcelHash`, `lastExcelAt`, `rebaseline`) en `localStorage` brut sous `pkdx_drive_sync` — écrire cette clé ne déclenche jamais d'envoi.
+
+**Comparaison.** `hashBackup` calcule un hash de la sauvegarde indépendant de l'ordre des clés. Chaque synchro compare le hash **local** actuel, le hash **distant** et l'**état de référence** de la dernière synchro réussie. Une sauvegarde est dite **vide** (`backupIsEmpty`) si elle ne contient aucune donnée de collection hors `DRIVE_STRUCTURAL_KEYS` (`catalog_overrides`, `box_group_overrides`, `custom_marques`, toujours présentes).
+
+**Règles de décision (`driveSmartSync`)**, dans l'ordre :
+
+| Situation | Action |
+|---|---|
+| Aucun `pokedex.json` sur le Drive | **Envoi** (création), puis premier dépôt Excel immédiat |
+| Hash local = hash distant, ou aucun des deux côtés n'a changé | Rien — état de référence mis à jour (« Déjà à jour ») |
+| Seul le Drive a changé | **Récupération** automatique puis rechargement |
+| Appareil vide jamais synchronisé face à un Drive rempli | **Récupération** automatique (nouvel appareil) |
+| Seul l'appareil a changé | **Envoi** automatique |
+| Seul l'appareil a changé mais il est **vide** face à un Drive rempli (reset, données effacées) | **Jamais d'envoi** : traité comme un conflit |
+| Les deux ont changé, ou état de référence inconnu (appareil jamais synchronisé avec des données) | **Conflit** : modale `DriveConflictModal` — « Utiliser Google Drive » (écrase l'appareil) / « Garder cet appareil » (écrase le Drive) / « Annuler pour l'instant ». En mode automatique, signalé seulement (⚠️ + message), sans modale, jusqu'à ce que l'utilisateur appuie sur l'indicateur |
+
+Aucun écrasement n'est jamais automatique quand les deux côtés ont changé. Tant qu'un conflit est en attente, la synchro automatique est suspendue.
+
+**Après une récupération** : les clés reçues sont écrites (`applyImportedObject`), puis l'app se recharge. Le hash local de référence est recalculé à la première synchro suivant le rechargement (`rebaseline`), car la reconstruction du catalogue peut normaliser le contenu ; l'Excel n'est pas redéposé (l'appareil qui a envoyé ces données en est responsable).
+
+**Déclencheurs automatiques** (`driveStart`) :
+- **démarrage** (1,5 s après le montage), puis rattrapage de l'Excel s'il est en retard ;
+- **modification locale** d'une clé de `ALL_KEYS` (événement `pkdx-local-change`) → envoi programmé **30 s** après la dernière modification (`DRIVE_AUTO_DELAY_MS`) ; si le hash n'a finalement pas changé, aucun appel réseau ;
+- **retour sur l'app** (`visibilitychange`), au plus une vérification par minute (`DRIVE_RESUME_MIN_GAP_MS`) ;
+- **retour du réseau** (`online`) ;
+- **passage en arrière-plan / fermeture** (`visibilitychange` caché, `pagehide`) → envoi immédiat du JSON en attente, puis dépôt Excel si nécessaire.
+Rien n'est tenté hors ligne, ni pendant un conflit ou un rechargement.
+
+**Excel sur Drive** : déposé automatiquement au passage en arrière-plan (ou au démarrage en rattrapage) seulement si les données synchronisées ont changé depuis le dernier dépôt, et **au plus une fois par heure** (`DRIVE_EXCEL_MIN_GAP_MS`) — le tout premier dépôt n'attend pas. Une erreur Excel est affichée dans Paramètres mais n'invalide jamais la synchro JSON. Boutons manuels : « Mettre à jour l'Excel » (dépôt forcé) et « Importer l'Excel » (téléchargement puis flux d'import Excel habituel — seul chemin par lequel une modification faite dans l'Excel revient dans l'app).
+
+**Indicateur de l'en-tête** (`DriveSyncButton`, libellés `DRIVE_STATUS_META`, état `driveStatus`) : ☁️ estompé = non configuré (ouvre Paramètres) ; 🔄 tournant = en cours ; ☁️ + pastille **verte** = synchronisé, **orange** = modification en attente d'envoi (ou jamais synchronisé) ; ⚠️ + pastille rouge = erreur ou conflit. Appui : synchronise immédiatement (ouvre la modale de choix en cas de conflit).
+
+**Paramètres → Synchronisation Google Drive** (`DriveSyncSection`) : état et date de dernière synchro, « Synchroniser maintenant », actions forcées « Forcer récupération » (avec confirmation) / « Forcer sauvegarde » (un seul sens, sans vérifier l'autre), bloc Excel, configuration URL `…/exec` + clé secrète. Enregistrer une nouvelle URL ou clé remet l'état de référence à zéro et lance une synchro ; « Déconnecter » efface la configuration de l'appareil sans toucher aux fichiers du Drive. Sur un nouvel appareil : même URL, même clé.
 
 ### Workflow de livraison
 
@@ -313,7 +354,7 @@ Menu ⋮ → **Exporter sauvegarde** (`buildExportOut`, toutes les `ALL_KEYS`, c
 ## 11. PWA — installabilité & hors-ligne
 
 - `manifest.json` + `<link rel="manifest">`, `<meta name="theme-color">` ; icônes `icons/` (192/512 "any" et "maskable").
-- `sw.js` : met en cache l'app shell (`APP_SHELL` : `index.html`, manifest, icônes, CDN React/ReactDOM/Babel/XLSX), stratégie cache-first avec revalidation réseau en arrière-plan ; `api.github.com` et `pokeapi.co` jamais interceptés.
+- `sw.js` : met en cache l'app shell (`APP_SHELL` : `index.html`, manifest, icônes, CDN React/ReactDOM/Babel/XLSX), stratégie cache-first avec revalidation réseau en arrière-plan ; le relais Apps Script (`script.google.com`, et `script.googleusercontent.com` où la réponse est servie après redirection) et `pokeapi.co` jamais interceptés.
 - Chemins **relatifs** partout (`./…`) : le site est servi depuis un sous-chemin GitHub Pages.
 - **`CACHE_VERSION`** à synchroniser avec `APP_VERSION` à chaque livraison touchant l'app shell — c'est ce qui invalide l'ancien cache.
 - Installation : Chrome PC (icône de la barre d'adresse ou ⋮ → Installer) ; Samsung Internet (⋮ → Ajouter à l'écran d'accueil).
