@@ -151,7 +151,7 @@ Suivi de la possession **dans un jeu précis**, en plus de Pokémon Home, dans l
 - **Trois modes** (menu Mode) :
   1. **Home** : flag `caught_<marque>` seul. Fiche `BoxGroupModal`.
   2. **Home + jeu** : coche verte si attrapé sur Home, violette (`PURPLE`) si seulement en jeu (`isSourcedOnly`). Fiche `JeuMultiSourceModal` (section "Attrapé dans" : Home + une pilule par vue, 2 par ligne).
-  3. **Vue précise** (`PairModeBlock`) : liste propre à la vue (filtrée par `jvAvailable` sur ses jeux), coche = attrapé dans cette vue. Mêmes filtres/vues que Home, sans les cases Shiny/Event.
+  3. **Vue précise** (`PairModeBlock`) : liste propre à la vue (filtrée par `jvAvailable` sur ses jeux), coche = attrapé dans cette vue. Mêmes filtres/vues que Home, sans les cases Shiny/Event. Aucun badge à droite des lignes, sauf la pastille **α** en LA/LZA (voir Alpha ci-dessous) ; le Jeu - DO ne s'affiche que via la case du menu Vue.
 - **Filtre Disponibilité** : Home + chaque jeu des vues + chaque note texte trouvée ; union des choix.
 - **Stockage "en jeu"** : `game_tab_sources = { [marque]: { "nom|forme": [clé de vue…] } }` — par **vue**, jamais par jeu individuel (la distinction fine passe par le Jeu-DO). `useGameTabSources` : `setSource`, `setAllSources`.
 - **Pokémon "jeu seulement"** (ex. dominants Alola) : absents de `DATA.games[marque]` mais `jeuVideoFor(...)[clé] === true` (strict). `jeuOnlyFormsFor` les ajoute **en fin** de liste (`extendedRows`) en Home + jeu et en vue précise ; un index `>= rows.length` route toujours vers `game_tab_sources`, jamais vers le flag Home.
@@ -250,7 +250,7 @@ Concerne National, Shiny, Double, Event, Interjeu, `BoxGroupModal`, `JeuMultiSou
 - **Codes de jeu** (`IàV, VI, Alola, GB, LG, Go, DEPS, Galar, LA, Paldea, LZA, GBA, VV`) = clés de stockage (`caught_<code>`, `DATA.games`…) — ne jamais les renommer sans migration.
 - **Trois notions "Home" distinctes** : (1) appartenance à la marque (`DATA.games[marque]`, `patchMarqueMembership`) ; (2) `DATA.homeDex` = pilule "Pokédex Home" (National, Home 2) ; (3) emplacement physique "Home 1"/"Home 2" (`ou`/`catchLocation`) — comparer en égalité **stricte** avec `DEFAULT_LOCATION`/"Home 2", jamais `/^Home/i`.
 - **`extendedRows`** : entrées "jeu seulement" toujours **en fin** ; `effective`/`flags`/`persist` restent positionnels sur `rows`.
-- **Alpha** : capacité = colonnes `Alpha_LA`/`Alpha_LZA` (`== 1` strict) ; affichage limité au signe **α**.
+- **Alpha** : capacité = colonnes `Alpha_LA`/`Alpha_LZA` (`== 1` strict) ; affichage limité au signe **α**. Marquage par capture `alpha_caught` (clé `marque|nom|forme`), **partagé** entre Home et les vues précises de la marque : `GameView` expose `alphaStateFor(nom, forme)` (`{ show, active }`) et `toggleAlphaFor(nom, forme, markCaught)` — Alpha implique attrapé dans la vue appelante (flag Home, ou `game_tab_sources` en vue précise). Pastille Liste/Grille : composant unique `AlphaToggle` (`variant="grid"` = compacte) ; en vue Boîte, `BoxCell` (`showAlphaToggle`). Aucun marquage Gmax par capture dans les onglets jeu (seulement le filtre Dynamax).
 - **Pseudo-jeu "Forme"** : formes absentes de tout jeu listé (Méga…), cochées manuellement.
 - **Listes `Picker`/`MultiSelectFilter`** : toujours `orderedList(customXxx, découvertes)`, jamais `customXxx` seul.
 - **Clés catalogue** : `catalog_overrides` par `row.__baseKey` (`nom|forme` d'origine), jamais positionnel ; ajouts par `catalog_additions[].id`.

@@ -532,7 +532,7 @@ function driveStart() {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.26.10.15";
+const APP_VERSION = "2026.9.26.10.56";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -2401,6 +2401,25 @@ function BoxGrid({ items, renderCell, fixedRows, fixedCols }) {
         );
       })}
     </div>
+  );
+}
+
+// Pastille "α" cliquable (marquage Alpha par capture, LA/LZA) des vues Liste/Grille des onglets
+// jeu — Home et vues Jeu précises (PairModeBlock). `variant` "grid" = version compacte sous le
+// sprite. stopPropagation : la pastille est souvent posée dans une ligne/tuile elle-même cliquable.
+function AlphaToggle({ active, onToggle, variant }) {
+  return (
+    <span
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      title="Marquer/retirer comme Alpha"
+      style={{
+        flexShrink: 0, fontSize: 10, fontWeight: 900, borderRadius: 5, cursor: "pointer",
+        padding: variant === "grid" ? "1px 6px" : "2px 8px", marginTop: variant === "grid" ? 2 : 0,
+        border: `1px solid ${active ? "#E85D6B" : LINE}`,
+        background: active ? "rgba(232,93,107,0.15)" : "transparent",
+        color: active ? "#E85D6B" : MUTED,
+      }}
+    >α</span>
   );
 }
 
@@ -4605,6 +4624,7 @@ function PairModeBlock({
   gameSourcesDict, setSource, modeMenuItem,
   marqueGames, onAvailabilityChanged, autoOpenKey,
   getBoxSettingsFor, boxSettingsReady,
+  alphaStateFor, toggleAlphaFor,
 }) {
   const bucketKey = gameKey + "_" + pair.key;
   const [viewMode, setViewMode] = useCachedState(filterCache, bucketKey, "viewMode", "list");
@@ -4738,6 +4758,12 @@ function PairModeBlock({
   const toggleQuick = (key) => {
     setSource(key, pair.key, !isInPairKey(key));
   };
+  // Alpha (LA/LZA) : même marquage que Home (partagé par la marque) ; Alpha implique attrapé
+  // dans CETTE vue.
+  const toggleAlphaIn = (r) => {
+    const key = boxGroupKeyFor(r.nom, r.forme);
+    toggleAlphaFor(r.nom, r.forme, () => { if (!isInPairKey(key)) setSource(key, pair.key, true); });
+  };
 
   return (
     <div style={{ paddingBottom: 100 }}>
@@ -4826,6 +4852,9 @@ function PairModeBlock({
           renderCell={(it) => (
             <BoxCell
               nom={it.nom} forme={it.forme} caught={isInPairIdx(it.i)} color={PURPLE}
+              alpha={alphaStateFor(it.nom, it.forme).active}
+              showAlphaToggle={alphaStateFor(it.nom, it.forme).show}
+              onToggleAlpha={() => toggleAlphaIn(it)}
               onClick={() => toggleQuick(boxGroupKeyFor(it.nom, it.forme))}
               onLongPress={() => setMultiDetailKey(boxGroupKeyFor(it.nom, it.forme))}
             />
@@ -4839,7 +4868,7 @@ function PairModeBlock({
             const key = boxGroupKeyFor(r.nom, r.forme);
             const isCaught = isInPairIdx(r.i);
             const doValue = (jeuOverrides && jeuOverrides[key]) || "";
-            const initials = initialsOfDO(doValue);
+            const alpha = alphaStateFor(r.nom, r.forme);
             return (
               <div
                 key={r.i}
@@ -4888,12 +4917,7 @@ function PairModeBlock({
                     </span>
                   )}
                 </span>
-                {initials && (
-                  <span title={doValue} style={{
-                    flexShrink: 0, fontFamily: "Inter, sans-serif", fontSize: 10, fontWeight: 800,
-                    color: PURPLE, border: `1px solid ${PURPLE}66`, borderRadius: 6, padding: "2px 6px",
-                  }}>{initials}</span>
-                )}
+                {alpha.show && <AlphaToggle active={alpha.active} onToggle={() => toggleAlphaIn(r)} />}
               </div>
             );
           })}
@@ -4904,6 +4928,7 @@ function PairModeBlock({
         <div style={{ display: "grid", gridTemplateColumns: `repeat(${effCols}, 1fr)`, gap: 6 }}>
           {gridItems.slice(0, limit).map((r) => {
             const isCaught = isInPairIdx(r.i);
+            const alpha = alphaStateFor(r.nom, r.forme);
             return (
               <button key={r.i} onClick={() => toggleQuick(boxGroupKeyFor(r.nom, r.forme))} style={{
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
@@ -4912,6 +4937,7 @@ function PairModeBlock({
                 borderRadius: 18, padding: "3px 2px", cursor: "pointer",
               }}>
                 <Sprite nom={r.nom} forme={r.forme} size={32} />
+                {alpha.show && <AlphaToggle variant="grid" active={alpha.active} onToggle={() => toggleAlphaIn(r)} />}
               </button>
             );
           })}
@@ -5469,6 +5495,10 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
     const cap = DATA.alphaCapable[nom + "|" + (forme || "")];
     return !!(cap && cap[gameKey]);
   };
+  const alphaStateFor = (nom, forme) => {
+    const show = isAlphaGame && canBeAlpha(nom, forme);
+    return { show, active: show && !!alphaMap[alphaKeyFor(nom, forme)] };
+  };
 
   // Boîtes Home dynamiques : réglages par vue (rows/cols/prefix/gridCols, § demande explicite —
   // Home et Home + jeu ont chacun leur propre réglage, édité depuis Paramètres → Marque →
@@ -5581,20 +5611,22 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
   const [sortiFilter, setSortiFilter] = useCachedState(filterCache, gameKey, "sortiFilter", null); // null = tous, ou Set { "oui", "non" }
   const anyFilterActive = filter !== "all" || region !== null || alphaFilter !== null || dynamaxFilter !== null || boxGroupFilter !== null || jeuFilter !== null || sortiFilter !== null || dispoFilter !== null;
 
-  const toggleAlpha = async (i) => {
-    const r = rows[i];
-    const aKey = alphaKeyFor(r[1], r[2]);
+  // Marquage Alpha partagé par la marque (clé `alphaKeyFor`) entre Home et ses vues Jeu précises ;
+  // `markCaught` = coche "attrapé" propre à la vue appelante (Alpha implique attrapé).
+  const toggleAlphaFor = async (nom, forme, markCaught) => {
+    const aKey = alphaKeyFor(nom, forme);
     const next = { ...alphaMap, [aKey]: alphaMap[aKey] ? 0 : 1 };
     setAlphaMap(next);
-    // Alpha implies caught: make sure the caught flag is on too.
-    if (!effective[i]) {
-      const nextCaught = effective.slice();
-      nextCaught[i] = 1;
-      setFlags(nextCaught);
-      persist(nextCaught);
-    }
+    markCaught();
     await writeJSON("alpha_caught", next);
   };
+  const toggleAlpha = (i) => toggleAlphaFor(rows[i][1], rows[i][2], () => {
+    if (effective[i]) return;
+    const nextCaught = effective.slice();
+    nextCaught[i] = 1;
+    setFlags(nextCaught);
+    persist(nextCaught);
+  });
 
   const regions = useMemo(() => {
     const s = new Set();
@@ -5854,6 +5886,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           autoOpenKey={effectiveAutoOpenMode ? "vimode" : undefined}
           getBoxSettingsFor={getBoxSettingsFor}
           boxSettingsReady={boxSettingsReady}
+          alphaStateFor={alphaStateFor}
+          toggleAlphaFor={toggleAlphaFor}
         />
         {jeuViewsSettingsOpen && (
           <JeuViewsSettingsModal
@@ -6014,8 +6048,8 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
           renderCell={(it) => (
             <BoxCell
               nom={it.nom} forme={it.forme} caught={!!displayEffective[it.i]}
-              alpha={isAlphaGame && canBeAlpha(it.nom, it.forme) && !!alphaMap[alphaKeyFor(it.nom, it.forme)]}
-              showAlphaToggle={isAlphaGame && canBeAlpha(it.nom, it.forme)}
+              alpha={alphaStateFor(it.nom, it.forme).active}
+              showAlphaToggle={alphaStateFor(it.nom, it.forme).show}
               onToggleAlpha={() => toggleAlpha(it.i)}
               onClick={() => toggle(it.i)}
               onLongPress={() => setGroupEditTarget(it.i)}
@@ -6050,8 +6084,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                 );
               }
               const isCaught = !!displayEffective[r.i];
-              const showAlpha = isAlphaGame && canBeAlpha(r.nom, r.forme);
-              const isAlpha = showAlpha && !!alphaMap[alphaKeyFor(r.nom, r.forme)];
+              const alpha = alphaStateFor(r.nom, r.forme);
               return (
                 <button key={r.i} onClick={() => toggle(r.i)} style={{
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
@@ -6060,18 +6093,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                   borderRadius: 18, padding: "3px 2px", cursor: "pointer",
                 }}>
                   <Sprite nom={r.nom} forme={r.forme} size={32} />
-                  {showAlpha && (
-                    <span
-                      onClick={(e) => { e.stopPropagation(); toggleAlpha(r.i); }}
-                      title="Marquer/retirer comme Alpha"
-                      style={{
-                        marginTop: 2, fontSize: 10, fontWeight: 900, borderRadius: 5, padding: "1px 6px",
-                        border: `1px solid ${isAlpha ? "#E85D6B" : LINE}`,
-                        background: isAlpha ? "rgba(232,93,107,0.15)" : "transparent",
-                        color: isAlpha ? "#E85D6B" : MUTED, cursor: "pointer",
-                      }}
-                    >α</span>
-                  )}
+                  {alpha.show && <AlphaToggle variant="grid" active={alpha.active} onToggle={() => toggleAlpha(r.i)} />}
                 </button>
               );
             })
@@ -6079,8 +6101,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             <React.Fragment>
               {filtered.slice(0, limit).map((r) => {
                 const isCaught = !!displayEffective[r.i];
-                const showAlpha = isAlphaGame && canBeAlpha(r.nom, r.forme);
-                const isAlpha = showAlpha && !!alphaMap[alphaKeyFor(r.nom, r.forme)];
+                const alpha = alphaStateFor(r.nom, r.forme);
                 return (
                   <button key={r.i} onClick={() => toggle(r.i)} style={{
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 4, textAlign: "center",
@@ -6089,18 +6110,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     borderRadius: 18, padding: "3px 2px", cursor: "pointer",
                   }}>
                     <Sprite nom={r.nom} forme={r.forme} size={32} />
-                    {showAlpha && (
-                      <span
-                        onClick={(e) => { e.stopPropagation(); toggleAlpha(r.i); }}
-                        title="Marquer/retirer comme Alpha"
-                        style={{
-                          marginTop: 2, fontSize: 10, fontWeight: 900, borderRadius: 5, padding: "1px 6px",
-                          border: `1px solid ${isAlpha ? "#E85D6B" : LINE}`,
-                          background: isAlpha ? "rgba(232,93,107,0.15)" : "transparent",
-                          color: isAlpha ? "#E85D6B" : MUTED, cursor: "pointer",
-                        }}
-                      >α</span>
-                    )}
+                    {alpha.show && <AlphaToggle variant="grid" active={alpha.active} onToggle={() => toggleAlpha(r.i)} />}
                   </button>
                 );
               })}
@@ -6133,9 +6143,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
             const isCaught = !!displayEffective[r.i];
             const sourcedOnly = isSourcedOnly(r.i);
             const markColor = sourcedOnly ? PURPLE : OK;
-            const aKey = alphaKeyFor(r.nom, r.forme);
-            const showAlpha = isAlphaGame && canBeAlpha(r.nom, r.forme);
-            const isAlpha = showAlpha && !!alphaMap[aKey];
+            const alpha = alphaStateFor(r.nom, r.forme);
             return (
               <div
                 key={r.i}
@@ -6185,18 +6193,7 @@ function GameView({ gameKey, rows, baseline, initialFilter, onConsumeFilter, onO
                     </span>
                   )}
                 </span>
-                {showAlpha && (
-                  <button
-                    onClick={() => toggleAlpha(r.i)}
-                    title="Marquer/retirer comme Alpha"
-                    style={{
-                      flexShrink: 0, fontSize: 10, fontWeight: 900, borderRadius: 5, padding: "2px 8px",
-                      border: `1px solid ${isAlpha ? "#E85D6B" : LINE}`,
-                      background: isAlpha ? "rgba(232,93,107,0.15)" : "transparent",
-                      color: isAlpha ? "#E85D6B" : MUTED, cursor: "pointer",
-                    }}
-                  >α</button>
-                )}
+                {alpha.show && <AlphaToggle active={alpha.active} onToggle={() => toggleAlpha(r.i)} />}
               </div>
             );
           })}
@@ -16858,16 +16855,6 @@ function JeuMultiSourceModal({ nom, forme, marque, currentGroup, options, curren
       )}
     </div>
   );
-}
-
-// Initiales calculées à partir d'une valeur "Jeu - DO" (ex. "Saphir Alpha - 39656" → "SA"), en
-// attendant les vrais logos de jeux (PokeAPI n'en fournit pas — voir discussion projet). Ignore
-// tout ce qui suit un " - " (numéro de dresseur, "Event"…), garde les initiales des mots restants.
-function initialsOfDO(v) {
-  if (!v) return "";
-  const base = String(v).split(" - ")[0].trim();
-  if (!base) return "";
-  return base.split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 3);
 }
 
 // ---- Onglet "Home 2" (§ demande explicite) --------------------------------------------------
