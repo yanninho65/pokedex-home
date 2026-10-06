@@ -532,7 +532,7 @@ function driveStart() {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.9.26.10.56";
+const APP_VERSION = "2026.10.6.16.31";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1894,7 +1894,7 @@ function MultiPicker({ value, onChange, options, placeholder, buttonStyle, panel
   );
 }
 
-function AddableSelect({ value, onChange, options, onAddNew, placeholder, width, hideAdd }) {
+function AddableSelect({ value, onChange, options, onAddNew, placeholder, width }) {
   const buttonStyle = {
     ...(width ? { ...miniInput, width, flexShrink: 0 } : { ...miniInput, flex: 1 }),
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, cursor: "pointer",
@@ -1903,21 +1903,19 @@ function AddableSelect({ value, onChange, options, onAddNew, placeholder, width,
   return (
     <div style={{ display: "flex", gap: 4 }}>
       <Picker value={value} onChange={onChange} options={options} placeholder={placeholder} buttonStyle={buttonStyle} />
-      {!hideAdd && (
-        <button
-          type="button"
-          onClick={() => {
-            const v = window.prompt("Nouvelle valeur :");
-            if (v && v.trim()) {
-              const trimmed = v.trim();
-              onAddNew(trimmed);
-              onChange(trimmed);
-            }
-          }}
-          style={{ ...btnGhost, padding: "6px 10px" }}
-          title="Créer une nouvelle valeur"
-        >+</button>
-      )}
+      <button
+        type="button"
+        onClick={() => {
+          const v = window.prompt("Nouvelle valeur :");
+          if (v && v.trim()) {
+            const trimmed = v.trim();
+            onAddNew(trimmed);
+            onChange(trimmed);
+          }
+        }}
+        style={{ ...btnGhost, padding: "6px 10px" }}
+        title="Créer une nouvelle valeur"
+      >+</button>
     </div>
   );
 }
@@ -9111,13 +9109,13 @@ function InterjeuView({ initialFilter, onConsumeFilter, filterCache }) {
                 </div>
                 <div>
                   <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 3 }}>Où</div>
-                  <AddableSelect
+                  <Picker
                     value={items[r.idx].ou}
                     onChange={(v) => updateCustom(r.idx, "ou", v)}
                     options={ouOptions}
-                    onAddNew={addLocation}
                     placeholder="-"
-                    hideAdd
+                    buttonStyle={{ ...miniInput, display: "block", width: "100%", textAlign: "left" }}
+                    panelWidth={180}
                   />
                 </div>
                 <div>
@@ -9144,13 +9142,13 @@ function InterjeuView({ initialFilter, onConsumeFilter, filterCache }) {
                 </div>
                 <div>
                   <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 3 }}>Vers</div>
-                  <AddableSelect
+                  <Picker
                     value={items[r.idx].vers}
                     onChange={(v) => updateCustom(r.idx, "vers", v)}
                     options={versOptions}
-                    onAddNew={addLocation}
                     placeholder="-"
-                    hideAdd
+                    buttonStyle={{ ...miniInput, display: "block", width: "100%", textAlign: "left" }}
+                    panelWidth={180}
                   />
                 </div>
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "Inter, sans-serif", fontSize: 11.5, color: TXT, cursor: "pointer" }}>
@@ -9170,13 +9168,13 @@ function InterjeuView({ initialFilter, onConsumeFilter, filterCache }) {
                 </div>
                 <div>
                   <div style={{ fontFamily: "Inter, sans-serif", fontSize: 10, color: MUTED, marginBottom: 3 }}>Jeu - DO</div>
-                  <AddableSelect
+                  <Picker
                     value={items[r.idx].jeu}
                     onChange={(v) => updateCustom(r.idx, "jeu", v)}
                     options={jeuOptionsFor(items[r.idx].marque)}
-                    onAddNew={(v) => addJeu(items[r.idx].marque, v)}
                     placeholder="-"
-                    hideAdd
+                    buttonStyle={{ ...miniInput, display: "block", width: "100%", textAlign: "left" }}
+                    panelWidth={180}
                   />
                 </div>
                 <button onClick={() => removeCustom(r.idx)} style={{ ...btnGhost, color: "#E4572E", borderColor: "#E4572E55" }}>Supprimer</button>
