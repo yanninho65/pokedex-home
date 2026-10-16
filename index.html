@@ -532,7 +532,7 @@ function driveStart() {
 const ACCENT = "#E4572E";
 // Numéro de version du fichier HTML — format année.mois.jour.heure(24h).minute, correspondant
 // au moment de génération de ce fichier. Affiché uniquement dans Paramètres, à côté du titre.
-const APP_VERSION = "2026.10.6.16.31";
+const APP_VERSION = "2026.10.16.15.08";
 const GOLD = "#FFEB3B";
 const OK = "#4CAF83";
 const INFO = "#4A9DE0";
@@ -1752,6 +1752,17 @@ function useCustomLists() {
 const DEFAULT_LOCATION = "Home 1";
 function catchLocation(rec) {
   return (rec && rec.location) || DEFAULT_LOCATION;
+}
+
+// Listes de captures Shiny restreintes aux formes du catalogue Shiny (DATA.shinyCatalog) — base
+// commune des compteurs "Progression" de l'onglet Shiny et de la carte Shiny de l'onglet
+// Progression, pour qu'ils concordent toujours avec "Affiché" (qui parcourt le catalogue). Les
+// captures hors catalogue (ex. Méga-évolutions cochées en shiny via le pseudo-jeu "Forme" de
+// National) restent stockées et visibles dans National, mais ne comptent pas ici.
+function shinyCatalogRecordLists(catches) {
+  if (!catches) return [];
+  const keys = new Set(DATA.shinyCatalog.map((r) => pokemonIdentityKey(r[1], r[2])));
+  return Object.keys(catches).filter((k) => keys.has(k)).map((k) => catches[k] || []);
 }
 
 // Jeux/ID possibles par marque, repris une fois de l'onglet Index (colonne T = Marque, colonne
@@ -6817,25 +6828,22 @@ function ShinyView({ initialFilter, onConsumeFilter, onOpenProgress, filterCache
     return s.size;
   }, [catalog]);
 
-  const caughtSpeciesCount = useMemo(() => {
-    if (!catches) return 0;
-    return Object.values(catches).filter((arr) => arr && arr.length > 0).length;
-  }, [catches]);
+  const catalogRecordLists = useMemo(() => shinyCatalogRecordLists(catches), [catches, catalog]);
 
-  const totalCaptures = useMemo(() => {
-    if (!catches) return 0;
-    return Object.values(catches).reduce((a, arr) => a + (arr ? arr.length : 0), 0);
-  }, [catches]);
+  const caughtSpeciesCount = useMemo(
+    () => catalogRecordLists.filter((arr) => arr.length > 0).length,
+    [catalogRecordLists]
+  );
 
+  const totalCaptures = useMemo(
+    () => catalogRecordLists.reduce((a, arr) => a + arr.length, 0),
+    [catalogRecordLists]
+  );
 
-  const homeTotalCount = useMemo(() => {
-    if (!catches) return 0;
-    let n = 0;
-    Object.values(catches).forEach((arr) => {
-      (arr || []).forEach((rec) => { if (catchLocation(rec) === "Home 1") n++; });
-    });
-    return n;
-  }, [catches]);
+  const homeTotalCount = useMemo(
+    () => catalogRecordLists.reduce((a, arr) => a + arr.filter((rec) => catchLocation(rec) === DEFAULT_LOCATION).length, 0),
+    [catalogRecordLists]
+  );
 
   // Nombre total de boîtes existantes (§ demande explicite : estimer la place physique prise par
   // la collection) — pour Shiny, toutes les boîtes du catalogue comptent, même vides (les boîtes
@@ -12809,9 +12817,12 @@ function NationalView({ initialFilter, onConsumeFilter, onOpenProgress, filterCa
                           title="Aucun jeu répertorié pour cette forme — sélectionnable quand même"
                           style={roundBtn(genericCaught, OK)}
                         >{genericCaught ? "✓" : "✗"}</button>
+                        {/* Pseudo-jeu "Forme" : shiny ajouté directement, sans la fenêtre "Ajouter
+                            un shiny" (date, méthode, emplacement… sans objet pour une forme non
+                            attrapable en jeu) — la fenêtre reste réservée aux vraies marques. */}
                         {!isJeuMode && (
                           <button
-                            onClick={() => (genericShiny ? removeShinyForGame(f[1], f[2], "Forme") : openShinyPrompt(f[1], f[2], "Forme"))}
+                            onClick={() => (genericShiny ? removeShinyForGame(f[1], f[2], "Forme") : addShinyForGame(f[1], f[2], { marque: "Forme" }))}
                             title="Ajouter/retirer un shiny pour cette forme"
                             style={roundBtn(genericShiny, GOLD)}
                           >✦</button>
@@ -13690,18 +13701,16 @@ function Overview({ setTab, openGame, openShiny, openNational, openEvent, openDo
     DATA.shinyCatalog.forEach((r) => seen.add(r[1] + "|" + (r[2] || "")));
     return seen.size;
   }, []);
-  const shinyCaught = shinyCatchesLive
-    ? Object.values(shinyCatchesLive).filter((arr) => arr && arr.length > 0).length
-    : 0;
+  // Mêmes bases que la colonne "Progression" de l'onglet Shiny (formes du catalogue Shiny seulement).
+  const shinyCatalogLists = useMemo(() => shinyCatalogRecordLists(shinyCatchesLive), [shinyCatchesLive]);
+  const shinyCaught = shinyCatalogLists.filter((arr) => arr.length > 0).length;
   // Total Home Shiny : ne compte que les captures Shiny physiquement dans Home 1 (voir Home 1 /
   // doc §7bis), doublons inclus (un même Pokémon capturé shiny sur plusieurs marques compte une
   // fois par marque) — distinct de shinyCaught qui ne compte qu'une fois par forme (progression).
-  const shinyHomeCaptures = shinyCatchesLive
-    ? Object.values(shinyCatchesLive).reduce(
-        (sum, arr) => sum + (arr ? arr.filter((rec) => (rec.location || DEFAULT_LOCATION) === "Home 1").length : 0),
-        0
-      )
-    : 0;
+  const shinyHomeCaptures = shinyCatalogLists.reduce(
+    (sum, arr) => sum + arr.filter((rec) => catchLocation(rec) === DEFAULT_LOCATION).length,
+    0
+  );
   const nationalTotal = DATA.nat.length;
   const nationalCaught = natLiveRows ? natLiveRows.filter((r) => r[5]).length : 0;
   const doubleTotal = useMemo(() => {
