@@ -124,7 +124,7 @@ Marquage **manuel uniquement** : `DATA.formTags["nom|forme"] = { mega, gmax, gma
 
 - **% (Progression)** : `Overview`, tableau de bord + navigation croisée. Un clic sur un jeu/Shiny/National ouvre un tableau région × statut. **Bloc Jeu - DO** : clic sur un total → popup de répartition par onglet ; clic sur un nombre → onglet filtré sur ce Jeu-DO (`openGame/openShiny/openDouble/openEvent/openInterjeu(…, jeu)`). Les events "Déjà dans une boîte de jeu" (`e.boite`) sont exclus du total. Ligne **DO Event** : events capturés, hors boîte, sans DO personnel.
 - **National** : Liste/Grille ; filtres Région, Jeu (disponibilité), Taille, Dynamax, Méga, Pokédex Home, Shiny. Sélecteur global **Home / Home + Jeu** (`catchMode`). Fiche détail : §5.7.
-- **Shiny** : journal de captures (doublons légitimes), vues Liste (sous-modes Home/Forme) / Boîte (30 cases) / Grille. Fiche : navigation Précédent/Suivant entre captures d'un même Pokémon (clic uniquement), pilules Détail 2 par ligne.
+- **Shiny** : journal de captures (doublons légitimes), vues Liste (sous-modes Home/Forme) / Boîte (30 cases) / Grille. Fiche : navigation Précédent/Suivant entre captures d'un même Pokémon (clic uniquement), pilules Détail 2 par ligne. Compteurs : la colonne "Progression" (formes, captures, en Home 1) et la carte Shiny de l'onglet % ne comptent que les formes du catalogue Shiny (`shinyCatalogRecordLists`), comme "Affiché" — sans filtre, les deux colonnes concordent toujours. Les captures hors catalogue (ex. Méga via le pseudo-jeu "Forme") restent stockées et visibles dans National.
 - **Double** : même patron que Shiny, une ligne par capture.
 - **Event** : catalogue éditable, champs DO personnel + Jeu - DO (restreint par marque, visible si DO personnel). Filtres DO personnel et Jeu - DO.
 - **Interjeu** : transferts Home ↔ jeu, lien bidirectionnel avec Shiny/Double (`fromInterjeu`). Badge "Home 2" dans l'en-tête si des entrées y sont.
@@ -216,11 +216,14 @@ Concerne National, Shiny, Double, Event, Interjeu, `BoxGroupModal`, `JeuMultiSou
 
 `ShinyRecordFields` est l'unique définition des champs d'une capture Shiny (Marque avec avertissement `isFormeAvailableInGame`, Date, Jeu, Méthode, Emplacement — tous `Picker` —, Détail, Alpha LA/LZA, Gmax tri-état). Utilisé par `ShinyView` (édition) et `NationalView` (création via `promptRec`, `addShinyForGame(nom, forme, rec)`). Les actions propres à une capture existante (Interjeu, suppression) restent dans `ShinyView`.
 
+Exception : le bouton ✦ du pseudo-jeu **"Forme"** n'ouvre pas la fenêtre — il ajoute directement `addShinyForGame(nom, forme, { marque: "Forme" })` (date, méthode, emplacement… sans objet) ; un second clic le retire (`removeShinyForGame`). La fenêtre reste réservée aux vraies marques.
+
 ## 6. Composants & helpers partagés (à réutiliser, ne pas redupliquer)
 
 | Besoin | Élément partagé |
 |---|---|
 | Lecture/écriture JSON | `readJSON`, `writeJSON` |
+| Compteurs Shiny (formes du catalogue seulement) | `shinyCatalogRecordLists(catches)` → listes de captures des clés présentes dans `DATA.shinyCatalog` |
 | Tri par numéro national | `natSortValue(n)` (texte → chiffres, sans chiffre → 999999) |
 | Une ligne par espèce | `speciesRepresentatives(forms = NAT_ALL_FORMS)` |
 | Numéro national d'une espèce | `speciesNationalNumber(nom)` (repli si pas de forme vide) |
@@ -251,7 +254,7 @@ Concerne National, Shiny, Double, Event, Interjeu, `BoxGroupModal`, `JeuMultiSou
 - **Trois notions "Home" distinctes** : (1) appartenance à la marque (`DATA.games[marque]`, `patchMarqueMembership`) ; (2) `DATA.homeDex` = pilule "Pokédex Home" (National, Home 2) ; (3) emplacement physique "Home 1"/"Home 2" (`ou`/`catchLocation`) — comparer en égalité **stricte** avec `DEFAULT_LOCATION`/"Home 2", jamais `/^Home/i`.
 - **`extendedRows`** : entrées "jeu seulement" toujours **en fin** ; `effective`/`flags`/`persist` restent positionnels sur `rows`.
 - **Alpha** : capacité = colonnes `Alpha_LA`/`Alpha_LZA` (`== 1` strict) ; affichage limité au signe **α**. Marquage par capture `alpha_caught` (clé `marque|nom|forme`), **partagé** entre Home et les vues précises de la marque : `GameView` expose `alphaStateFor(nom, forme)` (`{ show, active }`) et `toggleAlphaFor(nom, forme, markCaught)` — Alpha implique attrapé dans la vue appelante (flag Home, ou `game_tab_sources` en vue précise). Pastille Liste/Grille : composant unique `AlphaToggle` (`variant="grid"` = compacte) ; en vue Boîte, `BoxCell` (`showAlphaToggle`). Aucun marquage Gmax par capture dans les onglets jeu (seulement le filtre Dynamax).
-- **Pseudo-jeu "Forme"** : formes absentes de tout jeu listé (Méga…), cochées manuellement.
+- **Pseudo-jeu "Forme"** : formes absentes de tout jeu listé (Méga…), cochées manuellement. Leur shiny (✦, ajout direct sans fenêtre) est hors catalogue Shiny : visible dans National, jamais compté dans l'onglet Shiny ni la carte Shiny de %.
 - **Listes `Picker`/`MultiSelectFilter`** : toujours `orderedList(customXxx, découvertes)`, jamais `customXxx` seul.
 - **Clés catalogue** : `catalog_overrides` par `row.__baseKey` (`nom|forme` d'origine), jamais positionnel ; ajouts par `catalog_additions[].id`.
 - **Zygarde** : formes numériques → `String()` avant `.trim()`/`.toLowerCase()`.
